@@ -8,4 +8,29 @@ packets have been reassembled into sessions, plus the metadata needed to
 consume them.
 
 .. automodule:: zpf
+
+Everything below is re-exported at the package top level; ``import zpf`` is
+all a consumer needs.
+
+API reference
+-------------
+
+Typed blocks
+^^^^^^^^^^^^
+
+.. automodule:: zpf.blocks
+   :members:
+
+.. autoclass:: zpf.RawOption
+
+Binary container I/O
+^^^^^^^^^^^^^^^^^^^^
+
+.. automodule:: zpf.binary
+   :members:
+
+Errors and diagnostics
+^^^^^^^^^^^^^^^^^^^^^^
+
+.. automodule:: zpf.errors
    :members:
