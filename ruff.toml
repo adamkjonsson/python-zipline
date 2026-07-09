@@ -28,6 +28,8 @@ select = [
 
 ignore = [
     "ANN401",  # dynamically typed expressions (typing.Any) are disallowed
+    "D203",    # incompatible with D211 (no blank line before class docstring)
+    "D213",    # incompatible with D212 (summary on first docstring line)
     "D100",    # missing docstring in public module
     "D104",    # missing docstring in public package
     "D105",    # missing docstring in magic function (__eq__, __hash__)
