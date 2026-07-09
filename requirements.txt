@@ -1,0 +1,8 @@
+# Development environment; install with:
+#   .venv/bin/pip install -e . -r requirements.txt
+pytest
+ruff
+sphinx
+furo
+build
+hypothesis

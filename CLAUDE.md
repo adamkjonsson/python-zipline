@@ -21,9 +21,9 @@ warnings can only be used as a last resort, and **always ask before making such 
 
 ## Project layout
 
-- `src/zipline/` — contains the code
-- `src/docs` - documentation of the code
-- `src/tests/` — unittest test suite; run with `.venv/bin/pytest`
+- `src/zpf/` — contains the code (import name `zpf`; the `zipline` name on PyPI belongs to an unrelated project)
+- `docs/` — documentation of the code
+- `tests/` — test suite, native pytest style; run with `.venv/bin/pytest`
 
 ## Virtual environment
 
