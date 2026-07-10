@@ -57,6 +57,7 @@ from zpf.blocks import (
     Undecoded,
     UnknownBlock,
 )
+from zpf.conformance import ConformanceChecker
 from zpf.errors import (
     Diagnostic,
     EncodeError,
@@ -929,6 +930,9 @@ class JsonlWriter:
     :class:`~zpf.blocks.FileHeader`, only one is allowed, and nothing can
     follow an :class:`~zpf.blocks.End` block. Values with no JSONL
     representation are dropped with a diagnostic, or raise under ``strict``.
+    Pass ``check=True`` to also run every written block through a
+    :class:`~zpf.conformance.ConformanceChecker` (off by default, so tools
+    may re-emit imperfect data).
 
     Attributes:
         strict: Whether representation issues raise instead of reporting.
@@ -937,7 +941,13 @@ class JsonlWriter:
 
     """
 
-    def __init__(self, sink: str | os.PathLike[str] | IO[str], *, strict: bool = False) -> None:
+    def __init__(
+        self,
+        sink: str | os.PathLike[str] | IO[str],
+        *,
+        strict: bool = False,
+        check: bool = False,
+    ) -> None:
         if isinstance(sink, (str, os.PathLike)):
             self._stream: IO[str] = open(sink, "w", encoding="utf-8", newline="\n")  # noqa: SIM115 -- closed by close()
             self._owns_stream = True
@@ -949,6 +959,7 @@ class JsonlWriter:
         self._line_no = 0
         self._closed = False
         self._ended = False
+        self._checker = ConformanceChecker() if check else None
 
     def __enter__(self) -> JsonlWriter:
         return self
@@ -986,6 +997,8 @@ class JsonlWriter:
         if self._line_no > 0 and is_header:
             msg = "a file has exactly one File Header, as its first block"
             raise StructuralError(msg)
+        if self._checker is not None:
+            self._checker.observe(block)
         obj = block_to_obj(block, on_issue=self._issue)
         self._line_no += 1
         self._stream.write(json.dumps(obj, separators=(",", ":"), ensure_ascii=False) + "\n")

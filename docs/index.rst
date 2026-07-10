@@ -29,6 +29,24 @@ Binary container I/O
 .. automodule:: zpf.binary
    :members:
 
+Writing files (the ergonomic API)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. automodule:: zpf.writer
+   :members:
+
+Conformance checking
+^^^^^^^^^^^^^^^^^^^^
+
+.. automodule:: zpf.conformance
+   :members:
+
+Sequence-number ordering
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. automodule:: zpf.order
+   :members:
+
 JSON-Lines projection
 ^^^^^^^^^^^^^^^^^^^^^
 
