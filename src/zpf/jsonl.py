@@ -823,6 +823,11 @@ class JsonlReader:
         if self._owns_stream:
             self._stream.close()
 
+    @property
+    def line_no(self) -> int:
+        """The 1-based number of the last line read (0 before any read)."""
+        return self._line_no
+
     def __iter__(self) -> JsonlReader:
         return self
 

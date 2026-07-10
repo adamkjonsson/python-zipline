@@ -56,6 +56,7 @@ from zpf.jsonl import (
     loads_block,
 )
 from zpf.order import record_end, seq_leq, seq_lt
+from zpf.reader import FileReader, SessionReader, open
 from zpf.writer import (
     DecoderHandle,
     FileWriter,
@@ -80,6 +81,7 @@ __all__ = [
     "End",
     "FileFlags",
     "FileHeader",
+    "FileReader",
     "FileWriter",
     "JsonlReader",
     "JsonlWriter",
@@ -94,6 +96,7 @@ __all__ = [
     "Session",
     "SessionEnd",
     "SessionFlags",
+    "SessionReader",
     "SessionWriter",
     "Source",
     "SourceHandle",
@@ -110,6 +113,7 @@ __all__ = [
     "dumps_block",
     "jsonl_to_binary",
     "loads_block",
+    "open",
     "parse_block",
     "record_end",
     "seq_leq",

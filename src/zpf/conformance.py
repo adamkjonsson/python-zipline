@@ -193,7 +193,6 @@ class ConformanceChecker:
                 "declared twice"
             )
             raise SemanticError(msg)
-        state.last_seq[block.participant_id] = None
         if block.origin is not None:
             origin_kind = self._require_source(block.origin.source_id, _describe(block))
             if origin_kind != SourceKind.ZPF_INPUT:
@@ -208,6 +207,9 @@ class ConformanceChecker:
             raise SemanticError(msg)
         else:
             self._orphan_participants.append(_describe(block))
+        # Registration last: a raised violation leaves the checker
+        # consistent, so a lenient reader can isolate the block and go on.
+        state.last_seq[block.participant_id] = None
 
     def _on_session_end(self, block: SessionEnd) -> None:
         self._require_live_session(block.session_id, _describe(block))
@@ -220,9 +222,13 @@ class ConformanceChecker:
         if block.sender_pid not in state.last_seq:
             msg = f"{described} names undeclared sender participant {block.sender_pid}"
             raise SemanticError(msg)
-        self._classify_record(block, described)
+        # Pure checks first; kind-locking and state mutation last, so a
+        # raised violation leaves the checker consistent (block isolation).
         self._check_record_options(block, described)
         self._check_record_order(block, state, described)
+        self._classify_record(block, described)
+        if block.seq_start is not None:
+            state.last_seq[block.sender_pid] = block.seq_start
 
     def _on_undecoded(self, block: Undecoded) -> None:
         described = _describe(block)
@@ -300,6 +306,7 @@ class ConformanceChecker:
             raise SemanticError(msg)
 
     def _check_record_order(self, block: Record, state: _SessionState, described: str) -> None:
+        """Check (without mutating) that the record respects seq_start order."""
         if block.seq_start is None:
             return
         last = state.last_seq[block.sender_pid]
@@ -309,7 +316,6 @@ class ConformanceChecker:
                 f"previous record ({last}); records must be stored in seq_start order"
             )
             raise SemanticError(msg)
-        state.last_seq[block.sender_pid] = block.seq_start
 
     # --- Shared helpers -----------------------------------------------------
 
