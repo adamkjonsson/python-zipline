@@ -29,6 +29,12 @@ Binary container I/O
 .. automodule:: zpf.binary
    :members:
 
+Reading files (the ergonomic API)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. automodule:: zpf.reader
+   :members:
+
 Writing files (the ergonomic API)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
