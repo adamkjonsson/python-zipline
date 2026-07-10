@@ -129,9 +129,46 @@ def test_interleaved_iterators_are_independent():
         assert next(tcp_iter).payload == b"t3"
 
 
-def test_timeline_of_an_unsequenced_session_names_the_alternatives():
-    with open_bytes(two_session_file()) as f, pytest.raises(zpf.ZpfError, match=r"records\(\)"):
-        f.sessions()[0].timeline()
+def skewed_two_sided_file() -> bytes:
+    """One unsequenced TCP session, response timestamped before the request."""
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1_000_000) as w:
+        w.add_source("capture", uri="both.pcap")
+        with w.begin_session(proto="tcp", session_id=7) as s:
+            client = s.participant("10.0.0.1:51000", isn=1000)
+            server = s.participant("93.184.216.34:80", isn=5000)
+            # Server's clock is skewed: its response says ts 995, before the
+            # request (ts 1000) it answers. Its ack proves the true order.
+            s.record(server, ts=995, payload=b"HTTP/1.1 200 OK\r\n...",
+                     seq_start=5001, ack=1019)
+            s.record(client, ts=1000, payload=b"GET / HTTP/1.1\r\n\r\n",
+                     seq_start=1001, ack=5001)
+    return sink.getvalue()
+
+
+def test_timeline_merges_an_unsequenced_session_causally():
+    with open_bytes(skewed_two_sided_file()) as f:
+        session = f.session(7)
+        assert not session.sequenced
+        merged = list(session.timeline())
+        # Causal order: the request precedes the response it caused, even
+        # though sorting by timestamp would invert them.
+        assert [r.payload[:3] for r in merged] == [b"GET", b"HTT"]
+        assert sorted(merged, key=lambda r: r.timestamp) != merged
+
+
+def test_verify_passes_on_the_merged_example_and_rejects_a_swap():
+    with open_text(MERGED_EXAMPLE) as f:
+        f.session(1).verify()  # the spec's own sequenced file is valid
+    swapped = MERGED_EXAMPLE.splitlines()
+    swapped[-2], swapped[-1] = swapped[-1], swapped[-2]
+    with open_text("\n".join(swapped)) as f, pytest.raises(zpf.SemanticError, match="ack"):
+        f.session(1).verify()
+
+
+def test_verify_on_an_unsequenced_session_raises():
+    with open_bytes(two_session_file()) as f, pytest.raises(zpf.ZpfError, match="nothing to"):
+        f.sessions()[0].verify()
 
 
 def test_stream_of_an_unknown_pid_raises():
