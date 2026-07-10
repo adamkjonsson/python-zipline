@@ -55,6 +55,7 @@ from zpf.blocks import (
 from zpf.conformance import ConformanceChecker
 from zpf.errors import Diagnostic, SemanticError, StructuralError, ZpfError
 from zpf.jsonl import JsonlReader
+from zpf.order import causal_merge, verify_sequenced
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -172,21 +173,43 @@ class SessionReader:
 
         For a SEQUENCED session the stored order *is* a valid causal
         linearization, so this is simply :meth:`records`. For an
-        unsequenced session the causal merge is not implemented yet.
+        unsequenced session the streaming causal merge
+        (:func:`zpf.order.causal_merge`) is run transparently: seq/ack
+        happens-before edges for two-participant sessions, the
+        ``(timestamp, pid)`` order otherwise — pulling records from disk
+        on demand, so memory stays bounded by the in-flight window.
 
         Raises:
-            ZpfError: If the session is not sequenced (use :meth:`records`
-                for stored order or :meth:`stream` for one participant).
+            SemanticError: If the file's ordering hints are inconsistent
+                (a stall) or a hint-less stream steps backwards in time.
+
+        """
+        if self.sequenced:
+            return self.records()
+        streams = {
+            participant.participant_id: self.stream(participant.participant_id)
+            for participant in self._index.participants
+        }
+        return causal_merge(streams)
+
+    def verify(self) -> None:
+        """Verify this SEQUENCED session's stored order is causally valid.
+
+        Walks every record of the session (opt-in cost) and checks the
+        linearization the producer asserted with the SEQUENCED flag — see
+        :func:`zpf.order.verify_sequenced`.
+
+        Raises:
+            ZpfError: If the session is not sequenced (it asserts nothing
+                to verify).
+            SemanticError: On the first ordering violation, naming the
+                records involved.
 
         """
         if not self.sequenced:
-            msg = (
-                f"session {self.session_id} is not sequenced and the causal merge "
-                "is not implemented yet; use records() for stored order or "
-                "stream(pid) for a single participant"
-            )
+            msg = f"session {self.session_id} is not sequenced; there is nothing to verify"
             raise ZpfError(msg)
-        return self.records()
+        verify_sequenced(self.records(), participant_count=len(self._index.participants))
 
 
 class FileReader:

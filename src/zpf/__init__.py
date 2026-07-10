@@ -55,7 +55,7 @@ from zpf.jsonl import (
     jsonl_to_binary,
     loads_block,
 )
-from zpf.order import record_end, seq_leq, seq_lt
+from zpf.order import causal_merge, record_end, seq_geq, seq_leq, seq_lt, verify_sequenced
 from zpf.reader import FileReader, SessionReader, open
 from zpf.writer import (
     DecoderHandle,
@@ -109,6 +109,7 @@ __all__ = [
     "UnknownBlock",
     "ZpfError",
     "binary_to_jsonl",
+    "causal_merge",
     "create",
     "dumps_block",
     "jsonl_to_binary",
@@ -116,6 +117,8 @@ __all__ = [
     "open",
     "parse_block",
     "record_end",
+    "seq_geq",
     "seq_leq",
     "seq_lt",
+    "verify_sequenced",
 ]
