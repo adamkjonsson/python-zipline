@@ -21,6 +21,7 @@ from typing import IO, TYPE_CHECKING
 
 from zpf import _frame
 from zpf.blocks import Block, End, FileHeader, UnknownBlock, parse_block
+from zpf.conformance import ConformanceChecker
 from zpf.errors import (
     Diagnostic,
     EncodeError,
@@ -185,8 +186,10 @@ class BlockWriter:
     Guarantees well-formed bytes: the first block must be a
     :class:`~zpf.blocks.FileHeader`, only one header is allowed, nothing can
     follow an :class:`~zpf.blocks.End` block, and framing/alignment are
-    handled here. Semantic conformance is the caller's responsibility at
-    this layer.
+    handled here. By default semantic conformance is the caller's
+    responsibility at this layer — tools may legitimately re-emit imperfect
+    data; pass ``check=True`` to run every written block through a
+    :class:`~zpf.conformance.ConformanceChecker`.
 
     Example:
         >>> with BlockWriter(path) as writer:
@@ -195,7 +198,9 @@ class BlockWriter:
 
     """
 
-    def __init__(self, sink: str | os.PathLike[str] | IO[bytes]) -> None:
+    def __init__(
+        self, sink: str | os.PathLike[str] | IO[bytes], *, check: bool = False
+    ) -> None:
         if isinstance(sink, (str, os.PathLike)):
             self._stream: IO[bytes] = open(sink, "wb")  # noqa: SIM115 -- closed by close()
             self._owns_stream = True
@@ -205,6 +210,7 @@ class BlockWriter:
         self._offset = 0
         self._closed = False
         self._ended = False
+        self._checker = ConformanceChecker() if check else None
 
     def __enter__(self) -> Self:
         return self
@@ -235,6 +241,8 @@ class BlockWriter:
             ZpfError: If the writer is closed.
             StructuralError: If the block would make the file ill-formed
                 (missing/duplicate File Header, block after End).
+            SemanticError: With ``check=True``, if the block violates the
+                specification's semantic tier.
             EncodeError: If the block cannot be represented (e.g. content
                 exceeding the u32 frame length).
 
@@ -252,6 +260,8 @@ class BlockWriter:
         if self._offset > 0 and is_header:
             msg = "a file has exactly one File Header, as its first block"
             raise StructuralError(msg)
+        if self._checker is not None:
+            self._checker.observe(block)
         content = block.to_bytes()
         if len(content) > _frame.MAX_BLOCK_LENGTH:
             msg = f"block content of {len(content)} bytes exceeds the u32 frame length"

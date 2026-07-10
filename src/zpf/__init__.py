@@ -38,6 +38,7 @@ from zpf.blocks import (
     UnknownBlock,
     parse_block,
 )
+from zpf.conformance import ConformanceChecker
 from zpf.errors import (
     Diagnostic,
     EncodeError,
@@ -54,6 +55,15 @@ from zpf.jsonl import (
     jsonl_to_binary,
     loads_block,
 )
+from zpf.order import record_end, seq_leq, seq_lt
+from zpf.writer import (
+    DecoderHandle,
+    FileWriter,
+    ParticipantHandle,
+    SessionWriter,
+    SourceHandle,
+    create,
+)
 
 __version__ = "0.1.0.dev0"
 
@@ -61,18 +71,22 @@ __all__ = [
     "Block",
     "BlockReader",
     "BlockWriter",
+    "ConformanceChecker",
     "Custom",
     "Decoder",
+    "DecoderHandle",
     "Diagnostic",
     "EncodeError",
     "End",
     "FileFlags",
     "FileHeader",
+    "FileWriter",
     "JsonlReader",
     "JsonlWriter",
     "NameResolution",
     "Origin",
     "Participant",
+    "ParticipantHandle",
     "RawOption",
     "Record",
     "RecordFlags",
@@ -80,7 +94,9 @@ __all__ = [
     "Session",
     "SessionEnd",
     "SessionFlags",
+    "SessionWriter",
     "Source",
+    "SourceHandle",
     "SourceKind",
     "Span",
     "StructuralError",
@@ -90,8 +106,12 @@ __all__ = [
     "UnknownBlock",
     "ZpfError",
     "binary_to_jsonl",
+    "create",
     "dumps_block",
     "jsonl_to_binary",
     "loads_block",
     "parse_block",
+    "record_end",
+    "seq_leq",
+    "seq_lt",
 ]
