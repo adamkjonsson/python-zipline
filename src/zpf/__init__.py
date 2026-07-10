@@ -56,7 +56,8 @@ from zpf.jsonl import (
     loads_block,
 )
 from zpf.order import causal_merge, record_end, seq_geq, seq_leq, seq_lt, verify_sequenced
-from zpf.reader import FileReader, SessionReader, open
+from zpf.reader import FileReader, SessionReader, detect_face, open
+from zpf.transform import check_coverage, merge_files
 from zpf.writer import (
     DecoderHandle,
     FileWriter,
@@ -66,7 +67,7 @@ from zpf.writer import (
     create,
 )
 
-__version__ = "0.1.0.dev0"
+__version__ = "0.1.0"
 
 __all__ = [
     "Block",
@@ -110,10 +111,13 @@ __all__ = [
     "ZpfError",
     "binary_to_jsonl",
     "causal_merge",
+    "check_coverage",
     "create",
+    "detect_face",
     "dumps_block",
     "jsonl_to_binary",
     "loads_block",
+    "merge_files",
     "open",
     "parse_block",
     "record_end",

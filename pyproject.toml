@@ -12,7 +12,7 @@ requires-python = ">=3.11"
 authors = [{ name = "Adam Jonsson", email = "akj426@gmail.com" }]
 dynamic = ["version"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
@@ -22,6 +22,9 @@ classifiers = [
     "Topic :: System :: Networking :: Monitoring",
     "Typing :: Typed",
 ]
+
+[project.scripts]
+zpf = "zpf.cli:main"
 
 [project.urls]
 Specification = "https://github.com/adamkjonsson/zipline"
