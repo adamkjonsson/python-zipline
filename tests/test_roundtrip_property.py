@@ -236,6 +236,62 @@ def test_canonical_encoding_is_stable_after_replace(file: ZpfFile):
     assert sink.getvalue() == data
 
 
+_JSONL_RECORD_FLAGS = (
+    zpf.RecordFlags.PSH
+    | zpf.RecordFlags.FIN
+    | zpf.RecordFlags.RST
+    | zpf.RecordFlags.SYN
+    | zpf.RecordFlags.URG
+    | zpf.RecordFlags.RETRANSMIT
+    | zpf.RecordFlags.MESSAGE
+)
+
+
+def jsonl_normalized(block: zpf.Block) -> zpf.Block:
+    """Apply the documented JSONL normalizations to an expected block.
+
+    ``TcpRole.UNKNOWN`` projects as an omitted key (spec-mandated), and
+    Record flag bits with no JSON token are dropped (our lenient policy).
+    """
+    if isinstance(block, zpf.Participant) and block.tcp_role == zpf.TcpRole.UNKNOWN:
+        return dataclasses.replace(block, tcp_role=None)
+    if isinstance(block, zpf.Record):
+        return dataclasses.replace(block, flags=block.flags & _JSONL_RECORD_FLAGS)
+    return block
+
+
+@given(files)
+def test_jsonl_round_trip_is_semantically_lossless(file: ZpfFile):
+    header, body, with_end = file
+    expected = [jsonl_normalized(b) for b in [header, *body] + ([zpf.End()] if with_end else [])]
+    text = io.StringIO()
+    with zpf.JsonlWriter(text) as writer:
+        writer.write(header)
+        for block in body:
+            writer.write(block)
+        if with_end:
+            writer.write(zpf.End())
+    text.seek(0)
+    reader = zpf.JsonlReader(text)
+    assert list(reader) == expected
+    assert reader.complete == with_end
+    assert not reader.truncated
+
+
+@given(files)
+def test_binary_jsonl_binary_jsonl_is_stable(file: ZpfFile):
+    binary_1 = io.BytesIO(write_file(*file))
+    text_1 = io.StringIO()
+    zpf.binary_to_jsonl(binary_1, text_1)
+    text_1.seek(0)
+    binary_2 = io.BytesIO()
+    zpf.jsonl_to_binary(text_1, binary_2)
+    binary_2.seek(0)
+    text_2 = io.StringIO()
+    zpf.binary_to_jsonl(binary_2, text_2)
+    assert text_2.getvalue() == text_1.getvalue()
+
+
 @given(st.binary(max_size=300))
 def test_arbitrary_bytes_never_crash_the_reader(data: bytes):
     reader = zpf.BlockReader(io.BytesIO(data))

@@ -29,6 +29,12 @@ Binary container I/O
 .. automodule:: zpf.binary
    :members:
 
+JSON-Lines projection
+^^^^^^^^^^^^^^^^^^^^^
+
+.. automodule:: zpf.jsonl
+   :members:
+
 Errors and diagnostics
 ^^^^^^^^^^^^^^^^^^^^^^
 

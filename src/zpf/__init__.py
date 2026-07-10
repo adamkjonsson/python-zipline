@@ -5,9 +5,10 @@ that flow between endpoints once packets have been reassembled into sessions,
 plus the metadata needed to consume them. This package implements v1.0 of the
 specification.
 
-The flat, spec-mirroring layer lives here: typed blocks (:mod:`zpf.blocks`)
-and the binary container reader/writer (:mod:`zpf.binary`), all re-exported
-at the package top level.
+The flat, spec-mirroring layer lives here: typed blocks (:mod:`zpf.blocks`),
+the binary container reader/writer (:mod:`zpf.binary`), and the JSON-Lines
+projection with lossless converters (:mod:`zpf.jsonl`), all re-exported at
+the package top level.
 """
 
 from __future__ import annotations
@@ -45,6 +46,14 @@ from zpf.errors import (
     TruncatedError,
     ZpfError,
 )
+from zpf.jsonl import (
+    JsonlReader,
+    JsonlWriter,
+    binary_to_jsonl,
+    dumps_block,
+    jsonl_to_binary,
+    loads_block,
+)
 
 __version__ = "0.1.0.dev0"
 
@@ -59,6 +68,8 @@ __all__ = [
     "End",
     "FileFlags",
     "FileHeader",
+    "JsonlReader",
+    "JsonlWriter",
     "NameResolution",
     "Origin",
     "Participant",
@@ -78,5 +89,9 @@ __all__ = [
     "Undecoded",
     "UnknownBlock",
     "ZpfError",
+    "binary_to_jsonl",
+    "dumps_block",
+    "jsonl_to_binary",
+    "loads_block",
     "parse_block",
 ]
