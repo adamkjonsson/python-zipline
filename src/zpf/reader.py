@@ -460,6 +460,27 @@ def _resolve_face(stream: IO[Any], face: str) -> str:
     raise StructuralError(msg)
 
 
+def detect_face(source: str | os.PathLike[str] | IO[bytes] | IO[str]) -> str:
+    """Detect a file's face: ``"binary"`` (ZIPF magic) or ``"jsonl"``.
+
+    Args:
+        source: A path, or a seekable stream (its position is restored).
+
+    Returns:
+        ``"binary"`` or ``"jsonl"``.
+
+    Raises:
+        StructuralError: If the content matches neither face.
+
+    """
+    stream, owns = _as_stream(source)
+    try:
+        return _resolve_face(stream, "auto")
+    finally:
+        if owns:
+            stream.close()
+
+
 def open(
     source: str | os.PathLike[str] | IO[bytes] | IO[str],
     *,

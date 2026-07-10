@@ -6,7 +6,7 @@ This code is a Python implementation of v1.0 of the Zipline Payload Format, whic
 is defined in `https://github.com/adamkjonsson/zipline/releases/tag/v1.0`. It is a
 module that readers and writers of zpf-files use to access and create files.
 
-The API should be easy to use and feel logical. It must always follow the standard. The support for the standard should be complete.
+The API should be easy to use and feel logical. It must always follow the standard. The support for the standard should be complete. Always warn if a feature requires the code to go beyond the standard.
 
 ## Code style
 
