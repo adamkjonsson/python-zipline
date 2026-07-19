@@ -12,6 +12,8 @@ extensions = [
     "myst_parser",
 ]
 
+myst_heading_anchors = 3
+
 exclude_patterns = ["_build"]
 
 html_theme = "furo"

@@ -1,5 +1,6 @@
 # Transforms
 
-```{automodule} zpf.transform
-:members:
+```{eval-rst}
+.. automodule:: zpf.transform
+   :members:
 ```

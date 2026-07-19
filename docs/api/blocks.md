@@ -1,8 +1,8 @@
 # Typed blocks
 
-```{automodule} zpf.blocks
-:members:
-```
+```{eval-rst}
+.. automodule:: zpf.blocks
+   :members:
 
-```{autoclass} zpf.RawOption
+.. autoclass:: zpf.RawOption
 ```

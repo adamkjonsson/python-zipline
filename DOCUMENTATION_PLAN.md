@@ -137,7 +137,9 @@ Roughly in dependency order; each step leaves the docs buildable and useful.
    toctrees. No new prose yet. (Small) — **Done** (2026-07-19): builds
    clean under `sphinx-build -W`.
 2. **Concepts + landing page** — the mental-model page, since tutorial and
-   how-tos link into it. (Medium)
+   how-tos link into it. (Medium) — **Done** (2026-07-19); also fixed the
+   stage-1 API pages to wrap autodoc in `{eval-rst}` and enabled
+   `myst_heading_anchors`.
 3. **Tutorial** — the four stages, with runnable example scripts checked
    into `docs/user/examples/` and exercised by a test so they stay green.
    (Large; the highest-value item)

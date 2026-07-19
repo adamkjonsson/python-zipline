@@ -1,5 +1,6 @@
 # Sequence-number ordering
 
-```{automodule} zpf.order
-:members:
+```{eval-rst}
+.. automodule:: zpf.order
+   :members:
 ```

@@ -1,6 +1,7 @@
 # API reference
 
-```{automodule} zpf
+```{eval-rst}
+.. automodule:: zpf
 ```
 
 ```{toctree}

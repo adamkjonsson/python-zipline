@@ -1,5 +1,6 @@
 # Conformance checking
 
-```{automodule} zpf.conformance
-:members:
+```{eval-rst}
+.. automodule:: zpf.conformance
+   :members:
 ```

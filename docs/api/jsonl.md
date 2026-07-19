@@ -1,5 +1,6 @@
 # JSON-Lines projection
 
-```{automodule} zpf.jsonl
-:members:
+```{eval-rst}
+.. automodule:: zpf.jsonl
+   :members:
 ```
