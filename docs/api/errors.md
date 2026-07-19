@@ -1,5 +1,6 @@
 # Errors and diagnostics
 
-```{automodule} zpf.errors
-:members:
+```{eval-rst}
+.. automodule:: zpf.errors
+   :members:
 ```

@@ -1,5 +1,6 @@
 # Binary container I/O
 
-```{automodule} zpf.binary
-:members:
+```{eval-rst}
+.. automodule:: zpf.binary
+   :members:
 ```

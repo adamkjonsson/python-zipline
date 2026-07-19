@@ -1,5 +1,6 @@
 # Writing files (the ergonomic API)
 
-```{automodule} zpf.writer
-:members:
+```{eval-rst}
+.. automodule:: zpf.writer
+   :members:
 ```

@@ -1,41 +1,36 @@
 # zpf — Zipline Payload Format
 
-A Python implementation of v1.0 of the
+`zpf` is a Python implementation of v1.0 of the
 [Zipline Payload Format](https://github.com/adamkjonsson/zipline) (`.zpf`):
 a file format for the payload of network traffic — the bytes exchanged
-between endpoints once packets have been reassembled into sessions, plus the
-metadata needed to consume them.
+between endpoints once packets have been reassembled into sessions, plus
+the metadata needed to consume them. Where a packet capture answers "what
+was on the wire?", a `.zpf` file answers "what did the endpoints say to
+each other, and in what order?"
 
-Everything is re-exported at the package top level; `import zpf` is all a
-consumer needs.
-
-## Quickstart
-
-Writing a capture, reading it back in causal order, and using the CLI:
+The library has zero runtime dependencies, is fully type-annotated, and
+everything is re-exported at the package top level — `import zpf` is all a
+consumer needs:
 
 ```python
 import zpf
 
-with zpf.create("out.zpf", tick_hz=1_000_000) as w:
-    w.add_source("capture", uri="tap.pcap")
-    with w.begin_session(proto="tcp") as s:
-        alice = s.participant("10.0.0.1:51000", isn=1000)
-        s.record(alice, ts=1000, payload=b"GET / HTTP/1.1\r\n\r\n",
-                 seq_start=1001, ack=5001)
-        s.end(reason="fin")
-
-with zpf.open("out.zpf") as f:
+with zpf.open("cap.zpf") as f:
     for session in f.sessions():
-        for record in session.timeline():
-            ...
+        for record in session.timeline():   # causal order, clock skew or not
+            print(record.timestamp, record.payload)
 ```
 
-```shell
-zpf info cap.zpf
-zpf cat cap.zpf
-zpf validate cap.zpf --verify
-zpf merge sideA.zpf sideB.zpf -o merged.zpf
-```
+Where to go next:
+
+- New to the format? Start with the [tutorial](user/tutorial.md), then read
+  [Concepts](user/concepts.md) for the mental model behind it.
+- Have a task in mind? See the [how-to guides](user/howto/index.md) or the
+  [`zpf` command-line tool](user/cli.md).
+- Looking something up? The [API reference](api/index.md) covers every
+  public module.
+- Working on this library itself? The developer guide starts at
+  [Architecture](dev/architecture.md).
 
 ```{toctree}
 :maxdepth: 2

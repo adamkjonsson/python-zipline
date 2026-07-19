@@ -1,5 +1,6 @@
 # Reading files (the ergonomic API)
 
-```{automodule} zpf.reader
-:members:
+```{eval-rst}
+.. automodule:: zpf.reader
+   :members:
 ```
