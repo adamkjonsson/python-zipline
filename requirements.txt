@@ -4,5 +4,6 @@ pytest
 ruff
 sphinx
 furo
+myst-parser
 build
 hypothesis
