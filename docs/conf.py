@@ -9,6 +9,7 @@ project_copyright = "2026, Adam Jonsson"
 extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.napoleon",
+    "myst_parser",
 ]
 
 exclude_patterns = ["_build"]

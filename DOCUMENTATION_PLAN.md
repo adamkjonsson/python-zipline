@@ -134,7 +134,8 @@ Roughly in dependency order; each step leaves the docs buildable and useful.
 1. **Restructure scaffolding** — install and enable `myst-parser`; split
    `docs/index.rst` into the MyST tree above with stubs (deleting the `.rst`
    file); move the existing autodoc directives into `docs/api/` pages; add
-   toctrees. No new prose yet. (Small)
+   toctrees. No new prose yet. (Small) — **Done** (2026-07-19): builds
+   clean under `sphinx-build -W`.
 2. **Concepts + landing page** — the mental-model page, since tutorial and
    how-tos link into it. (Medium)
 3. **Tutorial** — the four stages, with runnable example scripts checked
