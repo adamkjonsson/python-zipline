@@ -52,8 +52,36 @@ def _run(script: str, cwd: Path) -> subprocess.CompletedProcess[str]:
             ("01_write_first_file.py", "04_two_faces.py"),
             ('"type":"record"', "round trip: byte-identical"),
         ),
+        (
+            ("05_rest_raw_input.py",),
+            ("participant 0 (10.0.0.1:51000)", "offset  46:"),
+        ),
+        (
+            ("05_rest_raw_input.py", "06_write_decoder.py"),
+            (
+                "file_kind: decode-stage",
+                "dec:http-request",
+                "dec:http-response",
+                "check_coverage: []",  # every input byte accounted for
+            ),
+        ),
+        (
+            ("07_coverage.py",),
+            (
+                "with the Undecoded marker: []",  # coverage guarantee holds
+                "without it: coverage-gap",  # ... and is caught when it doesn't
+            ),
+        ),
     ],
-    ids=["write", "write-then-read", "causal-order", "write-then-convert"],
+    ids=[
+        "write",
+        "write-then-read",
+        "causal-order",
+        "write-then-convert",
+        "decode-raw-input",
+        "write-decoder",
+        "decode-coverage",
+    ],
 )
 def test_example_scripts_run_clean(scripts: Sequence[str], expected: Sequence[str], tmp_path: Path):
     output = ""

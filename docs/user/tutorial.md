@@ -138,6 +138,8 @@ See the [CLI reference](cli.md) for every subcommand.
 - [Concepts](concepts.md) — the mental model this tutorial only sketched:
   file kinds, spans and provenance, the SEQUENCED flag, robustness to
   truncation and unknown blocks.
+- [Tutorial: writing a decoder](tutorial-decoding.md) — the next step:
+  turning a raw file into a decode stage of application messages.
 - The [how-to guides](howto/index.md) — task-shaped recipes that assume
   this tutorial, including the [merge](howto/merge.md) and
   [convert](howto/convert.md) transforms in full.
