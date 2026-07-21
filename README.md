@@ -52,6 +52,20 @@ zpf validate cap.zpf --verify
 zpf merge sideA.zpf sideB.zpf -o merged.zpf
 ```
 
+## Documentation
+
+Full documentation lives in [`docs/`](docs/) and builds with Sphinx
+(`cd docs && make html`, output in `docs/_build/html`). Start here:
+
+- [Tutorial](docs/user/tutorial.md) — write and read your first file in four
+  short stages, then [write a decoder](docs/user/tutorial-decoding.md).
+- [Concepts](docs/user/concepts.md) — the format's mental model.
+- [How-to guides](docs/user/howto/index.md) — task-shaped recipes
+  (convert, validate, merge, decode-stage, robustness).
+- [CLI reference](docs/user/cli.md) and [API reference](docs/api/index.md).
+- [Developer guide](docs/dev/architecture.md) — architecture, testing,
+  conformance strategy, and [contributing](CONTRIBUTING.md).
+
 ## Development
 
 ```bash
@@ -59,9 +73,12 @@ python3 -m venv .venv
 .venv/bin/pip install -e . -r requirements.txt
 .venv/bin/pytest                                  # run tests
 ruff check .                                      # lint
-.venv/bin/sphinx-build docs docs/_build/html      # build docs (or: cd docs && make html)
+.venv/bin/sphinx-build -W docs docs/_build/html   # build docs (warnings are errors)
 .venv/bin/python -m build                         # build wheel + sdist
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contributor guide — code
+style, docstring conventions, and the release checklist.
 
 ## License
 

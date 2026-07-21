@@ -176,7 +176,17 @@ Roughly in dependency order; each step leaves the docs buildable and useful.
    `sphinx-build -W`; 245 tests green.
 6. **Polish pass** — README trimmed to point at the built docs; check every
    page for spec-link accuracy; `sphinx-build -W` clean (warnings as
-   errors) added to the dev checklist. (Small)
+   errors) added to the dev checklist. (Small) — **Done** (2026-07-21): the
+   lingering `installation.md` stub is now written (pip install, Python
+   ≥ 3.11, zero deps, the zpf-vs-zipline naming note); the README gained a
+   Documentation section pointing into `docs/` and now shows the `-W` build
+   command. Spec links were audited against the local spec repo: the v1.0
+   tag and `docs/payload-format.md` both exist on origin, so the deep link is
+   valid (the repo is private, hence a bare fetch 404s) — the landing page
+   and the pyproject `Specification` URL now point at that exact v1.0 spec
+   document instead of the repo root, matching `concepts.md`. The `-W`
+   checklist item already landed in `contributing.md` during stage 5. Builds
+   clean under `sphinx-build -W`.
 
 ## Conventions for all docs
 
