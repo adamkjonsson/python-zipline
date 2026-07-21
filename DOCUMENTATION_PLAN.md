@@ -166,7 +166,14 @@ Roughly in dependency order; each step leaves the docs buildable and useful.
    (i.e. zpf-written) files" to match the converter's actual guarantee.
 5. **Developer docs** — architecture, testing, conformance, contributing;
    add root `CONTRIBUTING.md` pointer. Retire `milestones.md` (its content is
-   absorbed; keep it in git history). (Medium)
+   absorbed; keep it in git history). (Medium) — **Done** (2026-07-21): the
+   four `docs/dev/` pages written from the source (four-layer model + module
+   map, test-suite map calling out the three load-bearing tests, the
+   three-depth conformance-enforcement table, and the contributor workflow +
+   release checklist), a root `CONTRIBUTING.md` pointing into them, and
+   `milestones.md` removed via `git rm` (its four-layer material now lives in
+   `architecture.md`; history retains it). Builds clean under
+   `sphinx-build -W`; 245 tests green.
 6. **Polish pass** — README trimmed to point at the built docs; check every
    page for spec-link accuracy; `sphinx-build -W` clean (warnings as
    errors) added to the dev checklist. (Small)
