@@ -59,7 +59,7 @@ python3 -m venv .venv
 .venv/bin/pip install -e . -r requirements.txt
 .venv/bin/pytest                                  # run tests
 ruff check .                                      # lint
-.venv/bin/sphinx-build docs docs/_build/html      # build docs
+.venv/bin/sphinx-build docs docs/_build/html      # build docs (or: cd docs && make html)
 .venv/bin/python -m build                         # build wheel + sdist
 ```
 
