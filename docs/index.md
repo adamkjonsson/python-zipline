@@ -1,7 +1,7 @@
 # zpf — Zipline Payload Format
 
 `zpf` is a Python implementation of v1.0 of the
-[Zipline Payload Format](https://github.com/adamkjonsson/zipline) (`.zpf`):
+[Zipline Payload Format](https://github.com/adamkjonsson/zipline/blob/v1.0/docs/payload-format.md) (`.zpf`):
 a file format for the payload of network traffic — the bytes exchanged
 between endpoints once packets have been reassembled into sessions, plus
 the metadata needed to consume them. Where a packet capture answers "what
