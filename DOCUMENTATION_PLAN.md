@@ -154,7 +154,16 @@ Roughly in dependency order; each step leaves the docs buildable and useful.
      the coverage guarantee and `Undecoded` markers. Three more example
      scripts (`05`–`07`), also run by `test_tutorial_examples.py`. The terse
      `howto/decode_stage.md` recipe (stage 4 below) links to it.
-4. **How-to guides + CLI reference + errors page.** (Medium)
+4. **How-to guides + CLI reference + errors page.** (Medium) — **Done**
+   (2026-07-21): all five how-tos (`convert`, `validate`, `merge`,
+   `decode_stage`, `robustness`), the `cli.md` reference (every subcommand
+   with flags, exit codes, and worked output captured from real runs), and
+   the `errors.md` page (the `ZpfError` tiers, strict-vs-lenient, the
+   `Diagnostic` value and its categories). Every CLI/console block is real
+   tool output; API snippets check against the writer/transform signatures.
+   Builds clean under `sphinx-build -W`. Round-trip wording corrected to
+   "semantically lossless in general, byte-identical for canonically-encoded
+   (i.e. zpf-written) files" to match the converter's actual guarantee.
 5. **Developer docs** — architecture, testing, conformance, contributing;
    add root `CONTRIBUTING.md` pointer. Retire `milestones.md` (its content is
    absorbed; keep it in git history). (Medium)
