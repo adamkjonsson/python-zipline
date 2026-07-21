@@ -38,6 +38,7 @@ Where to go next:
 
 user/installation
 user/tutorial
+user/tutorial-decoding
 user/concepts
 user/howto/index
 user/cli

@@ -142,7 +142,18 @@ Roughly in dependency order; each step leaves the docs buildable and useful.
    `myst_heading_anchors`.
 3. **Tutorial** — the four stages, with runnable example scripts checked
    into `docs/user/examples/` and exercised by a test so they stay green.
-   (Large; the highest-value item)
+   (Large; the highest-value item) — **Done** (2026-07-20): one running
+   example (a GET/200-OK exchange, matching the golden-bytes and
+   merge-transform test fixtures) carried through all four stages; scripts
+   run for real in `tests/test_tutorial_examples.py`; builds clean under
+   `sphinx-build -W`.
+   - *Follow-on beyond the original four-stage scope* — **Done**
+     (2026-07-20): a companion **decoder tutorial**
+     (`docs/user/tutorial-decoding.md`) walks raw → decode-stage on a small
+     REST call: the logical-offset model, writing spans and `content_type`,
+     the coverage guarantee and `Undecoded` markers. Three more example
+     scripts (`05`–`07`), also run by `test_tutorial_examples.py`. The terse
+     `howto/decode_stage.md` recipe (stage 4 below) links to it.
 4. **How-to guides + CLI reference + errors page.** (Medium)
 5. **Developer docs** — architecture, testing, conformance, contributing;
    add root `CONTRIBUTING.md` pointer. Retire `milestones.md` (its content is
