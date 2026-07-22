@@ -259,12 +259,13 @@ unchanged.
 
 Ordered to respect the dependencies above (5 can be done at any point).
 
-- [ ] **1. Reassembly view (reader).** Add `Segment`, `Gap`, `Datagram`, and
-  `StreamView`; expose `SessionReader.streams()` returning one view per
+- [x] **1. Reassembly view (reader).** Add `Segment`, `Gap`, `Datagram`, and
+  `StreamView`; expose `SessionReader.reassemble()` returning one view per
   participant. Compute logical offsets internally via `record_end` / `SEQ_SPACE`
   ([`zpf/order.py`](src/zpf/order.py)); surface gaps as `Gap` objects instead of
   welding across them. Implement `segments()`, `chunks()`, `datagrams()`,
-  `reassembled()`, and `is_stream_oriented`.
+  `reassembled()`, and `is_stream_oriented`. *(Accessor named `reassemble()`,
+  not `streams()`; stream-only methods raise on packet-oriented streams.)*
 - [ ] **2. Span helpers (reader).** Add `StreamView.cite(off_start, off_end)`
   and `Segment.cite(local_start, local_end)` returning a `zpf.Span` with
   `source_id`/`session_id`/`participant_id` pre-filled. *(Depends on 1.)*

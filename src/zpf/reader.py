@@ -56,6 +56,7 @@ from zpf.conformance import ConformanceChecker
 from zpf.errors import Diagnostic, SemanticError, StructuralError, ZpfError
 from zpf.jsonl import JsonlReader
 from zpf.order import causal_merge, verify_sequenced
+from zpf.reassembly import StreamView
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -167,6 +168,28 @@ class SessionReader:
         self.participant(pid)  # raises KeyError for an unknown pid
         for locator in self._index.by_pid.get(pid, ()):
             yield self._resolve(locator)
+
+    def reassemble(self) -> tuple[StreamView, ...]:
+        """Return a reassembly view of each participant's stream.
+
+        One :class:`~zpf.reassembly.StreamView` per participant, in
+        declaration order. A view turns the participant's byte-run records
+        into contiguous segments (with gaps made explicit) for a
+        stream-oriented participant, or into whole datagrams for a
+        packet-oriented one — the ergonomic input a decoder consumes,
+        without touching ``seq_start`` arithmetic itself.
+
+        Returns:
+            The participants' stream views, in declaration order.
+
+        """
+        return tuple(
+            StreamView(
+                participant,
+                lambda pid=participant.participant_id: self.stream(pid),
+            )
+            for participant in self._index.participants
+        )
 
     def timeline(self) -> Iterator[Record]:
         """Iterate the session's records in causal order.
