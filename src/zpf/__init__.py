@@ -57,6 +57,7 @@ from zpf.jsonl import (
 )
 from zpf.order import causal_merge, record_end, seq_geq, seq_leq, seq_lt, verify_sequenced
 from zpf.reader import FileReader, SessionReader, detect_face, open
+from zpf.reassembly import Datagram, Gap, Segment, StreamView
 from zpf.transform import check_coverage, merge_files
 from zpf.writer import (
     DecoderHandle,
@@ -75,6 +76,7 @@ __all__ = [
     "BlockWriter",
     "ConformanceChecker",
     "Custom",
+    "Datagram",
     "Decoder",
     "DecoderHandle",
     "Diagnostic",
@@ -84,6 +86,7 @@ __all__ = [
     "FileHeader",
     "FileReader",
     "FileWriter",
+    "Gap",
     "JsonlReader",
     "JsonlWriter",
     "NameResolution",
@@ -93,6 +96,7 @@ __all__ = [
     "RawOption",
     "Record",
     "RecordFlags",
+    "Segment",
     "SemanticError",
     "Session",
     "SessionEnd",
@@ -103,6 +107,7 @@ __all__ = [
     "SourceHandle",
     "SourceKind",
     "Span",
+    "StreamView",
     "StructuralError",
     "TcpRole",
     "TruncatedError",
