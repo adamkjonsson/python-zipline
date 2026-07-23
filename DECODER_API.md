@@ -367,11 +367,29 @@ Ordered to respect the dependencies above (5 can be done at any point).
     the file was opened from, `None` for a stream) and `FileReader.digest()`.
     `derive_from` defaults the Source's `uri` and `digest` to those, which is
     what removes the manual `hashlib` step from the caller.
-- [ ] **4. Coverage auto-fill (writer).** On `decode_stage` exit, emit
-  `Undecoded` for uncited regions (`reason="undecodable"`) and gaps
-  (`reason="tcp-gap"`); opt-in flag (default on); raise on cite/mark overlap
-  rather than override. Verify `check_coverage` returns `[]` by construction.
-  *(Depends on 3.)*
+- [x] **4. Coverage auto-fill (writer).** On a clean `decode_stage` close, emit
+  `Undecoded` for uncited regions (`reason="skipped"`) and reassembly gaps
+  (`reason="tcp-gap"`); `fill_undecoded` flag (default on); raise on cite/mark
+  overlap rather than override. `check_coverage` returns `[]` by construction
+  (asserted in the tests). *(Depends on 3.)* Notes:
+  - **Reason for auto-filled data is `"skipped"`, not `"undecodable"`** (change
+    from the proposal). `undecodable` is a strong claim — the decoder *tried and
+    could not parse* — so it is reserved for an explicit `dec.undecoded(...)`
+    call; auto-fill, which only knows the decoder never touched these bytes,
+    says `skipped`. Both are open-vocabulary reasons the standard permits (spec:
+    `undecodable`/`tcp-gap`/`truncated`/…), and both sit on the recoverable side
+    (bytes exist upstream), unlike the `tcp-gap` hole.
+  - The interval math (`complement`, `intersections`) that `check_coverage`
+    already had was factored into `zpf/_intervals.py` and shared, so auto-fill
+    and the after-the-fact check cannot drift.
+  - Extent and gap ranges per stream come straight from the stage-1
+    `StreamView` (`chunks()`/`datagrams()`), matching `check_coverage`'s extent
+    model exactly.
+  - `decode_stage` hit the 10-argument lint ceiling again, so `creator` was
+    dropped from it (a derived file's producing tool is `produced_by`); callers
+    wanting a distinct `creator` use the `create()` + `derive_from()` path.
+  - A failing auto-fill closes the output without an End block, so a stage that
+    raises stays honestly incomplete.
 - [ ] **5. `datetime` for `produced_at` (writer).** Accept `int | datetime` in
   `create` / `decode_stage`; require tz-aware datetimes; expose the conversion
   publicly as `zpf.unix_seconds(dt)`. *(Independent.)*

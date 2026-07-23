@@ -278,6 +278,144 @@ def test_a_failing_decode_leaves_the_output_incomplete(tmp_path: Path):
         assert not out.complete  # no End block: honestly unfinished
 
 
+# --- coverage auto-fill ---------------------------------------------------------------
+
+MORE = b"MORE"
+
+
+def undecoded_by_stream(data: bytes) -> dict[tuple[int, int, int, int], zpf.Undecoded]:
+    with zpf.open(io.BytesIO(data)) as out:
+        return {
+            (u.session_id, u.participant_id, u.off_start, u.off_end): u for u in out.undecoded
+        }
+
+
+def test_autofill_marks_uncited_data_as_skipped():
+    raw = raw_file()
+    sink = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw), sink, decoder="http/1.1", produced_by="t 1.0", produced_at=1
+    ) as dec:
+        client = dec.streams()[0]
+        dec.record(client, b"GET", ts=1, cites=(0, 4))  # only the first 4 bytes
+
+    marks = undecoded_by_stream(sink.getvalue())
+    # The rest of the client stream, and the whole (untouched) server stream:
+    # data the decoder passed over, not a claim that it is undecodable.
+    assert marks[7, 0, 4, len(REQUEST)].reason == "skipped"
+    assert marks[7, 1, 0, len(RESPONSE)].reason == "skipped"
+    assert zpf.check_coverage(io.BytesIO(sink.getvalue()), io.BytesIO(raw)) == []
+
+
+def test_autofill_marks_a_reassembly_gap_as_tcp_gap():
+    raw = raw_file(gap=True)
+    sink = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw), sink, decoder="http/1.1", produced_by="t 1.0", produced_at=1
+    ) as dec:
+        for stream in dec.streams():
+            for seg in stream.segments():  # cite the data, but never the hole
+                dec.record(stream, seg.data, ts=seg.ts, cites=(seg.off_start, seg.off_end))
+
+    marks = undecoded_by_stream(sink.getvalue())
+    (gap_key,) = [k for k, u in marks.items() if u.reason == "tcp-gap"]
+    assert gap_key == (7, 0, len(REQUEST), len(REQUEST) + 4)
+    assert zpf.check_coverage(io.BytesIO(sink.getvalue()), io.BytesIO(raw)) == []
+
+
+def test_autofill_splits_an_uncovered_range_around_a_gap():
+    raw = raw_file(gap=True)
+    sink = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw), sink, decoder="http/1.1", produced_by="t 1.0", produced_at=1
+    ):
+        pass  # decode nothing at all
+
+    with zpf.open(io.BytesIO(sink.getvalue())) as out:
+        client = sorted(
+            (u for u in out.undecoded if u.participant_id == 0), key=lambda u: u.off_start
+        )
+    assert [(u.off_start, u.off_end, u.reason) for u in client] == [
+        (0, len(REQUEST), "skipped"),
+        (len(REQUEST), len(REQUEST) + 4, "tcp-gap"),
+        (len(REQUEST) + 4, len(REQUEST) + 4 + len(MORE), "skipped"),
+    ]
+    assert zpf.check_coverage(io.BytesIO(sink.getvalue()), io.BytesIO(raw)) == []
+
+
+def test_autofill_preserves_an_explicit_marker_and_fills_the_rest():
+    raw = raw_file()
+    sink = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw), sink, decoder="http/1.1", produced_by="t 1.0", produced_at=1
+    ) as dec:
+        client = dec.streams()[0]
+        dec.record(client, b"x", ts=1, cites=(0, 5))
+        dec.undecoded(client, 5, 9, reason="truncated", comment="mid-parse")
+
+    marks = undecoded_by_stream(sink.getvalue())
+    explicit = marks[7, 0, 5, 9]
+    assert explicit.reason == "truncated"  # not overwritten by auto-fill
+    assert explicit.comment == "mid-parse"
+    assert marks[7, 0, 9, len(REQUEST)].reason == "skipped"  # auto-filled remainder
+    assert zpf.check_coverage(io.BytesIO(sink.getvalue()), io.BytesIO(raw)) == []
+
+
+def test_explicit_undecodable_coexists_with_auto_skipped():
+    """The undecodable reason is the decoder's own claim; auto-fill only says skipped."""
+    raw = raw_file()
+    sink = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw), sink, decoder="http/1.1", produced_by="t 1.0", produced_at=1
+    ) as dec:
+        client = dec.streams()[0]
+        dec.undecoded(client, 0, 5, reason="undecodable")  # tried and failed
+        # bytes [5, len) of the client and all of the server are auto-filled
+
+    marks = undecoded_by_stream(sink.getvalue())
+    assert marks[7, 0, 0, 5].reason == "undecodable"  # explicit, preserved
+    assert marks[7, 0, 5, len(REQUEST)].reason == "skipped"  # auto
+    assert marks[7, 1, 0, len(RESPONSE)].reason == "skipped"  # auto
+    assert zpf.check_coverage(io.BytesIO(sink.getvalue()), io.BytesIO(raw)) == []
+
+
+def test_autofill_off_leaves_coverage_incomplete():
+    raw = raw_file()
+    sink = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw),
+        sink,
+        decoder="http/1.1",
+        produced_by="t 1.0",
+        produced_at=1,
+        fill_undecoded=False,
+    ) as dec:
+        client = dec.streams()[0]
+        dec.record(client, b"GET", ts=1, cites=(0, 4))
+
+    with zpf.open(io.BytesIO(sink.getvalue())) as out:
+        assert list(out.undecoded) == []  # nothing added on our behalf
+    findings = zpf.check_coverage(io.BytesIO(sink.getvalue()), io.BytesIO(raw))
+    assert {f.category for f in findings} == {"coverage-gap"}
+
+
+def test_autofill_raises_when_a_cite_and_a_mark_overlap():
+    raw = raw_file()
+    sink = io.BytesIO()
+    # The raise happens on context exit (auto-fill), not in the body.
+    with (
+        pytest.raises(zpf.ZpfError, match="both decoded and explicitly marked"),
+        zpf.decode_stage(
+            io.BytesIO(raw), sink, decoder="http/1.1", produced_by="t 1.0", produced_at=1
+        ) as dec,
+    ):
+        client = dec.streams()[0]
+        dec.record(client, b"x", ts=1, cites=(0, 10))
+        dec.undecoded(client, 5, 15, reason="undecodable")
+    with zpf.open(io.BytesIO(sink.getvalue())) as out:
+        assert not out.complete  # auto-fill failed: no End block
+
+
 # --- cites shorthand ------------------------------------------------------------------
 
 

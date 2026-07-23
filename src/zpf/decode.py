@@ -34,9 +34,11 @@ from __future__ import annotations
 
 from typing import IO, TYPE_CHECKING
 
+from zpf._intervals import complement, intersections
 from zpf.blocks import Span
 from zpf.errors import ZpfError
 from zpf.reader import FileReader
+from zpf.reassembly import Gap
 from zpf.writer import create
 
 if TYPE_CHECKING:
@@ -46,7 +48,7 @@ if TYPE_CHECKING:
     from typing import Self
 
     from zpf.blocks import Participant, RecordFlags
-    from zpf.reassembly import Datagram, Gap, Segment, StreamView
+    from zpf.reassembly import Datagram, Segment, StreamView
     from zpf.writer import (
         DecoderHandle,
         DerivedInput,
@@ -161,13 +163,17 @@ class DecodeStage:
         decoder: DecoderHandle | None,
         *,
         owns_reader: bool,
+        fill_undecoded: bool = True,
     ) -> None:
         self.reader = reader
         self.writer = writer
         self.derived = derived
         self._decoder = decoder
         self._owns_reader = owns_reader
+        self._fill_undecoded = fill_undecoded
         self._streams: tuple[DecodeStream, ...] | None = None
+        self._cited: dict[tuple[int, int], list[tuple[int, int]]] = {}
+        self._marked: dict[tuple[int, int], list[tuple[int, int]]] = {}
         self._closed = False
 
     def __enter__(self) -> Self:
@@ -243,13 +249,15 @@ class DecodeStage:
             flags: Record flags.
 
         """
+        all_spans = tuple(spans) + _as_spans(stream, cites)
+        self._track(self._cited, all_spans)
         stream.session.record(
             stream.handle,
             ts=ts,
             payload=payload,
             decoder=decoder if decoder is not None else self._decoder,
             content_type=content_type,
-            spans=tuple(spans) + _as_spans(stream, cites),
+            spans=all_spans,
             flags=flags,
         )
 
@@ -273,6 +281,10 @@ class DecodeStage:
             comment: Free-text note.
 
         """
+        if off_start < off_end:
+            self._marked.setdefault((stream.session_id, stream.pid), []).append(
+                (off_start, off_end)
+            )
         self.writer.undecoded(
             self.derived.source,
             stream.session_id,
@@ -287,18 +299,77 @@ class DecodeStage:
     def close(self, *, end: bool = True) -> None:
         """Close the output, then the input if this stage opened it.
 
+        On a clean close with auto-fill on, every input offset the decoder
+        left neither cited nor marked is written as an ``Undecoded`` block
+        first — ``tcp-gap`` for a reassembly hole, ``skipped`` for data the
+        decoder passed over — so the output satisfies the coverage guarantee
+        by construction.
+
         Args:
-            end: Write the output's End block (marks it complete).
+            end: Write the output's End block (marks it complete). Auto-fill
+                runs only when ``end`` is true; a failed stage stays honestly
+                incomplete and unpadded.
+
+        Raises:
+            ZpfError: If the decoder both cited and explicitly marked the
+                same input offset (auto-fill will not silently override it).
 
         """
         if self._closed:
             return
         self._closed = True
         try:
+            if end and self._fill_undecoded:
+                try:
+                    self._autofill()
+                except BaseException:
+                    self.writer.close(end=False)  # failed stage: no End block
+                    raise
             self.writer.close(end=end)
         finally:
             if self._owns_reader:
                 self.reader.close()
+
+    def _track(
+        self,
+        into: dict[tuple[int, int], list[tuple[int, int]]],
+        spans: tuple[Span, ...],
+    ) -> None:
+        """Record the intervals of ``spans`` that cite this stage's input source."""
+        source_id = self.derived.source.source_id
+        for span in spans:
+            if span.source_id == source_id and span.off_start < span.off_end:
+                into.setdefault((span.session_id, span.participant_id), []).append(
+                    (span.off_start, span.off_end)
+                )
+
+    def _autofill(self) -> None:
+        """Mark every uncovered input offset as Undecoded, gaps included."""
+        for stream in self.streams():
+            key = (stream.session_id, stream.pid)
+            cited = sorted(self._cited.get(key, []))
+            marked = sorted(self._marked.get(key, []))
+            clash = intersections(cited, marked)
+            if clash:
+                start, end = clash[0]
+                msg = (
+                    f"input stream (session {key[0]}, pid {key[1]}): [{start}, {end}) "
+                    "is both decoded and explicitly marked Undecoded; auto-fill will "
+                    "not override an explicit marker"
+                )
+                raise ZpfError(msg)
+            extent, gaps = _extent_and_gaps(stream.view)
+            uncovered = complement(sorted(cited + marked), extent)
+            for start, end, reason in _label_fills(uncovered, gaps):
+                self.writer.undecoded(
+                    self.derived.source,
+                    stream.session_id,
+                    stream.pid,
+                    start,
+                    end,
+                    reason=reason,
+                    decoder=self._decoder,
+                )
 
 
 def decode_stage(
@@ -311,8 +382,8 @@ def decode_stage(
     proto: str | None = None,
     uri: str | None = None,
     digest: str | None = None,
-    creator: str | None = None,
     comment: str | None = None,
+    fill_undecoded: bool = True,
 ) -> DecodeStage:
     """Open an input and scaffold a decode-stage file derived from it.
 
@@ -338,9 +409,14 @@ def decode_stage(
         uri: Where the input lives; defaults to the path it was opened
             from.
         digest: Content hash of the input; SHA-256 of it when omitted.
-        creator: Tool + version writing the file.
         comment: Free-text note for the File Header.
-        strict: Open the input in strict mode.
+        fill_undecoded: On a clean close, mark every input offset the
+            decoder left uncovered as ``Undecoded`` (``tcp-gap`` for
+            reassembly holes, ``skipped`` for data the decoder passed over),
+            so the output satisfies the coverage guarantee by construction.
+            On by default; set false to emit only the ``Undecoded`` blocks
+            you write yourself. Auto-fill never uses ``undecodable``, which
+            is reserved for the decoder's explicit "tried and failed".
 
     Returns:
         An open :class:`DecodeStage`, also a context manager.
@@ -359,7 +435,6 @@ def decode_stage(
             sink,
             tick_hz=header.tick_hz,
             time_epoch=header.time_epoch,
-            creator=creator,
             produced_by=produced_by,
             produced_at=produced_at,
             comment=comment,
@@ -376,7 +451,9 @@ def decode_stage(
         if owns_reader:
             reader.close()
         raise
-    return DecodeStage(reader, writer, derived, handle, owns_reader=owns_reader)
+    return DecodeStage(
+        reader, writer, derived, handle, owns_reader=owns_reader, fill_undecoded=fill_undecoded
+    )
 
 
 def _open_input(
@@ -432,3 +509,50 @@ def _is_offset_pair(value: object) -> bool:
         and len(value) == _PAIR
         and all(isinstance(item, int) for item in value)
     )
+
+
+def _extent_and_gaps(view: StreamView) -> tuple[int, list[tuple[int, int]]]:
+    """Return an input stream's hole-inclusive extent and its gap ranges.
+
+    Matches the extent model :func:`zpf.check_coverage` uses: the last
+    offset of the reassembled space for a stream-oriented participant, the
+    cumulative payload length for a packet-oriented one (which has no gaps).
+    """
+    if not view.is_stream_oriented:
+        extent = 0
+        for datagram in view.datagrams():
+            extent = datagram.off_end
+        return extent, []
+    extent = 0
+    gaps: list[tuple[int, int]] = []
+    for chunk in view.chunks():
+        extent = chunk.off_end
+        if isinstance(chunk, Gap):
+            gaps.append((chunk.off_start, chunk.off_end))
+    return extent, gaps
+
+
+def _label_fills(
+    uncovered: list[tuple[int, int]], gaps: list[tuple[int, int]]
+) -> Iterator[tuple[int, int, str]]:
+    """Split uncovered ranges at gap boundaries, labelling each part's reason.
+
+    A part inside a reassembly :class:`~zpf.reassembly.Gap` is a
+    ``"tcp-gap"``; anything else is data the decoder passed over, marked
+    ``"skipped"``. Auto-fill never emits ``"undecodable"`` — that is the
+    decoder's own claim that it *tried and failed*, which only an explicit
+    :meth:`DecodeStage.undecoded` call can make.
+    """
+    ordered = sorted(gaps)
+    for start, end in uncovered:
+        position = start
+        for gap_start, gap_end in ordered:
+            lo, hi = max(position, gap_start), min(end, gap_end)
+            if lo >= hi:
+                continue
+            if position < lo:
+                yield position, lo, "skipped"
+            yield lo, hi, "tcp-gap"
+            position = hi
+        if position < end:
+            yield position, end, "skipped"
