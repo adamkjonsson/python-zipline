@@ -390,9 +390,13 @@ Ordered to respect the dependencies above (5 can be done at any point).
     wanting a distinct `creator` use the `create()` + `derive_from()` path.
   - A failing auto-fill closes the output without an End block, so a stage that
     raises stays honestly incomplete.
-- [ ] **5. `datetime` for `produced_at` (writer).** Accept `int | datetime` in
+- [x] **5. `datetime` for `produced_at` (writer).** Accept `int | datetime` in
   `create` / `decode_stage`; require tz-aware datetimes; expose the conversion
-  publicly as `zpf.unix_seconds(dt)`. *(Independent.)*
+  publicly as `zpf.unix_seconds(dt)`. *(Independent.)* The conversion lives at
+  the `FileWriter.__init__` choke point, so `create`, `decode_stage`, and the
+  `FileWriter` constructor all accept a datetime; the `FileHeader` block itself
+  keeps `produced_at` as on-disk Unix `int`. A naive datetime raises rather than
+  being read as local time.
 - [ ] **6. Causal output order (both).** Order a session's decoded records by the
   input's `timeline()` — keyed on the last contributing input record, ties broken
   by cited `off_start` — instead of emitting stream-by-stream. Start with the

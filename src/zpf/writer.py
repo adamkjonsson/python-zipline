@@ -26,6 +26,7 @@ hatch, which is checked exactly like everything else.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import IO, TYPE_CHECKING, Literal
 
 from zpf.binary import BlockWriter
@@ -62,6 +63,40 @@ if TYPE_CHECKING:
     from zpf.reader import FileReader
 
 _KIND_NAMES = {"capture": SourceKind.CAPTURE, "zpf-input": SourceKind.ZPF_INPUT}
+
+
+def unix_seconds(value: int | datetime) -> int:
+    """Return whole Unix seconds from a datetime, or pass an int through.
+
+    A convenience for ``produced_at`` (and any other Unix-seconds field): a
+    caller can hand over a ``datetime`` instead of a magic integer.
+
+    The datetime must be timezone-aware — a naive one would be read against
+    the machine's local time, silently shifting the timestamp — so a naive
+    datetime is rejected rather than guessed.
+
+    Args:
+        value: A timezone-aware :class:`~datetime.datetime`, or an int
+            already in Unix seconds (returned unchanged).
+
+    Returns:
+        Whole Unix seconds (truncated toward zero for a sub-second
+        datetime).
+
+    Raises:
+        ZpfError: If ``value`` is a naive (timezone-less) datetime.
+
+    """
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            msg = (
+                "a produced_at datetime must be timezone-aware, e.g. "
+                "datetime.now(tz=UTC) or datetime(..., tzinfo=UTC); a naive "
+                "datetime would be read as the local machine's time"
+            )
+            raise ZpfError(msg)
+        return int(value.timestamp())
+    return value
 
 
 @dataclass(frozen=True)
@@ -175,7 +210,7 @@ class FileWriter:
         time_epoch: int | None = None,
         creator: str | None = None,
         produced_by: str | None = None,
-        produced_at: int | None = None,
+        produced_at: int | datetime | None = None,
         single_clock: bool = False,
         comment: str | None = None,
         face: Literal["binary", "jsonl"] = "binary",
@@ -202,7 +237,7 @@ class FileWriter:
             time_epoch=time_epoch,
             creator=creator,
             produced_by=produced_by,
-            produced_at=produced_at,
+            produced_at=None if produced_at is None else unix_seconds(produced_at),
             flags=flags,
             comment=comment,
         )
@@ -708,7 +743,7 @@ def create(
     time_epoch: int | None = None,
     creator: str | None = None,
     produced_by: str | None = None,
-    produced_at: int | None = None,
+    produced_at: int | datetime | None = None,
     single_clock: bool = False,
     comment: str | None = None,
     face: Literal["binary", "jsonl"] = "binary",
@@ -727,7 +762,9 @@ def create(
         time_epoch: Timestamp origin in ticks since the Unix epoch.
         creator: Tool + version writing the file.
         produced_by: Tool + version of the transform (derived files).
-        produced_at: Wall-clock build time in Unix seconds (derived files).
+        produced_at: Wall-clock build time (derived files); Unix seconds, or
+            a timezone-aware :class:`~datetime.datetime` (see
+            :func:`unix_seconds`).
         single_clock: Assert every record is stamped against one
             trustworthy clock (the SINGLE_CLOCK file flag).
         comment: Free-text note.

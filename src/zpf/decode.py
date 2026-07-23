@@ -44,6 +44,7 @@ from zpf.writer import create
 if TYPE_CHECKING:
     import os
     from collections.abc import Iterable, Iterator, Sequence
+    from datetime import datetime
     from types import TracebackType
     from typing import Self
 
@@ -378,7 +379,7 @@ def decode_stage(
     *,
     decoder: str | tuple[str, str | None] | DecoderHandle,
     produced_by: str,
-    produced_at: int,
+    produced_at: int | datetime,
     proto: str | None = None,
     uri: str | None = None,
     digest: str | None = None,
@@ -402,8 +403,8 @@ def decode_stage(
             pair, or a handle already declared on another writer's terms.
         produced_by: Tool + version doing the decoding (required of a
             derived file).
-        produced_at: Build time in Unix seconds (required of a derived
-            file).
+        produced_at: Build time (required of a derived file); Unix seconds,
+            or a timezone-aware :class:`~datetime.datetime`.
         proto: Protocol for the output sessions, e.g. ``"http"``; defaults
             to the input's.
         uri: Where the input lives; defaults to the path it was opened
