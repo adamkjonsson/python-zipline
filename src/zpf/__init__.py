@@ -39,6 +39,7 @@ from zpf.blocks import (
     parse_block,
 )
 from zpf.conformance import ConformanceChecker
+from zpf.decode import DecodeStage, DecodeStream, decode_stage
 from zpf.errors import (
     Diagnostic,
     EncodeError,
@@ -61,6 +62,7 @@ from zpf.reassembly import Datagram, Gap, Segment, StreamView
 from zpf.transform import check_coverage, merge_files
 from zpf.writer import (
     DecoderHandle,
+    DerivedInput,
     FileWriter,
     ParticipantHandle,
     SessionWriter,
@@ -77,8 +79,11 @@ __all__ = [
     "ConformanceChecker",
     "Custom",
     "Datagram",
+    "DecodeStage",
+    "DecodeStream",
     "Decoder",
     "DecoderHandle",
+    "DerivedInput",
     "Diagnostic",
     "EncodeError",
     "End",
@@ -118,6 +123,7 @@ __all__ = [
     "causal_merge",
     "check_coverage",
     "create",
+    "decode_stage",
     "detect_face",
     "dumps_block",
     "jsonl_to_binary",

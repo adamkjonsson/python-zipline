@@ -239,6 +239,74 @@ Requiring tz-awareness avoids the silent-local-time trap; the alternative
 same helper can be offered publicly as `zpf.unix_seconds(dt)` for users building
 the header themselves.
 
+### 6. Preserve the input's causal order in the decoded output
+
+*(Added after stage 3 landed, from the question "can we keep causal ordering
+when the input is `sequenced`?")*
+
+`decode_stage` currently walks one stream at a time, so the output holds every
+client record, then every server record. The input's interleaving — which for a
+sequenced session is a committed causal order — is thrown away.
+
+**The order is recoverable.** `session.timeline()` gives the input's causal
+order (for a sequenced input, simply its stored order — no merge). Every decoded
+record cites the input bytes it came from, so each maps to the input record that
+completed it. Emitting decoded records ordered by *(position of the last
+contributing input record in the input timeline, then cited `off_start`)* is a
+sound causal linearization: a monotone map from an order the input already
+committed to. Two shapes:
+
+- **Buffer and sort** — decode stream-by-stream as now, hold the decoded
+  records, emit in timeline order at close. Simple; costs memory proportional to
+  a session's decoded output.
+- **Drive from the timeline** — iterate `session.timeline()` and feed bytes to
+  per-stream incremental decoders, emitting units as they complete. No
+  buffering, but it needs a push-style decoder interface
+  (`feed(bytes) -> messages`), a much larger API change.
+
+**The `SEQUENCED` flag is a separate, stricter question, and mostly unavailable.**
+Sequencing is orthogonal to raw-vs-decoded, so a decode-stage file *may* be
+sequenced. But what a sequenced session rests on is the ordering hints its
+records carry, and **decoded records carry none** — no `seq_start`, no `ack`.
+Per the standard a hint-less session's sequenced order *is* its timestamp order,
+and `verify_sequenced` enforces exactly that:
+
+```text
+decreasing-ts causal order: REJECTED -> Record(pid 1, ts 995) steps backwards in
+time (previous hint-less timestamp 1000); a hint-less sequenced order is the
+timestamp order
+```
+
+That is the sting. The skewed two-sided capture in
+[`test_reader.py`](tests/test_reader.py) — response stamped *before* the request
+it answers — is precisely the case ack-based sequencing exists to fix, and its
+true causal order has **decreasing** timestamps. Marking such an output
+`SEQUENCED` would be unverifiable and forbidden: a producer MUST NOT mark a
+hint-less session sequenced unless its records share one trustworthy clock.
+Decoding destroys the evidence that made the input safely sequenceable — the
+input's order was clock-independent because seq/ack survived; downstream, only
+timestamps do.
+
+**Proposed:** emit causally regardless (strictly better stored order, free at
+read time), and set `sequenced=True` only when the emitted timestamps come out
+non-decreasing — exactly when the flag is honest for a hint-less session. That
+holds when the input asserted `SINGLE_CLOCK` or came from a single tap, and
+fails on skewed two-sided merges.
+
+One structural wrinkle: `begin_session` writes the Session Descriptor *before*
+any records, so the flag cannot be decided after seeing the timestamps without
+also deferring session declaration. The streaming-friendly form is to make it
+opt-in (`sequenced=True`) and have the stage verify as it writes, raising if the
+order cannot honor it, rather than silently emitting a false assertion.
+
+**Open question, deliberately not proposed.** When timestamps *are* skewed the
+decoded file cannot convey the true order at all: it is in the stored bytes, but
+with the flag off a reader re-merges by `(timestamp, pid)` and gets it wrong.
+Carrying `seq_start` forward onto decoded records would fix it, but those fields
+mean "sequence number of the sender's first payload byte", which a decoded
+unit's payload is not — **that would go beyond the standard** and needs an
+explicit decision before anyone builds it.
+
 ### Summary
 
 | # | Change | Observation it answers | Surface |
@@ -248,10 +316,12 @@ the header themselves.
 | 3 | `zpf.decode_stage(...)` / `writer.derive_from(reader)` | "decoded session from a raw one, info copied in" | both |
 | 4 | Auto-`Undecoded` for gaps and uncited regions | coverage burden | writer |
 | 5 | `produced_at` accepts `datetime` | the `datetime` helper | writer |
+| 6 | Causal output order; conditional `SEQUENCED` | input interleaving lost by stream-at-a-time decoding | both |
 
 Proposals 1–2 are independent and could ship first (pure reader additions).
-Proposal 3 depends on 1; proposal 4 depends on 3. Proposal 5 is independent and
-trivial. All are backward compatible: the existing handle-based path in
+Proposal 3 depends on 1; proposal 4 depends on 3; proposal 6 depends on 3.
+Proposal 5 is independent and trivial. All are backward compatible: the existing
+handle-based path in
 [`06_write_decoder.py`](docs/user/examples/06_write_decoder.py) keeps working
 unchanged.
 
@@ -275,11 +345,28 @@ Ordered to respect the dependencies above (5 can be done at any point).
   read has no way to know it. It is passed per call (`source=`) or bound once
   with the new `StreamView.cited_as(handle)`; stage 3's `derive_from` is where
   that binding becomes automatic.
-- [ ] **3. Derive-from-input scaffolding (both).** Add `writer.derive_from(reader)`
-  (copies `tick_hz`/`time_epoch`, declares the `zpf-input` Source with digest,
-  re-declares participants with explicit `pid=`, returns source handle +
-  participant map), then the `zpf.decode_stage(...)` orchestrator on top of it.
-  *(Depends on 1.)*
+- [x] **3. Derive-from-input scaffolding (both).** Add `writer.derive_from(reader)`
+  (declares the `zpf-input` Source with digest, re-declares participants with
+  explicit `pid=`, returns a `DerivedInput` with source handle + session writers
+  + participant map), then the `zpf.decode_stage(...)` orchestrator on top of it.
+  *(Depends on 1.)* **Corrections to the proposal above:**
+  - `derive_from` *cannot* copy `tick_hz`/`time_epoch`: the File Header is
+    written when `create()` is called, before the writer ever sees the input.
+    It verifies they agree and raises otherwise; `decode_stage`, which owns the
+    `create()` call, is what actually copies them.
+  - `dec.record(...)` takes `ts=` explicitly (the proposal's sketch omitted it).
+    The spec's timestamp rule makes record time a real decision — normally
+    `seg.ts`, the completion time of the last contributing input record — so it
+    is not something to guess.
+  - `isn` is not copied onto the output participants: it describes the input's
+    raw TCP stream, which the decoded records are no longer in.
+  - Output sessions are not marked `sequenced`, since decoding stream-by-stream
+    does not emit a causal order across streams.
+  - Declaring the `zpf-input` Source without making the caller supply its `uri`
+    and `digest` needed two small reader additions: `FileReader.path` (the path
+    the file was opened from, `None` for a stream) and `FileReader.digest()`.
+    `derive_from` defaults the Source's `uri` and `digest` to those, which is
+    what removes the manual `hashlib` step from the caller.
 - [ ] **4. Coverage auto-fill (writer).** On `decode_stage` exit, emit
   `Undecoded` for uncited regions (`reason="undecodable"`) and gaps
   (`reason="tcp-gap"`); opt-in flag (default on); raise on cite/mark overlap
@@ -288,3 +375,15 @@ Ordered to respect the dependencies above (5 can be done at any point).
 - [ ] **5. `datetime` for `produced_at` (writer).** Accept `int | datetime` in
   `create` / `decode_stage`; require tz-aware datetimes; expose the conversion
   publicly as `zpf.unix_seconds(dt)`. *(Independent.)*
+- [ ] **6. Causal output order (both).** Order a session's decoded records by the
+  input's `timeline()` — keyed on the last contributing input record, ties broken
+  by cited `off_start` — instead of emitting stream-by-stream. Start with the
+  buffer-and-sort shape; the streaming form needs a push-style decoder interface
+  and is out of scope. Then add opt-in `sequenced=True`, verified while writing:
+  decoded records are hint-less, so the stage must confirm the emitted timestamps
+  are non-decreasing and raise rather than assert a sequenced order it cannot
+  honor. Note `begin_session` writes the Session Descriptor before any records,
+  so the flag cannot be inferred after the fact without deferring session
+  declaration. **Do not** carry `seq_start` onto decoded records to work around
+  the skewed-clock case without an explicit decision — it goes beyond the
+  standard. *(Depends on 3.)*
