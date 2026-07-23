@@ -150,6 +150,9 @@ sideB.zpf ─┘              (pass-through)
 - A **decode stage** is derived from another `.zpf` by a decoder. Its
   records are *decoder-imposed units* (an HTTP message, a TLS record) whose
   boundaries follow application semantics, not transport chunking.
+  {func}`zpf.decode_stage <zpf.decode.decode_stage>` writes one end to end:
+  it consumes the input through reassembly views and fills in the provenance
+  and coverage bookkeeping for you.
 - A **pass-through** file is derived from other `.zpf` files by a
   byte-preserving transform — the spec defines one, the **merge**, which
   combines separately-captured directions into one file with sequenced
@@ -182,7 +185,10 @@ participant streams. Offsets are **logical stream offsets** — 0-based
 positions in the reassembled application stream, counting missing bytes
 (gaps) as if present — not record ids and not TCP sequence numbers. Byte 0
 is the stream's first application byte (anchored at `isn + 1` when the TCP
-handshake was seen).
+handshake was seen). A decoder consumes those streams through
+{meth}`SessionReader.reassemble <zpf.reader.SessionReader.reassemble>`,
+which works in these offsets directly and can {meth}`cite
+<zpf.reassembly.StreamView.cite>` a range without the arithmetic.
 
 What a decoder could *not* parse it must say out loud: an **Undecoded**
 block names an input range and a reason (`undecodable`, `tcp-gap`,

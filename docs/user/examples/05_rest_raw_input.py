@@ -42,13 +42,19 @@ with zpf.create("rest_raw.zpf", tick_hz=1_000_000) as writer:
             ack=CLIENT_ISN + 1 + len(REQ_1) + len(REQ_2),
         )
 
-# Read it back and show each stream the way the decoder will consume it.
+# Read it back the way a decoder does: walk every session, one reassembly
+# view per stream. `reassemble()` turns each participant's byte-run records
+# into logical-offset segments, so the decoder never touches seq_start/isn
+# arithmetic itself. (This file holds one session, but a decoder handles
+# whatever the input contains.)
 with zpf.open("rest_raw.zpf") as reader:
-    (session,) = reader.sessions()
-    for participant in session.participants:
-        pid = participant.participant_id
-        origin = participant.isn + 1  # the stream's first byte is isn + 1
-        print(f"participant {pid} ({participant.endpoint}):")
-        for record in session.stream(pid):
-            offset = record.seq_start - origin  # logical 0-based stream offset
-            print(f"  offset {offset:>3}: {record.payload!r}")
+    for session in reader.sessions():
+        for stream in session.reassemble():
+            participant = stream.participant
+            print(f"participant {participant.participant_id} ({participant.endpoint}):")
+            # The individual records, each at its logical stream offset...
+            for datagram in stream.datagrams():
+                print(f"  offset {datagram.off_start:>3}: {datagram.data!r}")
+            # ...coalesced into the contiguous runs the decoder actually parses.
+            for segment in stream.segments():
+                print(f"  reassembled [{segment.off_start}, {segment.off_end})")

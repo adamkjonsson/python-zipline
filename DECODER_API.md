@@ -410,11 +410,14 @@ Ordered to respect the dependencies above (5 can be done at any point).
   declaration. **Do not** carry `seq_start` onto decoded records to work around
   the skewed-clock case without an explicit decision — it goes beyond the
   standard. *(Depends on 3.)*
-- [ ] **7. Revise the documentation for stages 1–5 (docs).** The prose, examples,
+- [x] **7. Revise the documentation for stages 1–5 (docs).** The prose, examples,
   and API reference still teach the pre-stage-1 manual path; bring them up to
   date with everything shipped. *(Depends on 1–5; **excludes stage 6**, which is
   not yet implemented — do not document causal ordering or a `sequenced=` option
-  for decode stages.)* Scope:
+  for decode stages.)* One deviation from the scope below: the `produced_at`
+  datetime note landed in the decode-stage how-to and the API docstrings rather
+  than `concepts.md`, which does not discuss header fields at all — forcing it
+  there would have been the wrong altitude. Scope:
   - **API reference.** Add autodoc pages `docs/api/reassembly.md` (`zpf.reassembly`)
     and `docs/api/decode.md` (`zpf.decode`), and list them in the
     [`docs/api/index.md`](docs/api/index.md) toctree. `zpf/_intervals.py` is

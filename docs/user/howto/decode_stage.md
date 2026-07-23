@@ -11,30 +11,60 @@ built on the same example.
 Three things, all enforced by the
 {class}`~zpf.conformance.ConformanceChecker`:
 
-1. **Provenance on the header.** Pass `produced_by` (and optionally
-   `produced_at`) to {func}`zpf.create` — required the moment a file becomes
-   derived.
+1. **Provenance on the header.** `produced_by` and `produced_at` — required
+   the moment a file becomes derived.
 2. **A `zpf-input` source** citing the raw predecessor, ideally with a
    `digest` so a consumer can confirm the input hasn't changed.
 3. **A `decoder=` on every record.** A record is *decoded* precisely because
    it names the decoder that produced it.
 
+{func}`zpf.decode_stage` sets up all three from the input and hands back a
+per-stream decode context:
+
 ```python
+from datetime import UTC, datetime
+
 import zpf
 
-with zpf.create("rest_decoded.zpf", tick_hz=1_000_000,
-                produced_by="http-decode 1.0") as writer:
-    source = writer.add_source("zpf-input", uri="rest_raw.zpf",
-                               digest="sha256:...")
-    decoder = writer.add_decoder("http/1.1", version="tutorial")
-    with writer.begin_session(proto="http", key=KEY) as session:
-        client = session.participant("10.0.0.1:51000")
-        session.record(
-            client, ts=1000, payload=message_bytes, decoder=decoder,
-            content_type="dec:http-request",
-            spans=[zpf.Span(source_id=source.source_id, session_id=0,
-                            participant_id=0, off_start=0, off_end=73)],
-        )
+with zpf.decode_stage(
+    "rest_raw.zpf", "rest_decoded.zpf",
+    decoder=("http/1.1", "tutorial"),   # name, version
+    produced_by="http-decode 1.0",
+    produced_at=datetime.now(tz=UTC),   # or int Unix seconds
+    proto="http",
+) as dec:
+    for stream in dec.streams():        # one DecodeStream per input stream
+        for segment in stream.segments():
+            for start, end, kind in split_messages(segment.data):
+                dec.record(
+                    stream, segment.data[start:end], ts=segment.ts,
+                    content_type=f"dec:http-{kind}",
+                    cites=(segment.off_start + start, segment.off_start + end),
+                )
+```
+
+`decode_stage` opens the input, copies its `tick_hz`/`time_epoch`, declares
+the `zpf-input` source (hashing the input for the digest), declares the
+decoder, and re-declares each input participant under the same id. To keep
+your own {func}`zpf.create` call instead, {meth}`zpf.FileWriter.derive_from`
+builds the same scaffolding without owning the loop.
+
+The loop above uses {meth}`~zpf.DecodeStream.segments` because HTTP rides
+TCP, a byte stream. For a **UDP** flow — or any stream without sequence
+hints — iterate {meth}`~zpf.DecodeStream.datagrams` instead: one whole
+{class}`~zpf.Datagram` per packet, no reassembly and no gaps.
+{attr}`~zpf.DecodeStream.is_stream_oriented` tells the two apart, and the
+byte-stream methods raise on a packet stream:
+
+```python
+for stream in dec.streams():
+    if stream.is_stream_oriented:
+        for segment in stream.segments():
+            ...  # split segment.data into messages, as above
+    else:
+        for datagram in stream.datagrams():  # each datagram is one message
+            dec.record(stream, datagram.data, ts=datagram.ts,
+                       cites=(datagram.off_start, datagram.off_end))
 ```
 
 ## Cite input bytes with spans
@@ -42,28 +72,42 @@ with zpf.create("rest_decoded.zpf", tick_hz=1_000_000,
 Each decoded record carries a **span**: the `[off_start, off_end)` range of
 the input stream its bytes came from, in **logical stream offsets** (0-based
 positions in the reassembled stream, where byte 0 is the first application
-byte). The span's `session_id`/`participant_id` name the stream in the
-*input's* namespace, not the decoded file's. One message reassembled from
-several input records still carries a single covering span. See
+byte). Passing `cites=(off_start, off_end)` to {meth}`~zpf.DecodeStage.record`
+mints the {class}`~zpf.Span` for you, filling in the input's
+`session_id`/`participant_id` (which name the stream in the *input's*
+namespace, not the decoded file's) — so a citation can only ever name the
+stream it came from. One message reassembled from several input records still
+carries a single covering span. See
 [Provenance](../concepts.md#provenance-spans-coverage-origins).
 
-## Mark what you couldn't decode
+## Coverage is handled for you
 
-A decoder must never *silently* drop input. Whatever it can't parse — a gap,
-a truncated message, an unknown sub-protocol — it names with an
-{class}`~zpf.Undecoded` block over the same logical offsets, with a reason:
+A decoder must never *silently* drop input. The **coverage guarantee** is
+that within each input stream, every offset is either covered by a decoded
+record's span or named by an {class}`~zpf.Undecoded` block — never both,
+never neither.
+
+On a clean exit `decode_stage` marks every byte you left uncited as
+Undecoded: `skipped` for data the decoder passed over, `tcp-gap` for a
+reassembly hole. So the guarantee holds without a single `undecoded()` call.
+When the decoder wants to make its own stronger claim — `undecodable` means
+it *tried and could not parse* the bytes, which auto-fill never asserts on
+your behalf — mark it explicitly:
 
 ```python
-writer.undecoded(source, 0, 0, 48, 77, reason="incomplete request", decoder=decoder)
-#                ^source ^sid ^pid ^off_start/off_end
+dec.undecoded(stream, 48, 77, reason="undecodable")
+#                     ^off_start/off_end (logical offsets of this stream)
 ```
+
+Auto-fill covers only what's left, and raises rather than overriding an
+explicit marker. Pass `fill_undecoded=False` to opt out entirely and mark
+everything yourself.
 
 ## Check the coverage guarantee
 
-The **coverage guarantee**: within each input stream, every offset is either
-covered by a decoded record's span or named by an Undecoded block — never
-both, never neither. {func}`zpf.check_coverage` verifies it, returning the
-violations (empty when it holds):
+{func}`zpf.check_coverage` verifies it after the fact, returning the
+violations (empty when it holds) — with auto-fill on, it is `[]` by
+construction:
 
 ```python
 findings = zpf.check_coverage("rest_decoded.zpf", "rest_raw.zpf")
@@ -90,4 +134,6 @@ file](validate.md#reading-the-diagnostics).
   and [provenance](../concepts.md#provenance-spans-coverage-origins) — the
   normative model, including how decode stages chain (`raw → tls-records →
   http`).
-- The [API reference](../../api/transform.md) for {func}`zpf.check_coverage`.
+- The API reference for [`zpf.decode`](../../api/decode.md),
+  [`zpf.reassembly`](../../api/reassembly.md), and
+  [`zpf.transform`](../../api/transform.md) ({func}`zpf.check_coverage`).

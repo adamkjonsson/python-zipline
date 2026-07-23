@@ -8,7 +8,9 @@
 :maxdepth: 1
 
 reader
+reassembly
 writer
+decode
 transform
 blocks
 binary
