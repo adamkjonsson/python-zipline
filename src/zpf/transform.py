@@ -29,6 +29,7 @@ import time
 from pathlib import Path
 from typing import IO, TYPE_CHECKING
 
+from zpf._intervals import complement, intersections
 from zpf.blocks import Origin, SourceKind
 from zpf.errors import Diagnostic, ZpfError
 from zpf.order import SEQ_SPACE, causal_merge, record_end
@@ -307,11 +308,11 @@ def _check_stream(
     session_id, pid = key
     where = f"input stream (session {session_id}, pid {pid})"
     findings: list[Diagnostic] = []
-    for start, end in _intersections(sorted(spans), sorted(undecoded)):
+    for start, end in intersections(sorted(spans), sorted(undecoded)):
         message = f"{where}: [{start}, {end}) is both decoded and marked Undecoded"
         findings.append(Diagnostic(start, "coverage-overlap", message))
     covered = sorted(spans + undecoded)
-    for start, end in _gaps(covered, extent):
+    for start, end in complement(covered, extent):
         message = f"{where}: [{start}, {end}) is neither decoded nor marked Undecoded"
         findings.append(Diagnostic(start, "coverage-gap", message))
     for start, end in covered:
@@ -323,34 +324,3 @@ def _check_stream(
     return findings
 
 
-def _gaps(intervals: list[tuple[int, int]], extent: int) -> list[tuple[int, int]]:
-    """Return the sub-ranges of ``[0, extent)`` not covered by ``intervals``."""
-    gaps: list[tuple[int, int]] = []
-    position = 0
-    for start, end in intervals:  # sorted
-        if start > position:
-            gaps.append((position, min(start, extent)))
-        position = max(position, end)
-        if position >= extent:
-            break
-    if position < extent:
-        gaps.append((position, extent))
-    return [(start, end) for start, end in gaps if start < end]
-
-
-def _intersections(
-    first: list[tuple[int, int]], second: list[tuple[int, int]]
-) -> list[tuple[int, int]]:
-    """Return the pairwise intersections of two sorted interval lists."""
-    result: list[tuple[int, int]] = []
-    i = j = 0
-    while i < len(first) and j < len(second):
-        start = max(first[i][0], second[j][0])
-        end = min(first[i][1], second[j][1])
-        if start < end:
-            result.append((start, end))
-        if first[i][1] <= second[j][1]:
-            i += 1
-        else:
-            j += 1
-    return result
