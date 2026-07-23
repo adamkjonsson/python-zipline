@@ -59,6 +59,7 @@ if TYPE_CHECKING:
     from typing import Self
 
     from zpf.blocks import Origin, Span
+    from zpf.reader import FileReader
 
 _KIND_NAMES = {"capture": SourceKind.CAPTURE, "zpf-input": SourceKind.ZPF_INPUT}
 
@@ -101,6 +102,41 @@ class ParticipantHandle:
 
     session_id: int
     pid: int
+
+
+@dataclass(frozen=True)
+class DerivedInput:
+    """The output scaffolding :meth:`FileWriter.derive_from` built from an input.
+
+    Attributes:
+        source: The declared ``zpf-input`` Source, to cite input ranges
+            against.
+        sessions: Output :class:`SessionWriter` per *input* session id.
+        participants: Output :class:`ParticipantHandle` per input
+            ``(session_id, participant_id)`` pair — the same ids as the
+            input, so spans and Undecoded ranges line up.
+
+    """
+
+    source: SourceHandle
+    sessions: dict[int, SessionWriter]
+    participants: dict[tuple[int, int], ParticipantHandle]
+
+    def handle(self, participant: Participant) -> ParticipantHandle:
+        """Return the output handle re-declared for an input participant.
+
+        Args:
+            participant: A participant descriptor read from the input.
+
+        Returns:
+            The matching output :class:`ParticipantHandle`.
+
+        Raises:
+            KeyError: If the participant was not part of the input this
+                scaffolding was built from.
+
+        """
+        return self.participants[participant.session_id, participant.participant_id]
 
 
 def _allocate(used: set[int], explicit: int | None, hint: int) -> tuple[int, int]:
@@ -161,17 +197,16 @@ class FileWriter:
         self._closed = False
         self._ended = False
         flags = FileFlags.SINGLE_CLOCK if single_clock else FileFlags(0)
-        self._emit(
-            FileHeader(
-                tick_hz=tick_hz,
-                time_epoch=time_epoch,
-                creator=creator,
-                produced_by=produced_by,
-                produced_at=produced_at,
-                flags=flags,
-                comment=comment,
-            )
+        self._header = FileHeader(
+            tick_hz=tick_hz,
+            time_epoch=time_epoch,
+            creator=creator,
+            produced_by=produced_by,
+            produced_at=produced_at,
+            flags=flags,
+            comment=comment,
         )
+        self._emit(self._header)
 
     def __enter__(self) -> Self:
         return self
@@ -188,6 +223,11 @@ class FileWriter:
     def closed(self) -> bool:
         """Whether the writer has been closed."""
         return self._closed
+
+    @property
+    def header(self) -> FileHeader:
+        """The File Header written when this file was created."""
+        return self._header
 
     def add_source(
         self,
@@ -295,6 +335,98 @@ class FileWriter:
         )
         self._session_ids.add(chosen)
         return SessionWriter(self._emit, self._default_source, chosen)
+
+    def derive_from(
+        self,
+        reader: FileReader,
+        *,
+        uri: str | None = None,
+        digest: str | None = None,
+        proto: str | None = None,
+        comment: str | None = None,
+    ) -> DerivedInput:
+        """Scaffold this file as one derived from ``reader``.
+
+        Declares the ``zpf-input`` Source (hashing the input when no
+        ``digest`` is given), then mirrors the input's sessions and
+        participants onto this writer, re-declaring every participant under
+        the *same* ids so spans and Undecoded ranges need no translation.
+
+        The File Header is written when the file is created, so this method
+        cannot copy ``tick_hz``/``time_epoch`` onto it — it checks they
+        already agree and raises if they do not. Use :func:`zpf.decode_stage`
+        to have the header set for you.
+
+        ``isn`` is deliberately not copied: it describes the input's raw TCP
+        stream, which the derived records are no longer in. Sessions are not
+        marked sequenced, since a decoder that walks one stream at a time
+        does not emit a causal order across them.
+
+        Args:
+            reader: The open input file.
+            uri: Where the input lives; defaults to the path it was opened
+                from.
+            digest: Content hash of the input; computed with SHA-256 when
+                omitted.
+            proto: Protocol for the output sessions (e.g. ``"http"``);
+                defaults to the input's.
+            comment: Free-text note for the Source.
+
+        Returns:
+            The :class:`DerivedInput` scaffolding: source handle, session
+            writers, and the participant map.
+
+        Raises:
+            ZpfError: If the input has no File Header, or its time base
+                disagrees with this file's.
+
+        """
+        header = reader.header
+        if header is None:
+            msg = "input file has no File Header to derive from"
+            raise ZpfError(msg)
+        self._check_time_base(header)
+        source = self.add_source(
+            SourceKind.ZPF_INPUT,
+            uri=uri if uri is not None else reader.path,
+            digest=digest if digest is not None else reader.digest(),
+            comment=comment,
+        )
+        sessions: dict[int, SessionWriter] = {}
+        participants: dict[tuple[int, int], ParticipantHandle] = {}
+        for session in reader.sessions():
+            out = self.begin_session(
+                proto=proto if proto is not None else session.proto,
+                key=session.key,
+                session_id=session.session_id,
+            )
+            sessions[session.session_id] = out
+            for participant in session.participants:
+                participants[session.session_id, participant.participant_id] = out.participant(
+                    participant.endpoints or None,
+                    tcp_role=participant.tcp_role,
+                    identity=participant.identity,
+                    pid=participant.participant_id,
+                )
+        return DerivedInput(source=source, sessions=sessions, participants=participants)
+
+    def _check_time_base(self, header: FileHeader) -> None:
+        """Reject an input whose timestamps would not mean the same thing here."""
+        mine = self._header
+        if header.tick_hz != mine.tick_hz:
+            msg = (
+                f"input tick_hz {header.tick_hz} differs from this file's "
+                f"{mine.tick_hz}; create the output with tick_hz={header.tick_hz} "
+                "(or use zpf.decode_stage, which copies it for you)"
+            )
+            raise ZpfError(msg)
+        if header.time_epoch != mine.time_epoch:
+            msg = (
+                f"input time_epoch {header.time_epoch} differs from this file's "
+                f"{mine.time_epoch}; create the output with "
+                f"time_epoch={header.time_epoch} (or use zpf.decode_stage)"
+            )
+            raise ZpfError(msg)
 
     def undecoded(
         self,

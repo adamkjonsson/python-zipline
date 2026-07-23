@@ -31,6 +31,7 @@ Example:
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import os
 from dataclasses import dataclass, field
@@ -62,6 +63,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
     from types import TracebackType
     from typing import Self
+
+_DIGEST_CHUNK = 1 << 16
 
 _MAGIC_BYTES = b"FPIZ"  # the little-endian ZIPF magic, at file offset 8
 
@@ -247,6 +250,8 @@ class FileReader:
             ``"nonconformant"`` entries for blocks isolated by the
             semantic checker in lenient mode.
         strict: Whether semantic violations and truncation raised instead.
+        path: The filesystem path this file was opened from, or None when
+            it came from an already-open stream.
 
     """
 
@@ -260,6 +265,7 @@ class FileReader:
         stream, owns = _as_stream(source)
         self._stream: IO[Any] = stream
         self._owns_stream = owns
+        self.path = os.fspath(source) if isinstance(source, (str, os.PathLike)) else None
         self.strict = strict
         self.complete = False
         self.truncated = False
@@ -300,6 +306,37 @@ class FileReader:
             self._wrapper = None
         if self._owns_stream:
             self._stream.close()
+
+    def digest(self, algorithm: str = "sha256") -> str:
+        """Hash this file's bytes, for a citing file's Source descriptor.
+
+        A derived file records the digest of the input it was built from,
+        so a consumer can tell whether the input still matches. Reads the
+        whole file and restores the stream position afterwards.
+
+        Args:
+            algorithm: Any :mod:`hashlib` algorithm name.
+
+        Returns:
+            The digest in the spec's ``"<alg>:<hex>"`` form.
+
+        Raises:
+            ZpfError: If the reader is closed.
+
+        """
+        if self._closed:
+            msg = "reader is closed"
+            raise ZpfError(msg)
+        stream = self._stream
+        position = stream.tell()
+        digest = hashlib.new(algorithm)
+        try:
+            stream.seek(0)
+            while chunk := stream.read(_DIGEST_CHUNK):
+                digest.update(chunk if isinstance(chunk, bytes) else chunk.encode("utf-8"))
+        finally:
+            stream.seek(position)
+        return f"{algorithm}:{digest.hexdigest()}"
 
     @property
     def face(self) -> str:
