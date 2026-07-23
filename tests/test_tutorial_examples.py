@@ -68,8 +68,9 @@ def _run(script: str, cwd: Path) -> subprocess.CompletedProcess[str]:
         (
             ("07_coverage.py",),
             (
-                "with the Undecoded marker: []",  # coverage guarantee holds
-                "without it: coverage-gap",  # ... and is caught when it doesn't
+                "auto-fill on:  []",  # decode_stage marked the tail for us
+                "auto-filled reason='skipped'",  # ... as skipped, not undecodable
+                "auto-fill off: coverage-gap",  # and the hole is caught without it
             ),
         ),
     ],

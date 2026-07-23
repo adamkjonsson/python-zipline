@@ -317,13 +317,14 @@ explicit decision before anyone builds it.
 | 4 | Auto-`Undecoded` for gaps and uncited regions | coverage burden | writer |
 | 5 | `produced_at` accepts `datetime` | the `datetime` helper | writer |
 | 6 | Causal output order; conditional `SEQUENCED` | input interleaving lost by stream-at-a-time decoding | both |
+| 7 | Documentation revised for stages 1–5 | docs still teach the pre-stage-1 manual path | docs |
 
 Proposals 1–2 are independent and could ship first (pure reader additions).
 Proposal 3 depends on 1; proposal 4 depends on 3; proposal 6 depends on 3.
-Proposal 5 is independent and trivial. All are backward compatible: the existing
-handle-based path in
-[`06_write_decoder.py`](docs/user/examples/06_write_decoder.py) keeps working
-unchanged.
+Proposal 5 is independent and trivial. Proposal 7 (documentation) depends on
+1–5 being implemented. All are backward compatible: the existing handle-based
+path in [`06_write_decoder.py`](docs/user/examples/06_write_decoder.py) keeps
+working unchanged.
 
 ## Implementation checklist
 
@@ -409,3 +410,38 @@ Ordered to respect the dependencies above (5 can be done at any point).
   declaration. **Do not** carry `seq_start` onto decoded records to work around
   the skewed-clock case without an explicit decision — it goes beyond the
   standard. *(Depends on 3.)*
+- [x] **7. Revise the documentation for stages 1–5 (docs).** The prose, examples,
+  and API reference still teach the pre-stage-1 manual path; bring them up to
+  date with everything shipped. *(Depends on 1–5; **excludes stage 6**, which is
+  not yet implemented — do not document causal ordering or a `sequenced=` option
+  for decode stages.)* One deviation from the scope below: the `produced_at`
+  datetime note landed in the decode-stage how-to and the API docstrings rather
+  than `concepts.md`, which does not discuss header fields at all — forcing it
+  there would have been the wrong altitude. Scope:
+  - **API reference.** Add autodoc pages `docs/api/reassembly.md` (`zpf.reassembly`)
+    and `docs/api/decode.md` (`zpf.decode`), and list them in the
+    [`docs/api/index.md`](docs/api/index.md) toctree. `zpf/_intervals.py` is
+    private — leave it out. The other pages are `automodule`, so the new public
+    members on existing modules (`SessionReader.reassemble`, `FileReader.path` /
+    `digest`, `FileWriter.derive_from`, `DerivedInput`, `unix_seconds`) surface
+    once they have docstrings (they do) — just verify the build.
+  - **Decoder tutorial & how-to.** Rewrite
+    [`docs/user/tutorial-decoding.md`](docs/user/tutorial-decoding.md) and
+    [`docs/user/howto/decode_stage.md`](docs/user/howto/decode_stage.md) around
+    `zpf.decode_stage` + `reassemble()`/`segments()` + `cite()`, replacing the
+    hand-rolled `hashlib`, participant-map dict, and manual-`Undecoded` steps.
+    Show `fill_undecoded` covering the rest by construction, and the
+    `skipped` vs `tcp-gap` vs explicit-`undecodable` reason distinction.
+  - **Examples.** Update [`05_rest_raw_input.py`](docs/user/examples/05_rest_raw_input.py),
+    [`06_write_decoder.py`](docs/user/examples/06_write_decoder.py), and
+    [`07_coverage.py`](docs/user/examples/07_coverage.py) to the ergonomic path.
+    These are executed verbatim by
+    [`tests/test_tutorial_examples.py`](tests/test_tutorial_examples.py) and
+    `{literalinclude}`-d into the tutorials, so keep them runnable and update
+    that test's expected-output assertions in lockstep.
+  - **Concepts.** Note in [`docs/user/concepts.md`](docs/user/concepts.md) that
+    `produced_at` accepts a `datetime`, and that the reassembly view is the
+    intended way to consume input streams.
+  - **Verify.** `.venv/bin/sphinx-build docs docs/_build/html` clean (no new
+    warnings) and `.venv/bin/pytest` green, since the example scripts are
+    tested. Keep the note that the low-level handle-based path still works.
