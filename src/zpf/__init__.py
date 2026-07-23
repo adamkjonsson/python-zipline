@@ -68,6 +68,7 @@ from zpf.writer import (
     SessionWriter,
     SourceHandle,
     create,
+    unix_seconds,
 )
 
 __version__ = "0.1.0"
@@ -135,5 +136,6 @@ __all__ = [
     "seq_geq",
     "seq_leq",
     "seq_lt",
+    "unix_seconds",
     "verify_sequenced",
 ]
