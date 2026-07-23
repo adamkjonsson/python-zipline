@@ -266,9 +266,15 @@ Ordered to respect the dependencies above (5 can be done at any point).
   welding across them. Implement `segments()`, `chunks()`, `datagrams()`,
   `reassembled()`, and `is_stream_oriented`. *(Accessor named `reassemble()`,
   not `streams()`; stream-only methods raise on packet-oriented streams.)*
-- [ ] **2. Span helpers (reader).** Add `StreamView.cite(off_start, off_end)`
+- [x] **2. Span helpers (reader).** Add `StreamView.cite(off_start, off_end)`
   and `Segment.cite(local_start, local_end)` returning a `zpf.Span` with
-  `source_id`/`session_id`/`participant_id` pre-filled. *(Depends on 1.)*
+  `session_id`/`participant_id` pre-filled. *(Depends on 1.)* **Correction to
+  the proposal above:** the view cannot supply `source_id`. A span's
+  `source_id` names a Source in the *citing* file, so it is the id the
+  decoder's own writer returns for its `zpf-input` source — the file being
+  read has no way to know it. It is passed per call (`source=`) or bound once
+  with the new `StreamView.cited_as(handle)`; stage 3's `derive_from` is where
+  that binding becomes automatic.
 - [ ] **3. Derive-from-input scaffolding (both).** Add `writer.derive_from(reader)`
   (copies `tick_hz`/`time_epoch`, declares the `zpf-input` Source with digest,
   re-declares participants with explicit `pid=`, returns source handle +

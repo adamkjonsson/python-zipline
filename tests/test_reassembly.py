@@ -199,6 +199,128 @@ def test_reassemble_returns_one_view_per_participant_in_order():
         assert [v.reassembled() for v in views] == [b"GET", b"200"]
 
 
+# --- Span helpers ---------------------------------------------------------------------
+
+
+def cited_stream() -> zpf.StreamView:
+    def fill(s: zpf.SessionWriter) -> None:
+        p = s.participant("10.0.0.1:51000", isn=1000)
+        s.record(p, ts=1, payload=b"GET /a\r\n", seq_start=1001)
+        s.record(p, ts=2, payload=b"GET /b\r\n", seq_start=1009)
+
+    return only_view(fill)
+
+
+def test_cite_fills_in_the_inputs_ids():
+    view = cited_stream()
+    assert view.cite(0, 8, source=3) == zpf.Span(
+        source_id=3, session_id=7, participant_id=0, off_start=0, off_end=8
+    )
+
+
+def test_cite_accepts_a_source_handle():
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1) as writer:
+        handle = writer.add_source("zpf-input", uri="raw.zpf")
+        span = cited_stream().cite(0, 4, source=handle)
+    assert span.source_id == handle.source_id
+
+
+def test_cited_as_binds_the_source_once():
+    view = cited_stream().cited_as(5)
+    assert view.cite(0, 8).source_id == 5
+    assert view.cite(0, 8, source=9).source_id == 9  # per-call override still wins
+
+
+def test_cite_without_a_source_explains_why_it_cannot_guess():
+    with pytest.raises(zpf.ZpfError, match="citing file's id namespace"):
+        cited_stream().cite(0, 8)
+
+
+def test_cite_rejects_a_non_source():
+    with pytest.raises(zpf.ZpfError, match="SourceHandle"):
+        cited_stream().cite(0, 8, source="zpf-input")
+
+
+def test_segment_cite_is_relative_to_the_segment():
+    view = cited_stream().cited_as(2)
+    (segment,) = view.segments()
+    assert segment.data == b"GET /a\r\nGET /b\r\n"
+    # The second message sits at segment offset 8; cite() adds the run's start.
+    assert segment.cite(8, 16) == zpf.Span(
+        source_id=2, session_id=7, participant_id=0, off_start=8, off_end=16
+    )
+
+
+def test_segment_cite_offsets_are_absolute_after_a_gap():
+    def fill(s: zpf.SessionWriter) -> None:
+        p = s.participant("a", isn=1000)
+        s.record(p, ts=1, payload=b"AAAA", seq_start=1001)  # off 0..4
+        s.record(p, ts=2, payload=b"CCCC", seq_start=1009)  # off 8..12
+
+    view = only_view(fill).cited_as(1)
+    _, _, second = view.chunks()
+    # Local offset 0 of the post-gap run is stream offset 8, not 4.
+    assert second.cite(0, 4) == zpf.Span(
+        source_id=1, session_id=7, participant_id=0, off_start=8, off_end=12
+    )
+
+
+@pytest.mark.parametrize(("start", "end"), [(0, 17), (-1, 4), (5, 2), (20, 24)])
+def test_segment_cite_rejects_a_range_outside_the_run(start: int, end: int):
+    (segment,) = cited_stream().cited_as(1).segments()
+    with pytest.raises(zpf.ZpfError, match="outside"):
+        segment.cite(start, end)
+
+
+def test_a_hand_built_segment_cannot_cite():
+    segment = zpf.Segment(data=b"abc", off_start=0, off_end=3, ts=1)
+    with pytest.raises(zpf.ZpfError, match="no stream view"):
+        segment.cite(0, 3)
+
+
+def test_the_view_is_not_part_of_segment_equality():
+    (segment,) = cited_stream().segments()
+    assert segment == zpf.Segment(
+        data=b"GET /a\r\nGET /b\r\n", off_start=0, off_end=16, ts=2
+    )
+    assert "view" not in repr(segment)
+
+
+def test_cited_spans_survive_a_write_read_round_trip():
+    """Spans minted by cite() are writable and read back unchanged."""
+    view = cited_stream()
+    sink = io.BytesIO()
+    with zpf.create(
+        sink, tick_hz=1_000_000, produced_by="t 1.0", produced_at=1_700_000_000
+    ) as writer:
+        source = writer.add_source("zpf-input", uri="raw.zpf")
+        decoder = writer.add_decoder("http/1.1")
+        stream = view.cited_as(source)
+        (segment,) = stream.segments()
+        with writer.begin_session(proto="http", session_id=7) as out:
+            handle = out.participant("10.0.0.1:51000")
+            out.record(
+                handle,
+                ts=segment.ts,
+                payload=segment.data[:8],
+                decoder=decoder,
+                content_type="dec:http-request",
+                spans=(segment.cite(0, 8),),
+            )
+    with zpf.open(io.BytesIO(sink.getvalue())) as decoded:
+        (record,) = decoded.session(7).records()
+        assert record.spans == (
+            zpf.Span(
+                source_id=source.source_id,
+                session_id=7,
+                participant_id=0,
+                off_start=0,
+                off_end=8,
+            ),
+        )
+
+
 def test_views_iterate_independently():
     def fill(s: zpf.SessionWriter) -> None:
         client = s.participant("a", isn=1000)

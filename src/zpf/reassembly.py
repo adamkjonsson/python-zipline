@@ -25,9 +25,10 @@ Obtain views from :meth:`zpf.SessionReader.reassemble`.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from zpf.blocks import Span
 from zpf.errors import ZpfError
 from zpf.order import SEQ_SPACE
 
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     from zpf.blocks import Participant, Record
+    from zpf.writer import SourceHandle
 
 
 @dataclass(frozen=True)
@@ -47,6 +49,8 @@ class Segment:
         off_end: One past the run's last offset (``off_start + len(data)``).
         ts: Completion time of the run — the timestamp of the last record
             that contributed to it, in the file's ``tick_hz`` ticks.
+        view: The stream this run came from, so the segment can
+            :meth:`cite` itself. Excluded from equality and repr.
 
     """
 
@@ -54,6 +58,47 @@ class Segment:
     off_start: int
     off_end: int
     ts: int
+    view: StreamView | None = field(default=None, compare=False, repr=False)
+
+    def cite(
+        self, local_start: int, local_end: int, *, source: SourceHandle | int | None = None
+    ) -> Span:
+        """Cite a range of this run, in offsets relative to its own start.
+
+        The natural call while parsing: a decoder that found a message at
+        ``data[start:end]`` cites ``segment.cite(start, end)`` without
+        adding :attr:`off_start` itself.
+
+        Args:
+            local_start: First byte to cite, relative to this run's start.
+            local_end: One past the last byte, relative to the run's start.
+            source: The ``zpf-input`` Source being cited — see
+                :meth:`StreamView.cite`.
+
+        Returns:
+            A :class:`~zpf.blocks.Span` over the equivalent stream offsets.
+
+        Raises:
+            ZpfError: If the range falls outside this run, or the segment
+                has no stream view to take ids from.
+
+        """
+        if self.view is None:
+            msg = (
+                "this Segment carries no stream view and cannot cite; take segments "
+                "from SessionReader.reassemble() rather than building them by hand"
+            )
+            raise ZpfError(msg)
+        size = len(self.data)
+        if not 0 <= local_start <= local_end <= size:
+            msg = (
+                f"segment-relative range [{local_start}, {local_end}) is outside the "
+                f"run's {size} bytes"
+            )
+            raise ZpfError(msg)
+        return self.view.cite(
+            self.off_start + local_start, self.off_start + local_end, source=source
+        )
 
 
 @dataclass(frozen=True)
@@ -102,10 +147,15 @@ class StreamView:
     """
 
     def __init__(
-        self, participant: Participant, records: Callable[[], Iterator[Record]]
+        self,
+        participant: Participant,
+        records: Callable[[], Iterator[Record]],
+        *,
+        source: SourceHandle | int | None = None,
     ) -> None:
         self._participant = participant
         self._records = records
+        self._source_id = None if source is None else _source_id_of(source)
 
     @property
     def participant(self) -> Participant:
@@ -174,7 +224,7 @@ class StreamView:
                 continue
             if off > cursor:
                 if run:
-                    yield Segment(bytes(run), run_start, cursor, run_ts)
+                    yield Segment(bytes(run), run_start, cursor, run_ts, view=self)
                     run = bytearray()
                 yield Gap(cursor, off)
             if run:
@@ -184,7 +234,7 @@ class StreamView:
             run += payload
             cursor = off + len(payload)
         if run:
-            yield Segment(bytes(run), run_start, cursor, run_ts)
+            yield Segment(bytes(run), run_start, cursor, run_ts, view=self)
 
     def segments(self) -> Iterator[Segment]:
         """Iterate only the stream's contiguous :class:`Segment` runs, skipping holes.
@@ -256,6 +306,75 @@ class StreamView:
                 record=record,
             )
 
+    def cited_as(self, source: SourceHandle | int) -> StreamView:
+        """Return a copy of this view that cites ``source`` by default.
+
+        Bind the output file's ``zpf-input`` Source once, and every later
+        :meth:`cite` call needs only offsets::
+
+            stream = stream.cited_as(writer.add_source("zpf-input", uri=path))
+            span = stream.cite(0, 40)
+
+        Args:
+            source: The declared Source, or its raw ``source_id``.
+
+        Returns:
+            A new view over the same stream, with the source bound.
+
+        """
+        return StreamView(self._participant, self._records, source=source)
+
+    def cite(
+        self, off_start: int, off_end: int, *, source: SourceHandle | int | None = None
+    ) -> Span:
+        """Cite a range of this stream, with the input's ids filled in.
+
+        Saves repeating the input's ``session_id`` and ``participant_id`` on
+        every span, and makes it impossible to cite the wrong stream by
+        accident.
+
+        The ``source`` is not something the input file can supply: a span's
+        ``source_id`` names a Source Descriptor in the *citing* file, so it
+        is the id the decoder's own writer handed back for its ``zpf-input``
+        source. Pass it here, or bind it once with :meth:`cited_as`.
+
+        Args:
+            off_start: First logical stream offset to cite.
+            off_end: One past the last offset to cite.
+            source: The declared ``zpf-input`` Source, or its raw
+                ``source_id``. Optional when bound via :meth:`cited_as`.
+
+        Returns:
+            A :class:`~zpf.blocks.Span` over ``[off_start, off_end)`` of
+            this participant's stream.
+
+        Raises:
+            ZpfError: If no source was given here or bound earlier.
+            EncodeError: If the range is malformed (``off_end`` before
+                ``off_start``, or an offset out of range).
+
+        """
+        return Span(
+            source_id=self._resolve_source(source),
+            session_id=self._participant.session_id,
+            participant_id=self._participant.participant_id,
+            off_start=off_start,
+            off_end=off_end,
+        )
+
+    def _resolve_source(self, source: SourceHandle | int | None) -> int:
+        if source is not None:
+            return _source_id_of(source)
+        if self._source_id is not None:
+            return self._source_id
+        msg = (
+            "cite() needs the zpf-input Source to reference: pass source=<handle from "
+            "writer.add_source('zpf-input', ...)>, or bind it once with "
+            "view.cited_as(handle). A span's source_id lives in the citing file's id "
+            "namespace, so the file being read cannot supply it"
+        )
+        raise ZpfError(msg)
+
     def _origin(self) -> int | None:
         """Return the logical-offset origin from ``isn``, or None until a record fixes it."""
         isn = self._participant.isn
@@ -270,6 +389,20 @@ class StreamView:
                 "datagrams() instead"
             )
             raise ZpfError(msg)
+
+
+def _source_id_of(source: SourceHandle | int) -> int:
+    """Accept a declared Source or a raw source_id, and return the id."""
+    if isinstance(source, int):
+        return source
+    try:
+        return source.source_id
+    except AttributeError:
+        msg = (
+            "source must be a SourceHandle (from writer.add_source) or an int "
+            f"source_id, not {type(source).__name__}"
+        )
+        raise ZpfError(msg) from None
 
 
 def _trim_overlap(payload: bytes, off: int, cursor: int) -> tuple[bytes, int]:
