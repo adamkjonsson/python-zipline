@@ -25,6 +25,8 @@ Where to go next:
 
 - New to the format? Start with the [tutorial](user/tutorial.md), then read
   [Concepts](user/concepts.md) for the mental model behind it.
+- Want a feature in depth? The [guides](user/guides/index.md) explain each
+  capability and how to use it well.
 - Have a task in mind? See the [how-to guides](user/howto/index.md) or the
   [`zpf` command-line tool](user/cli.md).
 - Looking something up? The [API reference](api/index.md) covers every
@@ -34,22 +36,41 @@ Where to go next:
 
 ```{toctree}
 :maxdepth: 2
-:caption: User guide
+:caption: Getting started
 
 user/installation
 user/tutorial
 user/tutorial-decoding
-user/concepts
-user/howto/index
-user/cli
-user/errors
 ```
 
 ```{toctree}
 :maxdepth: 2
-:caption: API reference
+:caption: Guides
+
+user/guides/index
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: Concepts
+
+user/concepts
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: How-to guides
+
+user/howto/index
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: Reference
 
 api/index
+user/cli
+user/errors
 ```
 
 ```{toctree}

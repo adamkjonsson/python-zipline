@@ -110,11 +110,14 @@ Each step is independently shippable — a guide page at a time. Steps 2–6 are
 order-independent; `decoding` first, since it is the highest-value page and
 gives multiple decoders its home immediately.
 
-- [ ] **1. Scaffold the Guides layer.** Create `docs/user/guides/index.md` (a
-  short map of which guide covers which feature) and add a `Guides` toctree
-  caption to [`docs/index.md`](docs/index.md), between "Getting started" and
-  "Concepts". Landing page + empty toctree is enough to start; pages fill in
-  below.
+- [x] **1. Scaffold the Guides layer.** Created `docs/user/guides/index.md` (the
+  landing page explaining the guide/concept/how-to split) with an empty toctree
+  that stages 2–6 populate. Split the flat "User guide" toctree in
+  [`docs/index.md`](docs/index.md) into captioned groups — **Getting started**,
+  **Guides**, **Concepts**, **How-to guides** — with `cli`/`errors` folded into a
+  renamed **Reference** caption alongside `api/index` (matching the plan tree).
+  Added a "Want a feature in depth?" pointer to the landing links. Builds clean
+  under `-W`.
 - [ ] **2. `guides/decoding.md` (flagship).** Reassembly views
   (`reassemble()`, `segments()`/`chunks()`/`datagrams()`), stream-oriented vs
   packet-oriented, `decode_stage`, coverage & `fill_undecoded`. **Advanced:**
