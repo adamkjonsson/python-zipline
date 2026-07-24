@@ -137,9 +137,13 @@ gives multiple decoders its home immediately.
   sessions, and merging captured directions. Links `howto/merge`, the tutorial's
   causal-order step, `concepts`, and `api/order` + `api/transform`; listed on
   `guides/index.md`. Builds clean under `-W`.
-- [ ] **5. `guides/reading.md`.** Opening files, sessions, participants,
-  records/`timeline()`, and laziness/streaming. Link the main tutorial and
-  `api/reader`.
+- [x] **5. `guides/reading.md`.** Opening files (`zpf.open`, faces, seekable
+  sources, lenient vs strict), sessions and participants, the three record
+  iterators (`records()` / `stream()` / `timeline()`), and laziness. Links the
+  main tutorial, `concepts`, the ordering + decoding guides, and `api/reader`;
+  listed on `guides/index.md`. Builds clean under `-W`. (Robustness and the
+  face detail are pointed at `howto/robustness` and `concepts` for now; the
+  stage-6 `faces-and-io` guide can add richer cross-links.)
 - [ ] **6. `guides/faces-and-io.md`.** Binary ⇄ JSONL, conversion, and
   robustness (strict/lenient, truncation, diagnostics). Link `howto/convert`,
   `howto/robustness`, `api/jsonl`, `api/binary`.

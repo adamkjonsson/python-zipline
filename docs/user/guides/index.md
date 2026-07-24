@@ -15,6 +15,8 @@ symbol:
 
 ## Available guides
 
+- **[Reading files](reading.md)** — opening files, sessions and participants,
+  the three record iterators, and laziness.
 - **[Decoding](decoding.md)** — reassembly views, stream vs datagram input,
   writing a decode stage, coverage, and (advanced) multiple decoders and
   decoder chaining.
@@ -28,6 +30,7 @@ symbol:
 :maxdepth: 1
 :hidden:
 
+reading
 decoding
 provenance
 ordering
