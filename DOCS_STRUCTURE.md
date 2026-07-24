@@ -118,12 +118,13 @@ gives multiple decoders its home immediately.
   renamed **Reference** caption alongside `api/index` (matching the plan tree).
   Added a "Want a feature in depth?" pointer to the landing links. Builds clean
   under `-W`.
-- [ ] **2. `guides/decoding.md` (flagship).** Reassembly views
+- [x] **2. `guides/decoding.md` (flagship).** Reassembly views
   (`reassemble()`, `segments()`/`chunks()`/`datagrams()`), stream-oriented vs
   packet-oriented, `decode_stage`, coverage & `fill_undecoded`. **Advanced:**
-  multiple decoders per session, decoder chaining. Cross-link
+  multiple decoders per session, decoder chaining. Cross-links
   `tutorial-decoding`, `howto/decode_stage`, `concepts` provenance, and the
-  `api/decode` + `api/reassembly` pages.
+  `api/decode` + `api/reassembly` pages; listed on `guides/index.md`. Builds
+  clean under `-W`.
 - [ ] **3. `guides/provenance.md`.** Spans, coverage, origins, and chaining
   (`raw → tls → http`). Narrative built on the `concepts.md` provenance section
   (which stays normative). Link `howto/validate` and `api/transform`.

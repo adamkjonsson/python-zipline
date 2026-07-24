@@ -13,7 +13,15 @@ symbol:
   link down into it rather than restate it;
 - a [how-to](../howto/index.md) is the short recipe once you know the feature.
 
+## Available guides
+
+- **[Decoding](decoding.md)** — reassembly views, stream vs datagram input,
+  writing a decode stage, coverage, and (advanced) multiple decoders and
+  decoder chaining.
+
 ```{toctree}
 :maxdepth: 1
+:hidden:
 
+decoding
 ```
