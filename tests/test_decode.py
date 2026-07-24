@@ -461,3 +461,59 @@ def test_streams_are_paired_with_the_matching_output_participant():
         assert client.is_stream_oriented
         assert client.reassembled() == REQUEST
         assert dec.streams() is dec.streams()  # cached
+
+
+# --- multiple decoders per session ----------------------------------------------------
+
+
+def test_records_can_use_more_than_one_decoder_in_a_session():
+    raw = raw_file()
+    sink = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw), sink, decoder="http/1.1", produced_by="t 1.0", produced_at=1
+    ) as dec:
+        http = dec.decoder
+        other = dec.writer.add_decoder("json/1.0")  # a second decoder, declared up front
+        client, server = dec.streams()
+        dec.record(client, REQUEST, ts=1, cites=(0, len(REQUEST)))  # default -> http
+        dec.record(server, RESPONSE, ts=2, cites=(0, len(RESPONSE)), decoder=other)
+
+    with zpf.open(io.BytesIO(sink.getvalue())) as out:
+        by_pid = {r.sender_pid: r.decoder_id for r in out.session(7).records()}
+        assert by_pid == {0: http.decoder_id, 1: other.decoder_id}
+
+
+def test_undecoded_can_be_attributed_to_a_non_default_decoder():
+    raw = raw_file()
+    sink = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw),
+        sink,
+        decoder="http/1.1",
+        produced_by="t 1.0",
+        produced_at=1,
+        fill_undecoded=False,
+    ) as dec:
+        http = dec.decoder
+        other = dec.writer.add_decoder("json/1.0")
+        client, server = dec.streams()
+        dec.undecoded(client, 0, len(REQUEST))  # default -> http
+        dec.undecoded(server, 0, len(RESPONSE), decoder=other)  # override -> json
+
+    with zpf.open(io.BytesIO(sink.getvalue())) as out:
+        by_pid = {u.participant_id: u.decoder_id for u in out.undecoded}
+        assert by_pid == {0: http.decoder_id, 1: other.decoder_id}
+
+
+def test_autofill_always_uses_the_stage_default_decoder():
+    raw = raw_file()
+    sink = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw), sink, decoder="http/1.1", produced_by="t 1.0", produced_at=1
+    ) as dec:
+        http = dec.decoder
+        dec.writer.add_decoder("json/1.0")  # a second decoder exists, but decode nothing
+
+    with zpf.open(io.BytesIO(sink.getvalue())) as out:
+        # Both streams are auto-filled, all attributed to the stage's decoder.
+        assert {u.decoder_id for u in out.undecoded} == {http.decoder_id}

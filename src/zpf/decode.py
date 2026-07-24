@@ -269,6 +269,7 @@ class DecodeStage:
         off_end: int,
         *,
         reason: str | None = None,
+        decoder: DecoderHandle | None = None,
         comment: str | None = None,
     ) -> None:
         """Mark a range of ``stream`` this stage did not decode.
@@ -279,6 +280,10 @@ class DecodeStage:
             off_end: One past the last offset left undecoded.
             reason: Why, e.g. ``"undecodable"``, ``"tcp-gap"``,
                 ``"truncated"``.
+            decoder: The decoder that declined the region — for a session
+                with more than one decoder. Defaults to the stage's decoder,
+                like :meth:`record`. (The ``fill_undecoded`` auto-fill has no
+                basis to pick, so it always uses the stage's decoder.)
             comment: Free-text note.
 
         """
@@ -293,7 +298,7 @@ class DecodeStage:
             off_start,
             off_end,
             reason=reason,
-            decoder=self._decoder,
+            decoder=decoder if decoder is not None else self._decoder,
             comment=comment,
         )
 
