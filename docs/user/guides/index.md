@@ -18,10 +18,13 @@ symbol:
 - **[Decoding](decoding.md)** — reassembly views, stream vs datagram input,
   writing a decode stage, coverage, and (advanced) multiple decoders and
   decoder chaining.
+- **[Provenance](provenance.md)** — input sources and digests, spans, origins,
+  the coverage guarantee, and following the provenance chain to recover bytes.
 
 ```{toctree}
 :maxdepth: 1
 :hidden:
 
 decoding
+provenance
 ```

@@ -125,9 +125,12 @@ gives multiple decoders its home immediately.
   `tutorial-decoding`, `howto/decode_stage`, `concepts` provenance, and the
   `api/decode` + `api/reassembly` pages; listed on `guides/index.md`. Builds
   clean under `-W`.
-- [ ] **3. `guides/provenance.md`.** Spans, coverage, origins, and chaining
-  (`raw → tls → http`). Narrative built on the `concepts.md` provenance section
-  (which stays normative). Link `howto/validate` and `api/transform`.
+- [x] **3. `guides/provenance.md`.** Input sources + digests, spans, origins
+  (pass-through), the coverage guarantee, and following the chain
+  (`raw → tls → http`) to recover bytes. Narrative built on the `concepts.md`
+  provenance section (which stays normative); links `howto/validate`,
+  `decoding`, and `api/transform`; listed on `guides/index.md`. Builds clean
+  under `-W`.
 - [ ] **4. `guides/ordering.md`.** Causal merge, sequenced files,
   `SINGLE_CLOCK`, `timeline()` vs stored order. Link `howto/merge`, the main
   tutorial's causal-order step, and `api/order`.
