@@ -318,6 +318,7 @@ explicit decision before anyone builds it.
 | 5 | `produced_at` accepts `datetime` | the `datetime` helper | writer |
 | 6 | Causal output order; conditional `SEQUENCED` | input interleaving lost by stream-at-a-time decoding | both |
 | 7 | Documentation revised for stages 1–5 | docs still teach the pre-stage-1 manual path | docs |
+| 8 | `decoder=` override on `DecodeStage.undecoded` | multi-decoder sessions: undecoded attribution is default-only | writer |
 
 Proposals 1–2 are independent and could ship first (pure reader additions).
 Proposal 3 depends on 1; proposal 4 depends on 3; proposal 6 depends on 3.
@@ -445,3 +446,16 @@ Ordered to respect the dependencies above (5 can be done at any point).
   - **Verify.** `.venv/bin/sphinx-build docs docs/_build/html` clean (no new
     warnings) and `.venv/bin/pytest` green, since the example scripts are
     tested. Keep the note that the low-level handle-based path still works.
+- [ ] **8. `decoder=` override on `DecodeStage.undecoded` (writer).** Multiple
+  decoders per session are already fully supported — the format keys `decoder_id`
+  per record, `FileWriter.add_decoder` can be called repeatedly, and
+  `DecodeStage.record` takes a per-record `decoder=` override (declare extras via
+  `dec.writer.add_decoder(...)`). The one asymmetry is attribution of
+  *undecoded* regions: `DecodeStage.undecoded` and the `fill_undecoded` auto-fill
+  always attribute their `Undecoded` blocks to the stage's default decoder.
+  Add a `decoder: DecoderHandle | None = None` override to
+  `DecodeStage.undecoded` (defaulting to `self._decoder`), mirroring `record()`,
+  so a region can be attributed to the decoder that actually declined it. Auto-fill
+  stays on the default decoder — it has no basis to pick a specific one — so note
+  that in the docstring. Until this lands, the escape hatch is
+  `dec.writer.undecoded(dec.source, ..., decoder=other)`. *(Depends on 3–4.)*
