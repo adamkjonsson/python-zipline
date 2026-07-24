@@ -131,9 +131,12 @@ gives multiple decoders its home immediately.
   provenance section (which stays normative); links `howto/validate`,
   `decoding`, and `api/transform`; listed on `guides/index.md`. Builds clean
   under `-W`.
-- [ ] **4. `guides/ordering.md`.** Causal merge, sequenced files,
-  `SINGLE_CLOCK`, `timeline()` vs stored order. Link `howto/merge`, the main
-  tutorial's causal-order step, and `api/order`.
+- [x] **4. `guides/ordering.md`.** Why timestamps aren't enough (seq/ack
+  happens-before), the three consumption levels (`timeline()` / `stream()` /
+  `causal_merge`), sequenced sessions + `verify()`, `SINGLE_CLOCK` for hint-less
+  sessions, and merging captured directions. Links `howto/merge`, the tutorial's
+  causal-order step, `concepts`, and `api/order` + `api/transform`; listed on
+  `guides/index.md`. Builds clean under `-W`.
 - [ ] **5. `guides/reading.md`.** Opening files, sessions, participants,
   records/`timeline()`, and laziness/streaming. Link the main tutorial and
   `api/reader`.

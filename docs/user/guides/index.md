@@ -20,6 +20,9 @@ symbol:
   decoder chaining.
 - **[Provenance](provenance.md)** — input sources and digests, spans, origins,
   the coverage guarantee, and following the provenance chain to recover bytes.
+- **[Ordering](ordering.md)** — causal order from `seq`/`ack`, `timeline()`,
+  sequenced sessions and `verify()`, `SINGLE_CLOCK`, and merging captured
+  directions.
 
 ```{toctree}
 :maxdepth: 1
@@ -27,4 +30,5 @@ symbol:
 
 decoding
 provenance
+ordering
 ```
