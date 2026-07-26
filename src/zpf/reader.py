@@ -340,12 +340,12 @@ class FileReader:
 
     @property
     def face(self) -> str:
-        """The detected (or forced) face: ``"binary"`` or ``"jsonl"``."""
+        """The detected (or forced) face — ``"binary"`` or ``"jsonl"``."""
         return self._face
 
     @property
     def file_kind(self) -> str | None:
-        """The file's inferred kind: raw, decode-stage, pass-through, or None."""
+        """The file's inferred kind — raw, decode-stage, pass-through, or None."""
         return self._checker.file_kind
 
     @property

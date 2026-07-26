@@ -168,14 +168,28 @@ gives multiple decoders its home immediately.
   Advanced subsections, too thin for a page of its own; content stays with its
   feature either way (decision B). Builds clean under `-W`, and all 100+ internal
   anchor links were verified to resolve in the built HTML.
-- [ ] **8. Verify.** `.venv/bin/sphinx-build -W docs docs/_build/html` clean (no
-  warnings, no broken xrefs, no orphaned pages), and every guide reachable from
-  the toctree.
-  - **Known, pre-existing:** ~148 Python xrefs across the whole doc set render
-    as unlinked literals, because `api/*` documents symbols under their defining
-    module (`zpf.binary.BlockReader`) while prose cites the re-export
-    (`{class}`~zpf.BlockReader``). `nitpicky` is off, so `-W` does not catch it.
-    `concepts.md` works around it per-link with an explicit target
-    (`` {func}`zpf.binary_to_jsonl <zpf.jsonl.binary_to_jsonl>` ``); a global fix
-    (canonical aliases, or `automodule:: zpf`) belongs here rather than in any
-    one page.
+- [x] **8. Verify.** `.venv/bin/sphinx-build -W docs docs/_build/html` is clean;
+  all 35 markdown pages build, none is orphaned, and all five guides sit in the
+  `guides/index` toctree. 2067 internal anchor links resolve.
+  - **Fixed the pre-existing xref breakage.** ~148 Python references across the
+    whole doc set rendered as unlinked literals, because `api/*` documents each
+    symbol under its defining module (`zpf.binary.BlockReader`) while the prose
+    cites the re-export (`` {class}`~zpf.BlockReader` ``). Rather than rewrite
+    every link, `docs/conf.py` gained a `missing-reference` hook that maps
+    `zpf.Foo` → `zpf.<module>.Foo` from `zpf.__all__` (members like
+    `zpf.FileWriter.derive_from` included). 148 → 6, and the 6 left are
+    standard-library names.
+  - **The build now catches broken references.** `nitpicky = True`, with a
+    documented `nitpick_ignore` for the stdlib names (linking them needs
+    intersphinx, which would make every docs build depend on the network) and
+    two private-alias/`tuple[...]` artifacts. Verified by probe: a bad
+    `{func}` target, a dead heading anchor, and a link to a nonexistent page
+    each fail `-W` (exit 1) — the anchor and page cases were already caught by
+    MyST; the xref case is new.
+  - **Six real docstring defects surfaced and were fixed** in `blocks.py`,
+    `reader.py` (×2), `transform.py`, and `decode.py`: a colon on the first
+    line of a `Returns:` block makes napoleon read the text before it as the
+    *return type*, so that prose was being dropped from the rendered page. The
+    trap is now written down in [`dev/contributing.md`](docs/dev/contributing.md)
+    alongside the re-export and `nitpicky` conventions. `ruff check` clean on
+    every touched file; 308 tests pass.
