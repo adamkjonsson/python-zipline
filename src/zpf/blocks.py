@@ -380,7 +380,7 @@ class Block:
         content byte-for-byte; otherwise the canonical encoding is produced.
 
         Returns:
-            The block content: fixed body, options, and padding — always a
+            The block content — fixed body, options, and padding, always a
             multiple of 4 bytes.
 
         """

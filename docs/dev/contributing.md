@@ -40,6 +40,10 @@ The rules in `CLAUDE.md` and `ruff.toml` are enforced, not aspirational:
   `Raises`, `Attributes`, `Example`) need a blank line before the closing
   `"""`. Module docstrings stay Google-style reStructuredText (napoleon reads
   them); MyST is for the doc *pages*, not docstrings.
+- **Keep a colon out of the first line of a `Returns:` block** (and out of a
+  one-line property docstring). Napoleon reads `text: more text` there as
+  `type: description`, so the words before the colon vanish from the rendered
+  page and turn into a bogus type link. Use an em dash instead.
 - The `ruff.toml` lint set is broad (pydocstyle, annotations, bugbear,
   simplify, pylint, …). Tests are exempt from docstring and return-annotation
   rules via per-file ignores; nothing else is exempt.
@@ -49,7 +53,16 @@ The rules in `CLAUDE.md` and `ruff.toml` are enforced, not aspirational:
 - User and developer pages are **MyST markdown** under `docs/`; no new `.rst`.
 - Cross-reference with MyST roles (`` {func}`zpf.open` ``,
   `` {class}`zpf.FileReader` ``) rather than bare code literals, so a rename
-  breaks the build.
+  breaks the build. Cite the **top-level re-export** (`zpf.FileReader`), the
+  way a consumer imports it: `api/*` documents each symbol under the module
+  that defines it, and a `missing-reference` hook in `docs/conf.py` bridges
+  the two using `zpf.__all__`.
+- The build runs with `nitpicky = True`, so an unresolvable reference — a
+  typo, a renamed symbol, a dead heading anchor — is a warning, and `-W`
+  makes it an error. `nitpick_ignore` in `docs/conf.py` lists the handful of
+  genuine exceptions (standard-library names, which would otherwise need a
+  network-dependent intersphinx fetch); don't add to it to silence a real
+  break.
 - Never document behavior beyond the v1.0 spec without an explicit callout
   saying so (see [Conformance strategy](conformance.md#going-beyond-the-standard)).
 - Tutorial and how-to code examples are checked into `docs/user/examples/` and

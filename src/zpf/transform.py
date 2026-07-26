@@ -213,7 +213,7 @@ def check_coverage(
         raw: The predecessor input file the decoded file cites.
 
     Returns:
-        The violations found, empty when the guarantee holds. Categories:
+        The violations found, empty when the guarantee holds — categories
         ``"coverage-gap"`` (an input range neither decoded nor marked),
         ``"coverage-overlap"`` (a range both decoded and Undecoded), and
         ``"coverage-excess"`` (a cited range beyond the input stream).

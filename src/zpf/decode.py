@@ -240,7 +240,8 @@ class DecodeStage:
             payload: The decoded bytes.
             ts: Record time in the file's ticks — per the specification's
                 timestamp rule, the completion time of the last input
-                record the payload came from (a run's :attr:`Segment.ts`).
+                record the payload came from (a run's
+                :attr:`Segment.ts <zpf.reassembly.Segment.ts>`).
             content_type: ``dec:``/``mime:``/``prim:`` payload label.
             cites: The input range this record was built from: an
                 ``(off_start, off_end)`` pair, a ready

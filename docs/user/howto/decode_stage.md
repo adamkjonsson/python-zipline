@@ -3,6 +3,8 @@
 A **decode stage** is a file derived from a raw one by a decoder: its records
 are whole application messages (an HTTP request, a JSON response) instead of
 the transport byte-runs the raw file holds. This is the recipe; the
+[decoding guide](../guides/decoding.md) explains the feature — reassembly
+views, coverage, and the advanced corners — and the
 [decoder tutorial](../tutorial-decoding.md) is the full worked walkthrough,
 built on the same example.
 
@@ -43,18 +45,16 @@ with zpf.decode_stage(
                 )
 ```
 
-`decode_stage` opens the input, copies its `tick_hz`/`time_epoch`, declares
-the `zpf-input` source (hashing the input for the digest), declares the
-decoder, and re-declares each input participant under the same id. To keep
-your own {func}`zpf.create` call instead, {meth}`zpf.FileWriter.derive_from`
-builds the same scaffolding without owning the loop.
+See [the orchestrator](../guides/decoding.md#writing-the-decode-stage) for
+exactly what it copies and declares, and {meth}`zpf.FileWriter.derive_from` to
+build the same scaffolding around your own {func}`zpf.create` call.
 
-The loop above uses {meth}`~zpf.DecodeStream.segments` because HTTP rides
-TCP, a byte stream. For a **UDP** flow — or any stream without sequence
-hints — iterate {meth}`~zpf.DecodeStream.datagrams` instead: one whole
-{class}`~zpf.Datagram` per packet, no reassembly and no gaps.
+The loop above uses {meth}`~zpf.DecodeStream.segments` because HTTP rides TCP,
+a byte stream. A **UDP** flow — or any stream without sequence hints — is a
+sequence of whole {class}`~zpf.Datagram`s instead;
 {attr}`~zpf.DecodeStream.is_stream_oriented` tells the two apart, and the
-byte-stream methods raise on a packet stream:
+byte-stream methods raise on a packet stream
+([why](../guides/decoding.md#stream-oriented-vs-packet-oriented)):
 
 ```python
 for stream in dec.streams():
@@ -73,26 +73,21 @@ Each decoded record carries a **span**: the `[off_start, off_end)` range of
 the input stream its bytes came from, in **logical stream offsets** (0-based
 positions in the reassembled stream, where byte 0 is the first application
 byte). Passing `cites=(off_start, off_end)` to {meth}`~zpf.DecodeStage.record`
-mints the {class}`~zpf.Span` for you, filling in the input's
-`session_id`/`participant_id` (which name the stream in the *input's*
-namespace, not the decoded file's) — so a citation can only ever name the
-stream it came from. One message reassembled from several input records still
-carries a single covering span. See
-[Provenance](../concepts.md#provenance-spans-coverage-origins).
+mints the {class}`~zpf.Span` for you and fills in the input's ids, so a
+citation can only ever name the stream it came from. Pass a ready
+{class}`~zpf.Span` (or several) to cite more than one range. The
+[provenance guide](../guides/provenance.md) covers what consumers do with
+these citations.
 
 ## Coverage is handled for you
 
-A decoder must never *silently* drop input. The **coverage guarantee** is
-that within each input stream, every offset is either covered by a decoded
-record's span or named by an {class}`~zpf.Undecoded` block — never both,
-never neither.
-
-On a clean exit `decode_stage` marks every byte you left uncited as
-Undecoded: `skipped` for data the decoder passed over, `tcp-gap` for a
-reassembly hole. So the guarantee holds without a single `undecoded()` call.
-When the decoder wants to make its own stronger claim — `undecodable` means
-it *tried and could not parse* the bytes, which auto-fill never asserts on
-your behalf — mark it explicitly:
+Within each input stream every offset must be either cited by a decoded record
+or named by an {class}`~zpf.Undecoded` block — never both, never neither. On a
+clean exit `decode_stage` marks whatever you left uncited, so the guarantee
+holds without a single `undecoded()` call
+([how](../guides/decoding.md#coverage-is-handled-for-you)). Mark a region
+yourself when you want the stronger `undecodable` claim — *tried and could not
+parse* — which auto-fill never asserts on your behalf:
 
 ```python
 dec.undecoded(stream, 48, 77, reason="undecodable")
@@ -128,6 +123,8 @@ file](validate.md#reading-the-diagnostics).
 
 ## Where to go next
 
+- [Decoding](../guides/decoding.md) — the feature in full, including reassembly
+  views and (advanced) mixing several decoders in one session.
 - [Tutorial: writing a decoder](../tutorial-decoding.md) — the same steps as
   a runnable, end-to-end example.
 - [Concepts: file kinds](../concepts.md#file-kinds-raw-decode-stage-pass-through)

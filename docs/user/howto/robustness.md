@@ -3,8 +3,10 @@
 Real captures are cut short, and files written by newer tools carry blocks
 this version doesn't know. The format is designed so neither is fatal: a
 reader stops cleanly at a truncation and preserves anything it doesn't
-understand. This guide shows how to read such files deliberately. The
-[errors page](../errors.md) has the underlying model; here is the practice.
+understand. This page shows how to read such files deliberately — the practice.
+The [errors page](../errors.md) has the underlying model, and [Faces and
+I/O](../guides/faces-and-io.md#imperfect-input) places these rules in the
+wider I/O story (they hold identically on both faces).
 
 ## Truncated files
 
@@ -81,6 +83,8 @@ See [Errors: StructuralError](../errors.md#structuralerror-reject-the-file).
 
 ## Where to go next
 
+- [Faces and I/O](../guides/faces-and-io.md) — the feature this recipe belongs
+  to, including the block-level readers that handle a live tail or a pipe.
 - [Errors and diagnostics](../errors.md) — the exception tiers and the
   `Diagnostic` value in full.
 - [Concepts: robustness](../concepts.md#robustness-truncation-unknown-blocks-and-errors)

@@ -110,34 +110,86 @@ Each step is independently shippable — a guide page at a time. Steps 2–6 are
 order-independent; `decoding` first, since it is the highest-value page and
 gives multiple decoders its home immediately.
 
-- [ ] **1. Scaffold the Guides layer.** Create `docs/user/guides/index.md` (a
-  short map of which guide covers which feature) and add a `Guides` toctree
-  caption to [`docs/index.md`](docs/index.md), between "Getting started" and
-  "Concepts". Landing page + empty toctree is enough to start; pages fill in
-  below.
-- [ ] **2. `guides/decoding.md` (flagship).** Reassembly views
+- [x] **1. Scaffold the Guides layer.** Created `docs/user/guides/index.md` (the
+  landing page explaining the guide/concept/how-to split) with an empty toctree
+  that stages 2–6 populate. Split the flat "User guide" toctree in
+  [`docs/index.md`](docs/index.md) into captioned groups — **Getting started**,
+  **Guides**, **Concepts**, **How-to guides** — with `cli`/`errors` folded into a
+  renamed **Reference** caption alongside `api/index` (matching the plan tree).
+  Added a "Want a feature in depth?" pointer to the landing links. Builds clean
+  under `-W`.
+- [x] **2. `guides/decoding.md` (flagship).** Reassembly views
   (`reassemble()`, `segments()`/`chunks()`/`datagrams()`), stream-oriented vs
   packet-oriented, `decode_stage`, coverage & `fill_undecoded`. **Advanced:**
-  multiple decoders per session, decoder chaining. Cross-link
+  multiple decoders per session, decoder chaining. Cross-links
   `tutorial-decoding`, `howto/decode_stage`, `concepts` provenance, and the
-  `api/decode` + `api/reassembly` pages.
-- [ ] **3. `guides/provenance.md`.** Spans, coverage, origins, and chaining
-  (`raw → tls → http`). Narrative built on the `concepts.md` provenance section
-  (which stays normative). Link `howto/validate` and `api/transform`.
-- [ ] **4. `guides/ordering.md`.** Causal merge, sequenced files,
-  `SINGLE_CLOCK`, `timeline()` vs stored order. Link `howto/merge`, the main
-  tutorial's causal-order step, and `api/order`.
-- [ ] **5. `guides/reading.md`.** Opening files, sessions, participants,
-  records/`timeline()`, and laziness/streaming. Link the main tutorial and
-  `api/reader`.
-- [ ] **6. `guides/faces-and-io.md`.** Binary ⇄ JSONL, conversion, and
-  robustness (strict/lenient, truncation, diagnostics). Link `howto/convert`,
-  `howto/robustness`, `api/jsonl`, `api/binary`.
-- [ ] **7. Reconcile how-tos + optional advanced index.** Cross-link each guide
-  and its sibling how-to both ways; trim any how-to that is now a pure duplicate
-  to a pointer. If a single advanced entry point is wanted, add a thin
-  `guides/advanced.md` (or a section on `guides/index.md`) linking the per-guide
-  Advanced subsections — content stays with its feature (decision B).
-- [ ] **8. Verify.** `.venv/bin/sphinx-build -W docs docs/_build/html` clean (no
-  warnings, no broken xrefs, no orphaned pages), and every guide reachable from
-  the toctree.
+  `api/decode` + `api/reassembly` pages; listed on `guides/index.md`. Builds
+  clean under `-W`.
+- [x] **3. `guides/provenance.md`.** Input sources + digests, spans, origins
+  (pass-through), the coverage guarantee, and following the chain
+  (`raw → tls → http`) to recover bytes. Narrative built on the `concepts.md`
+  provenance section (which stays normative); links `howto/validate`,
+  `decoding`, and `api/transform`; listed on `guides/index.md`. Builds clean
+  under `-W`.
+- [x] **4. `guides/ordering.md`.** Why timestamps aren't enough (seq/ack
+  happens-before), the three consumption levels (`timeline()` / `stream()` /
+  `causal_merge`), sequenced sessions + `verify()`, `SINGLE_CLOCK` for hint-less
+  sessions, and merging captured directions. Links `howto/merge`, the tutorial's
+  causal-order step, `concepts`, and `api/order` + `api/transform`; listed on
+  `guides/index.md`. Builds clean under `-W`.
+- [x] **5. `guides/reading.md`.** Opening files (`zpf.open`, faces, seekable
+  sources, lenient vs strict), sessions and participants, the three record
+  iterators (`records()` / `stream()` / `timeline()`), and laziness. Links the
+  main tutorial, `concepts`, the ordering + decoding guides, and `api/reader`;
+  listed on `guides/index.md`. Builds clean under `-W`. (Robustness and the
+  face detail are pointed at `howto/robustness` and `concepts` for now; the
+  stage-6 `faces-and-io` guide can add richer cross-links.)
+- [x] **6. `guides/faces-and-io.md`.** One model in two encodings and when to
+  pick which, face selection on read (`zpf.open` sniffing, `detect_face`,
+  `face=`) and on write (`create(face=...)`), lossless conversion plus the
+  canonicalization caveat, and the flat block layer
+  (`BlockReader`/`BlockWriter`, `JsonlReader`/`JsonlWriter`) for non-seekable
+  sources. Robustness is summarized and delegated to `howto/robustness`.
+  **Advanced:** block pipelines (filter/rewrite, `check=True`) and the
+  single-block helpers. Links `howto/convert`, `howto/robustness`,
+  `tutorial`, `reading`, `concepts`, `api/binary` + `api/jsonl` + `api/blocks`;
+  listed on `guides/index.md`. Every code sample was executed against the
+  library; builds clean under `-W`.
+- [x] **7. Reconcile how-tos + advanced index.** Every guide/how-to pair is now
+  linked both ways: each how-to opens by naming its parent guide and repeats the
+  link under "Where to go next", and [`howto/index.md`](docs/user/howto/index.md)
+  carries the full recipe → guide table. `decode_stage` was the only how-to with
+  real duplication — its orchestrator, stream-vs-datagram, span and coverage
+  narratives are now one-line pointers into `guides/decoding.md`, keeping every
+  code block, and `convert`'s canonicalization note was trimmed the same way. No
+  how-to turned out to be a *pure* duplicate, so none was reduced to a bare
+  pointer. **Advanced index:** added as a section on `guides/index.md` rather
+  than a separate `guides/advanced.md` — only `decoding` and `faces-and-io` have
+  Advanced subsections, too thin for a page of its own; content stays with its
+  feature either way (decision B). Builds clean under `-W`, and all 100+ internal
+  anchor links were verified to resolve in the built HTML.
+- [x] **8. Verify.** `.venv/bin/sphinx-build -W docs docs/_build/html` is clean;
+  all 35 markdown pages build, none is orphaned, and all five guides sit in the
+  `guides/index` toctree. 2067 internal anchor links resolve.
+  - **Fixed the pre-existing xref breakage.** ~148 Python references across the
+    whole doc set rendered as unlinked literals, because `api/*` documents each
+    symbol under its defining module (`zpf.binary.BlockReader`) while the prose
+    cites the re-export (`` {class}`~zpf.BlockReader` ``). Rather than rewrite
+    every link, `docs/conf.py` gained a `missing-reference` hook that maps
+    `zpf.Foo` → `zpf.<module>.Foo` from `zpf.__all__` (members like
+    `zpf.FileWriter.derive_from` included). 148 → 6, and the 6 left are
+    standard-library names.
+  - **The build now catches broken references.** `nitpicky = True`, with a
+    documented `nitpick_ignore` for the stdlib names (linking them needs
+    intersphinx, which would make every docs build depend on the network) and
+    two private-alias/`tuple[...]` artifacts. Verified by probe: a bad
+    `{func}` target, a dead heading anchor, and a link to a nonexistent page
+    each fail `-W` (exit 1) — the anchor and page cases were already caught by
+    MyST; the xref case is new.
+  - **Six real docstring defects surfaced and were fixed** in `blocks.py`,
+    `reader.py` (×2), `transform.py`, and `decode.py`: a colon on the first
+    line of a `Returns:` block makes napoleon read the text before it as the
+    *return type*, so that prose was being dropped from the rendered page. The
+    trap is now written down in [`dev/contributing.md`](docs/dev/contributing.md)
+    alongside the re-export and `nitpicky` conventions. `ruff check` clean on
+    every touched file; 308 tests pass.

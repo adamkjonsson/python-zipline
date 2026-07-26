@@ -3,7 +3,10 @@
 Validation reads a file and reports where it departs from the v1.0
 specification. It answers three separable questions: is the file
 *conformant*, is a SEQUENCED session's stored order *actually* a valid
-ordering, and does a decode stage *cover* its input.
+ordering, and does a decode stage *cover* its input. This is the recipe; the
+features being checked are explained in the
+[provenance](../guides/provenance.md) (coverage) and
+[ordering](../guides/ordering.md) (sequenced order) guides.
 
 ## On the command line
 
@@ -88,6 +91,8 @@ produces most:
 
 ## Where to go next
 
+- [Provenance](../guides/provenance.md) — the coverage guarantee these
+  categories police, and what a derived file's digest buys you.
 - [Errors and diagnostics](../errors.md) — the exception tiers behind these
   findings and the strict-vs-lenient distinction.
 - [Write decode-stage files](decode_stage.md) — where the coverage
