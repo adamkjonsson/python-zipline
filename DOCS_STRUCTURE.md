@@ -155,11 +155,19 @@ gives multiple decoders its home immediately.
   `tutorial`, `reading`, `concepts`, `api/binary` + `api/jsonl` + `api/blocks`;
   listed on `guides/index.md`. Every code sample was executed against the
   library; builds clean under `-W`.
-- [ ] **7. Reconcile how-tos + optional advanced index.** Cross-link each guide
-  and its sibling how-to both ways; trim any how-to that is now a pure duplicate
-  to a pointer. If a single advanced entry point is wanted, add a thin
-  `guides/advanced.md` (or a section on `guides/index.md`) linking the per-guide
-  Advanced subsections — content stays with its feature (decision B).
+- [x] **7. Reconcile how-tos + advanced index.** Every guide/how-to pair is now
+  linked both ways: each how-to opens by naming its parent guide and repeats the
+  link under "Where to go next", and [`howto/index.md`](docs/user/howto/index.md)
+  carries the full recipe → guide table. `decode_stage` was the only how-to with
+  real duplication — its orchestrator, stream-vs-datagram, span and coverage
+  narratives are now one-line pointers into `guides/decoding.md`, keeping every
+  code block, and `convert`'s canonicalization note was trimmed the same way. No
+  how-to turned out to be a *pure* duplicate, so none was reduced to a bare
+  pointer. **Advanced index:** added as a section on `guides/index.md` rather
+  than a separate `guides/advanced.md` — only `decoding` and `faces-and-io` have
+  Advanced subsections, too thin for a page of its own; content stays with its
+  feature either way (decision B). Builds clean under `-W`, and all 100+ internal
+  anchor links were verified to resolve in the built HTML.
 - [ ] **8. Verify.** `.venv/bin/sphinx-build -W docs docs/_build/html` clean (no
   warnings, no broken xrefs, no orphaned pages), and every guide reachable from
   the toctree.

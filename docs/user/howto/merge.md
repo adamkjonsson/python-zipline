@@ -7,7 +7,8 @@ transform** fixes this once: it interleaves the two directions into their
 true causal order and writes a single [SEQUENCED
 pass-through](../concepts.md#sequenced-sessions) file, so every downstream
 reader replays the stored order and never pays for ordering again. Tutorial
-[stage 3](../tutorial.md#3-causal-order) motivates the problem; this guide is
+[stage 3](../tutorial.md#3-causal-order) motivates the problem and the
+[ordering guide](../guides/ordering.md) explains the machinery; this page is
 the task.
 
 ## On the command line
@@ -80,6 +81,8 @@ its inputs; see [Validate a file](validate.md#in-python) and
 
 ## Where to go next
 
+- [Ordering](../guides/ordering.md) — why timestamps aren't enough, and the
+  read-side counterpart (`timeline()`) to baking the order in here.
 - [Concepts: sequenced sessions](../concepts.md#sequenced-sessions) — what
   the flag guarantees and why it's worth baking in.
 - [Validate a file](validate.md) — `zpf validate merged.zpf --verify`

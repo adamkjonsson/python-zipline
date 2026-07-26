@@ -87,6 +87,10 @@ once the file is closed.
   hands-on.
 - [Ordering](ordering.md) — `timeline()` and the causal-order machinery.
 - [Decoding](decoding.md) — consuming streams as reassembled application bytes.
+- [Faces and I/O](faces-and-io.md) — which face you opened, and the block-level
+  readers for sources `zpf.open` can't seek.
+- [Handle imperfect files](../howto/robustness.md) — the recipe for truncation,
+  diagnostics, and choosing strict or lenient.
 - [Concepts](../concepts.md) — the data model behind sessions, participants, and
   records.
 - API reference: [`zpf.reader`](../../api/reader.md).

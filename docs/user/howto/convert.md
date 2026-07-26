@@ -3,7 +3,9 @@
 Every `.zpf` file has [two faces](../concepts.md#two-faces-of-one-model): the
 compact **binary** container and a **JSON-Lines** projection that is easy to
 read, diff, and pipe through `jq`. Converting between them is lossless in
-both directions.
+both directions. This is the recipe; the [faces and I/O
+guide](../guides/faces-and-io.md) is the feature — which face to pick, and the
+block layer the converters are built from.
 
 ## On the command line
 
@@ -64,10 +66,10 @@ assert Path("roundtrip.zpf").read_bytes() == Path("session.zpf").read_bytes()
 ```
 
 ```{note}
-Byte-for-byte equality holds because the files this library writes are already
-in the format's **canonical** encoding. The JSONL face doesn't record binary
-padding or the ordering of options, so a *non-canonically* encoded binary — a
-hand-built file, or one from another tool — comes back **canonicalized**: same
-field values, possibly different bytes. Meaning is always preserved; the exact
-byte layout is preserved only when it was canonical to begin with.
+Byte-for-byte equality holds because this library always writes the format's
+**canonical** encoding. A non-canonically encoded input — hand-built, or from
+another tool — comes back canonicalized: same values, possibly different bytes.
+[Faces and I/O](../guides/faces-and-io.md#what-lossless-guarantees) explains
+which details the JSONL face does not pin down, and why digests are defined
+over the binary form.
 ```

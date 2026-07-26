@@ -28,6 +28,21 @@ symbol:
 - **[Faces and I/O](faces-and-io.md)** — binary vs JSON-Lines, lossless
   conversion, the flat block layer, and reading imperfect files.
 
+## Advanced topics
+
+Advanced material is **not** a bucket of its own: it lives under an
+**Advanced** heading at the end of the guide it extends, so a feature's whole
+story — basic to expert — stays in one place. This is the index into it:
+
+- [More than one decoder in a session](decoding.md#more-than-one-decoder-in-a-session)
+  — a session can mix decoders; pick one per record with `decoder=`.
+- [Decoder chaining](decoding.md#decoder-chaining) — `raw → tls-records → http`
+  as successive decode stages, and how provenance recurses through them.
+- [Block pipelines](faces-and-io.md#block-pipelines) — filter or rewrite a file
+  block by block, in either face, without going through the session API.
+- [One block at a time](faces-and-io.md#one-block-at-a-time) — the
+  single-block JSONL helpers, for tests and fixtures.
+
 ```{toctree}
 :maxdepth: 1
 :hidden:
