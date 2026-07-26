@@ -144,9 +144,17 @@ gives multiple decoders its home immediately.
   listed on `guides/index.md`. Builds clean under `-W`. (Robustness and the
   face detail are pointed at `howto/robustness` and `concepts` for now; the
   stage-6 `faces-and-io` guide can add richer cross-links.)
-- [ ] **6. `guides/faces-and-io.md`.** Binary ⇄ JSONL, conversion, and
-  robustness (strict/lenient, truncation, diagnostics). Link `howto/convert`,
-  `howto/robustness`, `api/jsonl`, `api/binary`.
+- [x] **6. `guides/faces-and-io.md`.** One model in two encodings and when to
+  pick which, face selection on read (`zpf.open` sniffing, `detect_face`,
+  `face=`) and on write (`create(face=...)`), lossless conversion plus the
+  canonicalization caveat, and the flat block layer
+  (`BlockReader`/`BlockWriter`, `JsonlReader`/`JsonlWriter`) for non-seekable
+  sources. Robustness is summarized and delegated to `howto/robustness`.
+  **Advanced:** block pipelines (filter/rewrite, `check=True`) and the
+  single-block helpers. Links `howto/convert`, `howto/robustness`,
+  `tutorial`, `reading`, `concepts`, `api/binary` + `api/jsonl` + `api/blocks`;
+  listed on `guides/index.md`. Every code sample was executed against the
+  library; builds clean under `-W`.
 - [ ] **7. Reconcile how-tos + optional advanced index.** Cross-link each guide
   and its sibling how-to both ways; trim any how-to that is now a pure duplicate
   to a pointer. If a single advanced entry point is wanted, add a thin
@@ -155,3 +163,11 @@ gives multiple decoders its home immediately.
 - [ ] **8. Verify.** `.venv/bin/sphinx-build -W docs docs/_build/html` clean (no
   warnings, no broken xrefs, no orphaned pages), and every guide reachable from
   the toctree.
+  - **Known, pre-existing:** ~148 Python xrefs across the whole doc set render
+    as unlinked literals, because `api/*` documents symbols under their defining
+    module (`zpf.binary.BlockReader`) while prose cites the re-export
+    (`{class}`~zpf.BlockReader``). `nitpicky` is off, so `-W` does not catch it.
+    `concepts.md` works around it per-link with an explicit target
+    (`` {func}`zpf.binary_to_jsonl <zpf.jsonl.binary_to_jsonl>` ``); a global fix
+    (canonical aliases, or `automodule:: zpf`) belongs here rather than in any
+    one page.

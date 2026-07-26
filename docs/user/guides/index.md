@@ -1,8 +1,8 @@
 # Guides
 
 Feature-oriented guides. Each takes one capability of `zpf` — reading files,
-decoding, provenance, ordering — and explains what it is, when to reach for
-it, and how to use it well, including its advanced corners.
+decoding, provenance, ordering, the two faces — and explains what it is, when
+to reach for it, and how to use it well, including its advanced corners.
 
 These sit between the [tutorials](../tutorial.md), which walk a single path
 end to end, and the [API reference](../../api/index.md), which lists every
@@ -25,6 +25,8 @@ symbol:
 - **[Ordering](ordering.md)** — causal order from `seq`/`ack`, `timeline()`,
   sequenced sessions and `verify()`, `SINGLE_CLOCK`, and merging captured
   directions.
+- **[Faces and I/O](faces-and-io.md)** — binary vs JSON-Lines, lossless
+  conversion, the flat block layer, and reading imperfect files.
 
 ```{toctree}
 :maxdepth: 1
@@ -34,4 +36,5 @@ reading
 decoding
 provenance
 ordering
+faces-and-io
 ```
