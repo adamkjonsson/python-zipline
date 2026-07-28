@@ -190,7 +190,7 @@ Each step is independently shippable and leaves the tree green.
 - [ ] **6. CLI (optional).** A `zpf cat --content` that renders `prim:` values
   as numbers instead of base64. Skip if the JSONL face should stay a byte-exact
   projection — worth a decision at the time.
-- [ ] **7. Docs.** A "Reading payload content" section in
+- [x] **7. Docs.** A "Reading payload content" section in
   [`guides/decoding.md`](docs/user/guides/decoding.md) (it already owns
   `content_type` on the write side), the `dec:`-namespace rule in
   [`concepts.md`](docs/user/concepts.md), and a how-to if the registry needs a

@@ -67,6 +67,13 @@ for record in session.timeline():
     print(record.timestamp, record.sender_pid, record.payload[:40])
 ```
 
+`record.payload` is always the bytes as stored. When a record labels what those
+bytes *are* with a `content_type`, {meth}`Record.content
+<zpf.blocks.Record.content>` reads them through the label — `prim:u32` becomes
+an `int` — and {meth}`FileReader.content <zpf.reader.FileReader.content>` adds
+your handlers for the advisory `mime:`/`dec:` schemes. See
+[reading payload content](decoding.md#reading-payload-content).
+
 To consume a participant's bytes as reassembled application streams rather than
 raw records, use {meth}`~zpf.SessionReader.reassemble` — see the
 [decoding guide](decoding.md).
