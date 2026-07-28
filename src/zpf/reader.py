@@ -54,7 +54,7 @@ from zpf.blocks import (
     parse_block,
 )
 from zpf.conformance import ConformanceChecker
-from zpf.errors import Diagnostic, SemanticError, StructuralError, ZpfError
+from zpf.errors import AdvisoryError, Diagnostic, SemanticError, StructuralError, ZpfError
 from zpf.jsonl import JsonlReader
 from zpf.order import causal_merge, verify_sequenced
 from zpf.reassembly import StreamView
@@ -247,8 +247,9 @@ class FileReader:
         truncated: True if the file ends inside a block; complete prior
             blocks remain readable.
         diagnostics: Non-fatal conditions from the indexing pass, including
-            ``"nonconformant"`` entries for blocks isolated by the
-            semantic checker in lenient mode.
+            ``"nonconformant"`` entries from the semantic checker in lenient
+            mode — for blocks it isolated, and for advisory findings
+            (:class:`~zpf.errors.AdvisoryError`) on blocks that were kept.
         strict: Whether semantic violations and truncation raised instead.
         path: The filesystem path this file was opened from, or None when
             it came from an already-open stream.
@@ -425,9 +426,19 @@ class FileReader:
         self.truncated = flat.truncated
 
     def _admit(self, block: Block, offset: int) -> bool:
-        """Run the semantic checker; in lenient mode isolate violations."""
+        """Run the semantic checker; in lenient mode isolate violations.
+
+        An :class:`~zpf.errors.AdvisoryError` is reported like any other
+        violation but does *not* cost the caller the block: the spec tells a
+        reader meeting one to ignore the label and keep the bytes.
+        """
         try:
             self._checker.observe(block)
+        except AdvisoryError as exc:
+            if self.strict:
+                raise
+            self.diagnostics.append(Diagnostic(offset, "nonconformant", str(exc)))
+            return True
         except SemanticError as exc:
             if self.strict:
                 raise
@@ -551,9 +562,10 @@ def open(
 
     Runs one indexing pass immediately: structural corruption raises
     :class:`~zpf.errors.StructuralError`; semantic violations are isolated
-    per block with a ``"nonconformant"`` diagnostic (or raise under
-    ``strict=True``); truncation sets status attributes (or raises under
-    ``strict=True``).
+    per block with a ``"nonconformant"`` diagnostic — except advisory ones
+    (:class:`~zpf.errors.AdvisoryError`), where the block is kept and only
+    the diagnostic recorded — or raise under ``strict=True``; truncation
+    sets status attributes (or raises under ``strict=True``).
 
     Args:
         source: A path, or a *seekable* stream (bytes for the binary face;

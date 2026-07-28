@@ -6,7 +6,9 @@ longer be trusted and the file must be rejected, and *semantic violations*,
 where a well-framed block's content breaks a rule and the reader may isolate
 the offending unit. Truncation is a third, expected condition (a live or
 crashed writer). This module defines one exception type per tier plus the
-:class:`Diagnostic` value used to report non-fatal conditions.
+:class:`Diagnostic` value used to report non-fatal conditions. Within the
+semantic tier, :class:`AdvisoryError` marks the violations the specification
+tells a reader to note but read past, rather than isolate.
 """
 
 from __future__ import annotations
@@ -33,7 +35,25 @@ class SemanticError(ZpfError):
 
     Readers may isolate the offending block or session instead of rejecting
     the whole file; this exception is raised where the caller asked for
-    strict behavior.
+    strict behavior. See :class:`AdvisoryError` for the subset of violations
+    a reader must *not* let cost it the block.
+    """
+
+
+class AdvisoryError(SemanticError):
+    """A violated writer obligation that leaves the block fully usable.
+
+    Some MUSTs bind the writer only: the specification tells a reader that
+    meets the violation to ignore the offending *label* and keep the bytes,
+    which are always the source of truth. A ``prim:`` content type whose
+    width disagrees with ``payload_len`` is the example — the reader "MUST
+    NOT pad, truncate, or reinterpret", so it keeps the record as opaque
+    bytes.
+
+    Raising a distinct type lets both readings coexist: writers
+    (:func:`zpf.create`, ``check=True`` on the flat writers) still refuse
+    such a block, while a lenient :class:`~zpf.reader.FileReader` records a
+    ``nonconformant`` :class:`Diagnostic` and hands the record over anyway.
     """
 
 

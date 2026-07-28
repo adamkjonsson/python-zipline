@@ -261,6 +261,48 @@ def test_strict_mode_raises_on_the_violation():
         open_bytes(nonconformant_file(), strict=True)
 
 
+def unusable_prim_labels_file() -> bytes:
+    """Three well-framed records; the last two carry a prim: label they can't hold."""
+    sink = io.BytesIO()
+    with zpf.BlockWriter(sink) as w:  # permissive flat writer
+        w.write(zpf.FileHeader(tick_hz=1))
+        w.write(zpf.Source(source_id=0, kind=zpf.SourceKind.CAPTURE))
+        w.write(zpf.Session(session_id=0, proto="tcp"))
+        w.write(zpf.Participant(session_id=0, participant_id=0))
+        for ts, payload, content_type in (
+            (1, (1234).to_bytes(4, "little"), "prim:u32"),  # conformant
+            (2, b"\x01\x02\x03\x04\x05", "prim:u32"),  # width disagrees with payload_len
+            (3, b"\xff", "prim:frobnicate"),  # not in the closed vocabulary
+        ):
+            w.write(zpf.Record(
+                session_id=0, sender_pid=0, source_id=0,
+                timestamp=ts, payload=payload, content_type=content_type,
+            ))
+        w.write(zpf.End())
+    return sink.getvalue()
+
+
+def test_an_unusable_prim_label_costs_the_reader_nothing():
+    # The spec's fallback: ignore the label, keep the bytes — the reader must
+    # not pad, truncate, reinterpret, or (as it once did) drop the record.
+    with open_bytes(unusable_prim_labels_file()) as f:
+        (session,) = f.sessions()
+        records = list(session.records())
+        assert [r.payload for r in records] == [
+            b"\xd2\x04\x00\x00", b"\x01\x02\x03\x04\x05", b"\xff",
+        ]
+        assert [r.content_type for r in records] == ["prim:u32", "prim:u32", "prim:frobnicate"]
+        # Still reported: a writer MUST NOT emit either record.
+        assert [d.category for d in f.diagnostics] == ["nonconformant", "nonconformant"]
+        assert "requires payload_len 4, got 5" in f.diagnostics[0].message
+        assert "not a legal prim: token" in f.diagnostics[1].message
+
+
+def test_strict_mode_still_raises_on_an_unusable_prim_label():
+    with pytest.raises(zpf.AdvisoryError, match="requires payload_len 4"):
+        open_bytes(unusable_prim_labels_file(), strict=True)
+
+
 # --- Truncation and completeness -------------------------------------------------------
 
 
