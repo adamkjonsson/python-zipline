@@ -16,6 +16,7 @@ Everything the package raises descends from {class}`~zpf.ZpfError`, so
 ZpfError
 ├── StructuralError   the byte stream is corrupt — reject the file
 ├── SemanticError     a well-framed block breaks a MUST — isolate it
+│   └── AdvisoryError a writer-only MUST — report it, keep the block
 ├── TruncatedError    the stream ended inside a block (strict mode only)
 └── EncodeError       a value can't be represented when writing
 ```
@@ -38,6 +39,32 @@ reader does **not** raise these: it isolates the offending unit and records
 a {class}`~zpf.Diagnostic` instead, so the rest of the file stays readable.
 Pass `strict=True` to escalate the first such violation to a raised
 `SemanticError`.
+
+### AdvisoryError: a writer-only MUST
+
+A few of the format's MUSTs bind the *writer* alone: the specification tells
+a reader that meets the violation to ignore the offending label, because the
+bytes are always the source of truth. The example is a `prim:` content type
+whose width disagrees with `payload_len` — the reader "MUST NOT pad,
+truncate, or reinterpret", so it keeps the record with its payload untouched
+and treats the label as unknown.
+
+{class}`~zpf.AdvisoryError` is a `SemanticError` subclass, which lets both
+duties hold at once:
+
+- **Writing** — {func}`zpf.create` and the flat writers with `check=True`
+  refuse the block, exactly as for any other violation.
+- **Reading, lenient** — the finding becomes a `nonconformant`
+  {class}`~zpf.Diagnostic` and the record is still handed to you.
+- **Reading, `strict=True`** — it is raised, like any semantic violation.
+
+```python
+with zpf.open("suspect.zpf") as reader:
+    for record in reader.session(0).records():
+        ...  # a record with an unusable prim: label is here, payload intact
+    for diagnostic in reader.diagnostics:
+        print(diagnostic.category, diagnostic.message)  # ...and reported
+```
 
 ### TruncatedError: the stream ended early
 
@@ -103,7 +130,7 @@ Categories you will meet:
 | -------- | ------ | ------- |
 | `truncated` | reader | The stream ended inside a block. |
 | `trailing-bytes` | reader | Bytes followed the End block. |
-| `nonconformant` | reader | A block violated a conformance rule (the isolated `SemanticError`). |
+| `nonconformant` | reader | A block violated a conformance rule — isolated, or kept when the finding was advisory. |
 | `coverage-gap` | {func}`zpf.check_coverage` | An input range neither decoded nor marked Undecoded. |
 | `coverage-overlap` | {func}`zpf.check_coverage` | An input range both decoded and marked Undecoded. |
 | `coverage-excess` | {func}`zpf.check_coverage` | A cited range past the input stream's extent. |

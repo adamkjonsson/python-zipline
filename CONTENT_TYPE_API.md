@@ -163,7 +163,7 @@ These change the work materially, so they are worth settling before stage 2.
 
 Each step is independently shippable and leaves the tree green.
 
-- [ ] **1. Stop dropping records with an unusable `prim:` label.** Split
+- [x] **1. Stop dropping records with an unusable `prim:` label.** Split
   conformance findings into *isolating* violations (today's behaviour) and
   *advisory* ones that must not cost the caller the block. A `prim:` width
   mismatch and an illegal `prim:` token become advisory: `FileReader` keeps the

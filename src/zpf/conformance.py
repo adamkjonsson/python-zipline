@@ -10,6 +10,15 @@ violation. It is used by the ergonomic writer (always), by the flat
 writers when constructed with ``check=True``, and can be run standalone
 over any block iterable.
 
+Findings come in two strengths. Most are *isolating*: the block cannot be
+made sense of, so a lenient reader drops it. A few bind the writer only —
+the specification tells a reader that meets them to ignore the offending
+label and keep the bytes — and those raise
+:class:`~zpf.errors.AdvisoryError`, a :class:`~zpf.errors.SemanticError`
+subclass, so writers still refuse the block while a lenient reader can
+report it and hand the block over. Today's advisory findings are the
+``prim:`` content-type ones (illegal token, width against ``payload_len``).
+
 Memory stays bounded on unbounded streams: per-session state is freed at
 the session's Session End; only the set of ended session ids is retained
 (required to police the nothing-after-Session-End rule).
@@ -39,7 +48,7 @@ from zpf.blocks import (
     SourceKind,
     Undecoded,
 )
-from zpf.errors import SemanticError
+from zpf.errors import AdvisoryError, SemanticError
 from zpf.order import seq_leq
 
 if TYPE_CHECKING:
@@ -130,7 +139,11 @@ class ConformanceChecker:
             block: The next block of the stream.
 
         Raises:
-            SemanticError: On the stream's first conformance violation.
+            AdvisoryError: If the block's only violation is one a reader is
+                told to read past (see the module docstring). The block has
+                been fully accounted for when this is raised, so a lenient
+                reader may keep it.
+            SemanticError: On the stream's first isolating violation.
 
         """
         if self._file_ended:
@@ -147,7 +160,8 @@ class ConformanceChecker:
         """Check a whole block sequence (convenience for standalone use).
 
         Raises:
-            SemanticError: On the sequence's first conformance violation.
+            AdvisoryError: On the sequence's first advisory finding.
+            SemanticError: On the sequence's first isolating violation.
 
         """
         for block in blocks:
@@ -222,13 +236,18 @@ class ConformanceChecker:
         if block.sender_pid not in state.last_seq:
             msg = f"{described} names undeclared sender participant {block.sender_pid}"
             raise SemanticError(msg)
-        # Pure checks first; kind-locking and state mutation last, so a
-        # raised violation leaves the checker consistent (block isolation).
-        self._check_record_options(block, described)
+        # Pure checks first; kind-locking and state mutation last, so an
+        # isolating violation leaves the checker consistent (block isolation).
+        self._check_record_flags(block, described)
+        advisory = _prim_finding(block, described)
         self._check_record_order(block, state, described)
         self._classify_record(block, described)
         if block.seq_start is not None:
             state.last_seq[block.sender_pid] = block.seq_start
+        # Advisory last of all: the record stays in a lenient read, so the
+        # checker must have absorbed it before reporting the finding.
+        if advisory is not None:
+            raise AdvisoryError(advisory)
 
     def _on_undecoded(self, block: Undecoded) -> None:
         described = _describe(block)
@@ -284,25 +303,9 @@ class ConformanceChecker:
                 msg = f"{described} span must reference a {wanted.name} source"
                 raise SemanticError(msg)
 
-    def _check_record_options(self, block: Record, described: str) -> None:
+    def _check_record_flags(self, block: Record, described: str) -> None:
         if int(block.flags) & _RECORD_RESERVED_FLAGS:
             msg = f"{described} flags 0x{int(block.flags):04X} set reserved bits (must be 0)"
-            raise SemanticError(msg)
-        content_type = block.content_type
-        if content_type is None or not content_type.startswith("prim:"):
-            return
-        token = content_type[len("prim:") :]
-        if token == "bytes":
-            return
-        width = _PRIM_WIDTHS.get(token)
-        if width is None:
-            msg = f"{described} content_type {content_type!r} is not a legal prim: token"
-            raise SemanticError(msg)
-        if len(block.payload) != width:
-            msg = (
-                f"{described} content_type {content_type!r} requires payload_len {width}, "
-                f"got {len(block.payload)}"
-            )
             raise SemanticError(msg)
 
     def _check_record_order(self, block: Record, state: _SessionState, described: str) -> None:
@@ -365,6 +368,33 @@ class ConformanceChecker:
                 "produced_by and produced_at"
             )
             raise SemanticError(msg)
+
+
+def _prim_finding(block: Record, described: str) -> str | None:
+    """Return the record's advisory ``prim:`` finding, or None if it has none.
+
+    The specification closes the ``prim:`` vocabulary and binds each token's
+    width to ``payload_len``, but it also tells a reader meeting an illegal
+    token or a width mismatch to treat the label as unknown and keep the
+    payload — it "MUST NOT pad, truncate, or reinterpret". So this is a
+    writer obligation whose breach costs a reader nothing: reported, never
+    isolating.
+    """
+    content_type = block.content_type
+    if content_type is None or not content_type.startswith("prim:"):
+        return None
+    token = content_type[len("prim:") :]
+    if token == "bytes":
+        return None
+    width = _PRIM_WIDTHS.get(token)
+    if width is None:
+        return f"{described} content_type {content_type!r} is not a legal prim: token"
+    if len(block.payload) != width:
+        return (
+            f"{described} content_type {content_type!r} requires payload_len {width}, "
+            f"got {len(block.payload)}"
+        )
+    return None
 
 
 def _describe(block: Block) -> str:

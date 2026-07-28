@@ -12,7 +12,8 @@ by the transform that owns them.
 | ---------- | -------- | ----------- | ---- |
 | Structural framing | magic, version, `tick_hz != 0`, block length a multiple of 4, lengths within bounds | `binary.py` (`BlockReader`) while decoding | `StructuralError` — always fatal |
 | Value encodability | integer range, option ≤ 65 535 bytes, `Custom` length a multiple of 4 | `blocks.py` / `_frame.py` at construction/serialization | `EncodeError` — write side |
-| Semantic (single-pass) | declare-before-use, id uniqueness, session lifetime, per-participant `seq_start` order, file-kind purity, reserved-flag bits, `prim:` payload widths | `conformance.py` (`ConformanceChecker`) | `SemanticError` — isolate or reject |
+| Semantic (single-pass) | declare-before-use, id uniqueness, session lifetime, per-participant `seq_start` order, file-kind purity, reserved-flag bits | `conformance.py` (`ConformanceChecker`) | `SemanticError` — isolate or reject |
+| Semantic, writer-only | `prim:` payload widths and token vocabulary | `conformance.py` (`ConformanceChecker`) | `AdvisoryError` — report, but keep the block |
 | Sequenced order | a SEQUENCED session's stored order really is a causal linearization | `order.py` `verify_sequenced` / `SessionReader.verify()` | needs the merge algorithm |
 | Decode coverage | every input offset decoded or marked Undecoded, never both | `transform.py` `check_coverage` | whole-file property |
 
@@ -35,7 +36,7 @@ single-pass observer fed blocks in file order via `observe()`, raising
 - **Standalone** — `ConformanceChecker().check(blocks)` over any block
   iterable, e.g. to validate a stream a lower-layer tool produced.
 
-Two design points worth preserving when editing it:
+Three design points worth preserving when editing it:
 
 - **Bounded memory.** Per-session state is freed at each Session End; only the
   set of ended session ids is retained (to police the nothing-after-Session-
@@ -44,6 +45,17 @@ Two design points worth preserving when editing it:
   state or locking the file kind, so a raised violation leaves the checker
   consistent and a lenient reader can isolate the offending block and carry
   on.
+- **Isolating versus advisory findings.** A few MUSTs bind the writer only:
+  the spec tells a reader that meets one to ignore the offending label and
+  keep the bytes, which are always the source of truth. Those raise
+  `AdvisoryError` (a `SemanticError` subclass), so a checking writer still
+  refuses the block while a lenient reader reports a `nonconformant`
+  diagnostic and hands the block over. The advisory raise comes *last* in the
+  handler, after the block has been absorbed — the mirror image of
+  consistent-on-raise, because a kept block must be counted. An isolating
+  violation found in the same block wins, since that block is dropped.
+  Today's advisory findings are the two `prim:` ones (illegal token, width
+  against `payload_len`).
 
 ### File-kind purity
 
@@ -61,8 +73,10 @@ on the File Header.
 A reader rejects a file only when the byte stream can't be trusted
 (`StructuralError`, always). A well-framed block that breaks a semantic rule
 is isolated — recorded as a `nonconformant` diagnostic in lenient mode, or
-raised under `strict=True`. Truncation is a third, expected condition. This is
-the [errors page](../user/errors.md)'s subject, from the reader's side.
+raised under `strict=True` — unless the finding is advisory, in which case the
+diagnostic is recorded and the block still reaches the caller. Truncation is a
+third, expected condition. This is the [errors page](../user/errors.md)'s
+subject, from the reader's side.
 
 ## Going beyond the standard
 

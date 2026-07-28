@@ -36,8 +36,22 @@ def accept(*blocks: zpf.Block) -> zpf.ConformanceChecker:
 
 
 def reject(*blocks: zpf.Block, match: str) -> None:
-    with pytest.raises(zpf.SemanticError, match=match):
+    """Assert the sequence's first finding isolates its block."""
+    with pytest.raises(zpf.SemanticError, match=match) as caught:
         accept(*blocks)
+    assert not isinstance(caught.value, zpf.AdvisoryError)
+
+
+def advise(*blocks: zpf.Block, match: str) -> zpf.ConformanceChecker:
+    """Assert the sequence's first finding is advisory, and return the checker.
+
+    The checker is returned mid-stream (the advisory raise interrupted
+    :meth:`check`) so a caller can assert it absorbed the reported block.
+    """
+    checker = zpf.ConformanceChecker()
+    with pytest.raises(zpf.AdvisoryError, match=match):
+        checker.check(blocks)
+    return checker
 
 
 RAW_PRELUDE = (HEADER, CAP, SESS, PART)
@@ -237,14 +251,44 @@ def test_reserved_flag_bits_must_be_zero():
 
 def test_prim_width_binds_payload_len():
     accept(*RAW_PRELUDE, raw_record(payload=b"abcd", content_type="prim:u32"))
-    reject(
+    accept(*RAW_PRELUDE, raw_record(payload=b"anything", content_type="prim:bytes"))
+    accept(*RAW_PRELUDE, raw_record(content_type="mime:text/plain"))  # width binds prim: only
+    # A writer MUST NOT emit these, so the finding stands — but it is advisory:
+    # the reader is told to ignore the label, not to drop the bytes.
+    advise(
         *RAW_PRELUDE, raw_record(payload=b"abc", content_type="prim:u32"),
         match="requires payload_len 4",
     )
-    accept(*RAW_PRELUDE, raw_record(payload=b"anything", content_type="prim:bytes"))
-    reject(
+    advise(
         *RAW_PRELUDE, raw_record(payload=b"abcd", content_type="prim:u128"),
         match="not a legal prim: token",
+    )
+
+
+def test_an_advisory_record_is_absorbed_before_it_is_reported():
+    # A lenient reader keeps such a record, so the checker must have counted
+    # it: the seq cursor advanced and the file kind locked.
+    checker = advise(
+        *RAW_PRELUDE,
+        raw_record(payload=b"abc", content_type="prim:u32", seq_start=100),
+        match="payload_len",
+    )
+    assert checker.file_kind == "raw"
+    with pytest.raises(zpf.SemanticError, match="seq_start order"):
+        checker.observe(raw_record(seq_start=50))
+
+
+def test_an_isolating_violation_outranks_an_advisory_one():
+    # Same record, two findings: the one that costs the caller the block wins,
+    # since the checker must not absorb a record it is about to isolate.
+    reject(
+        *RAW_PRELUDE, raw_record(payload=b"abc", content_type="prim:u32", decoder_id=9),
+        match="undeclared decoder",
+    )
+    reject(
+        *RAW_PRELUDE,
+        raw_record(payload=b"abc", content_type="prim:u32", flags=zpf.RecordFlags(0x2000)),
+        match="reserved bits",
     )
 
 
@@ -283,3 +327,21 @@ def test_flat_writers_check_only_when_asked():
         jsonl_checked.write(HEADER)
         with pytest.raises(zpf.SemanticError):
             jsonl_checked.write(raw_record())
+
+
+def test_writers_still_refuse_an_advisory_violation():
+    # The writer obligation is unchanged by the reader's leniency: a checking
+    # writer refuses a prim: label its payload cannot hold.
+    bad = raw_record(payload=b"abc", content_type="prim:u32")
+    with zpf.BlockWriter(io.BytesIO(), check=True) as checked:
+        for block in RAW_PRELUDE:
+            checked.write(block)
+        with pytest.raises(zpf.AdvisoryError, match="requires payload_len 4"):
+            checked.write(bad)
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1) as writer:  # the ergonomic writer always checks
+        writer.add_source("capture")
+        session = writer.begin_session(session_id=5)
+        sender = session.participant("a")
+        with pytest.raises(zpf.AdvisoryError, match="not a legal prim: token"):
+            session.record(sender, ts=0, payload=b"abcd", content_type="prim:u128")

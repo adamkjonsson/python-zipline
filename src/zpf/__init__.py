@@ -41,6 +41,7 @@ from zpf.blocks import (
 from zpf.conformance import ConformanceChecker
 from zpf.decode import DecodeStage, DecodeStream, decode_stage
 from zpf.errors import (
+    AdvisoryError,
     Diagnostic,
     EncodeError,
     SemanticError,
@@ -74,6 +75,7 @@ from zpf.writer import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "AdvisoryError",
     "Block",
     "BlockReader",
     "BlockWriter",
