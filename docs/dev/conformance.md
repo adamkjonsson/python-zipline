@@ -12,8 +12,8 @@ by the transform that owns them.
 | ---------- | -------- | ----------- | ---- |
 | Structural framing | magic, version, `tick_hz != 0`, block length a multiple of 4, lengths within bounds | `binary.py` (`BlockReader`) while decoding | `StructuralError` — always fatal |
 | Value encodability | integer range, option ≤ 65 535 bytes, `Custom` length a multiple of 4 | `blocks.py` / `_frame.py` at construction/serialization | `EncodeError` — write side |
-| Semantic (single-pass) | declare-before-use, id uniqueness, session lifetime, per-participant `seq_start` order, file-kind purity, reserved-flag bits | `conformance.py` (`ConformanceChecker`) | `SemanticError` — isolate or reject |
-| Semantic, writer-only | `prim:` payload widths and token vocabulary | `conformance.py` (`ConformanceChecker`) | `AdvisoryError` — report, but keep the block |
+| Semantic (single-pass) | declare-before-use, id uniqueness, session lifetime, per-participant `seq_start` order, file-kind purity | `conformance.py` (`ConformanceChecker`) | `SemanticError` — isolate or reject |
+| Semantic, writer-only | reserved flag bits, `prim:` payload widths and token vocabulary | `conformance.py` (`ConformanceChecker`) | `AdvisoryError` — report, but keep the block |
 | Sequenced order | a SEQUENCED session's stored order really is a causal linearization | `order.py` `verify_sequenced` / `SessionReader.verify()` | needs the merge algorithm |
 | Decode coverage | every input offset decoded or marked Undecoded, never both | `transform.py` `check_coverage` | whole-file property |
 
@@ -45,17 +45,24 @@ Three design points worth preserving when editing it:
   state or locking the file kind, so a raised violation leaves the checker
   consistent and a lenient reader can isolate the offending block and carry
   on.
-- **Isolating versus advisory findings.** A few MUSTs bind the writer only:
-  the spec tells a reader that meets one to ignore the offending label and
-  keep the bytes, which are always the source of truth. Those raise
-  `AdvisoryError` (a `SemanticError` subclass), so a checking writer still
-  refuses the block while a lenient reader reports a `nonconformant`
-  diagnostic and hands the block over. The advisory raise comes *last* in the
-  handler, after the block has been absorbed — the mirror image of
-  consistent-on-raise, because a kept block must be counted. An isolating
-  violation found in the same block wins, since that block is dropped.
-  Today's advisory findings are the two `prim:` ones (illegal token, width
-  against `payload_len`).
+- **Isolating versus advisory findings.** A few MUSTs bind the writer only,
+  because they leave a reader nothing to act on: it is told to ignore the
+  offending label or bits and use the block, whose bytes are the source of
+  truth either way. Those call `_note()` instead of raising; `observe()`
+  raises the collected findings as one `AdvisoryError` (a `SemanticError`
+  subclass) *after* the handler returns, so a checking writer still refuses
+  the block while a lenient reader reports a `nonconformant` diagnostic and
+  hands the block over. Reporting after the handler is the mirror image of
+  consistent-on-raise: a kept block must be fully counted first. An
+  isolating violation found in the same block wins — it raises from inside
+  the handler, and the notes go with the dropped block.
+
+  The advisory rules today:
+
+  | Rule | Why a reader can only ignore it |
+  | ---- | ------------------------------- |
+  | Reserved bits set in any flags field (File Header, Session, Record) | The format defines no meaning for them, so there is nothing to act on. Isolating would discard well-framed data — and dropping a File Header or Session Descriptor takes every block that depends on it. |
+  | An illegal `prim:` token, or a width that disagrees with `payload_len` | The spec says to treat the label as unknown and keep the payload: "MUST NOT pad, truncate, or reinterpret". |
 
 ### File-kind purity
 

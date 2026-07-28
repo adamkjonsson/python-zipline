@@ -46,12 +46,18 @@ Pass `strict=True` to escalate the first such violation to a raised
 
 ### AdvisoryError: a writer-only MUST
 
-A few of the format's MUSTs bind the *writer* alone: the specification tells
-a reader that meets the violation to ignore the offending label, because the
-bytes are always the source of truth. The example is a `prim:` content type
-whose width disagrees with `payload_len` — the reader "MUST NOT pad,
-truncate, or reinterpret", so it keeps the record with its payload untouched
-and treats the label as unknown.
+A few of the format's MUSTs bind the *writer* alone, because they leave a
+reader nothing it could act on. Two exist today:
+
+- **Reserved `flags` bits** (File Header, Session, Record). A writer must
+  leave them 0, but the format defines no meaning for them, so a reader can
+  only ignore the bits and use the block. Isolating it would throw away
+  well-framed data over flags nobody reads — and losing a File Header or
+  Session Descriptor would take everything that depends on it.
+- **A `prim:` content type the payload contradicts** — an illegal token, or a
+  width that disagrees with `payload_len`. The reader "MUST NOT pad,
+  truncate, or reinterpret", so it keeps the payload untouched and treats the
+  label as unknown.
 
 {class}`~zpf.AdvisoryError` is a `SemanticError` subclass, which lets both
 duties hold at once:
@@ -59,7 +65,9 @@ duties hold at once:
 - **Writing** — {func}`zpf.create` and the flat writers with `check=True`
   refuse the block, exactly as for any other violation.
 - **Reading, lenient** — the finding becomes a `nonconformant`
-  {class}`~zpf.Diagnostic` and the record is still handed to you.
+  {class}`~zpf.Diagnostic` and the block is still handed to you. A block that
+  breaks several advisory rules is reported as one diagnostic naming all of
+  them.
 - **Reading, `strict=True`** — it is raised, like any semantic violation.
 
 ```python

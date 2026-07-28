@@ -16,10 +16,13 @@ the specification tells a reader that meets them to ignore the offending
 label and keep the bytes — and those raise
 :class:`~zpf.errors.AdvisoryError`, a :class:`~zpf.errors.SemanticError`
 subclass, so writers still refuse the block while a lenient reader can
-report it and hand the block over. Today's advisory findings are the
-``prim:`` content-type ones (illegal token, width against ``payload_len``);
-the label grammar and the vocabulary they check against live in
-:mod:`zpf.content`.
+report it and hand the block over. Two rules are advisory today: reserved
+flag bits set in any flags field (the format gives them no meaning a reader
+could act on, so ignoring them is the only reading available), and the
+``prim:`` content-type ones (illegal token, width against ``payload_len``
+— the label grammar and the vocabulary they check against live in
+:mod:`zpf.content`). A block with several such findings reports them all in
+one message.
 
 Memory stays bounded on unbounded streams: per-session state is freed at
 the session's Session End; only the set of ended session ids is retained
@@ -101,6 +104,7 @@ class ConformanceChecker:
         self._kind_reason = ""
         self._orphan_participants: list[str] = []  # declared without origin, kind still open
         self._file_ended = False
+        self._advisory: list[str] = []  # findings for the block being observed
         self._dispatch: dict[type[Block], Callable[[Any], None]] = {
             FileHeader: self._on_file_header,
             Source: self._on_source,
@@ -144,9 +148,16 @@ class ConformanceChecker:
         if self._header is None and not isinstance(block, FileHeader):
             msg = f"first block must be a File Header, got {_describe(block)}"
             raise SemanticError(msg)
+        self._advisory.clear()
         handler = self._dispatch.get(type(block))
         if handler is not None:
             handler(block)
+        # Advisory findings are raised only here, once the handler has
+        # returned: a lenient reader keeps such a block, so the checker must
+        # already have absorbed it. An isolating violation raised inside the
+        # handler skips this, and its notes go with the dropped block.
+        if self._advisory:
+            raise AdvisoryError("; ".join(self._advisory))
 
     def check(self, blocks: Iterable[Block]) -> None:
         """Check a whole block sequence (convenience for standalone use).
@@ -165,9 +176,7 @@ class ConformanceChecker:
         if self._header is not None:
             msg = "second File Header; a file has exactly one, as its first block"
             raise SemanticError(msg)
-        if int(block.flags) & _FILE_RESERVED_FLAGS:
-            msg = f"File Header flags 0x{int(block.flags):04X} set reserved bits (must be 0)"
-            raise SemanticError(msg)
+        self._note_reserved_flags(int(block.flags), _FILE_RESERVED_FLAGS, "File Header")
         self._header = block
 
     def _on_source(self, block: Source) -> None:
@@ -186,9 +195,7 @@ class ConformanceChecker:
         if block.session_id in self._live or block.session_id in self._ended:
             msg = f"session id {block.session_id} declared twice"
             raise SemanticError(msg)
-        if int(block.flags) & _SESSION_RESERVED_FLAGS:
-            msg = f"session {block.session_id} flags set reserved bits (must be 0)"
-            raise SemanticError(msg)
+        self._note_reserved_flags(int(block.flags), _SESSION_RESERVED_FLAGS, _describe(block))
         self._live[block.session_id] = _SessionState()
 
     def _on_participant(self, block: Participant) -> None:
@@ -228,18 +235,14 @@ class ConformanceChecker:
         if block.sender_pid not in state.last_seq:
             msg = f"{described} names undeclared sender participant {block.sender_pid}"
             raise SemanticError(msg)
-        # Pure checks first; kind-locking and state mutation last, so an
-        # isolating violation leaves the checker consistent (block isolation).
-        self._check_record_flags(block, described)
-        advisory = _prim_finding(block, described)
+        # Isolating checks before any state mutation or kind-locking, so a
+        # raised violation leaves the checker consistent (block isolation).
+        self._note_reserved_flags(int(block.flags), _RECORD_RESERVED_FLAGS, described)
+        self._note(_prim_finding(block, described))
         self._check_record_order(block, state, described)
         self._classify_record(block, described)
         if block.seq_start is not None:
             state.last_seq[block.sender_pid] = block.seq_start
-        # Advisory last of all: the record stays in a lenient read, so the
-        # checker must have absorbed it before reporting the finding.
-        if advisory is not None:
-            raise AdvisoryError(advisory)
 
     def _on_undecoded(self, block: Undecoded) -> None:
         described = _describe(block)
@@ -295,11 +298,6 @@ class ConformanceChecker:
                 msg = f"{described} span must reference a {wanted.name} source"
                 raise SemanticError(msg)
 
-    def _check_record_flags(self, block: Record, described: str) -> None:
-        if int(block.flags) & _RECORD_RESERVED_FLAGS:
-            msg = f"{described} flags 0x{int(block.flags):04X} set reserved bits (must be 0)"
-            raise SemanticError(msg)
-
     def _check_record_order(self, block: Record, state: _SessionState, described: str) -> None:
         """Check (without mutating) that the record respects seq_start order."""
         if block.seq_start is None:
@@ -313,6 +311,26 @@ class ConformanceChecker:
             raise SemanticError(msg)
 
     # --- Shared helpers -----------------------------------------------------
+
+    def _note(self, finding: str | None) -> None:
+        """Record an advisory finding for the block being observed."""
+        if finding is not None:
+            self._advisory.append(finding)
+
+    def _note_reserved_flags(self, flags: int, reserved: int, described: str) -> None:
+        """Note reserved flag bits, which a reader ignores rather than isolates.
+
+        Every flags field works the same way: the format reserves the bits it
+        does not define and requires a writer to leave them 0, but it gives
+        them no meaning a reader could act on — so the only reading available
+        to a reader is to ignore them and use the block. Isolating it would
+        discard well-framed data over flags the reader was never going to
+        consult, and for a File Header or a Session Descriptor it would take
+        everything that depends on that block down with it.
+        """
+        unknown = flags & reserved
+        if unknown:
+            self._note(f"{described} flags 0x{unknown:04X} set reserved bits (must be 0)")
 
     def _require_live_session(self, session_id: int, described: str) -> _SessionState:
         state = self._live.get(session_id)

@@ -43,12 +43,13 @@ class SemanticError(ZpfError):
 class AdvisoryError(SemanticError):
     """A violated writer obligation that leaves the block fully usable.
 
-    Some MUSTs bind the writer only: the specification tells a reader that
-    meets the violation to ignore the offending *label* and keep the bytes,
-    which are always the source of truth. A ``prim:`` content type whose
-    width disagrees with ``payload_len`` is the example — the reader "MUST
-    NOT pad, truncate, or reinterpret", so it keeps the record as opaque
-    bytes.
+    Some MUSTs bind the writer only, because they leave a reader nothing to
+    act on. Two cases exist today: reserved bits set in a ``flags`` field,
+    which the format gives no meaning, so a reader can only ignore them and
+    use the block; and a ``prim:`` content type the payload contradicts,
+    where the reader "MUST NOT pad, truncate, or reinterpret" and so keeps
+    the payload as opaque bytes. The bytes are the source of truth either
+    way — the label never replaces them.
 
     Raising a distinct type lets both readings coexist: writers
     (:func:`zpf.create`, ``check=True`` on the flat writers) still refuse

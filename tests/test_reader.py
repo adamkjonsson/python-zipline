@@ -303,6 +303,49 @@ def test_an_unusable_prim_label_costs_the_reader_nothing():
         ]
 
 
+def reserved_flag_bits_file() -> bytes:
+    """Build a readable file whose header, session, and a record set a reserved bit."""
+    sink = io.BytesIO()
+    with zpf.BlockWriter(sink) as w:  # permissive flat writer
+        w.write(zpf.FileHeader(tick_hz=1, flags=zpf.FileFlags(0x0002)))
+        w.write(zpf.Source(source_id=0, kind=zpf.SourceKind.CAPTURE))
+        w.write(zpf.Session(session_id=0, proto="tcp", flags=zpf.SessionFlags(0x0002)))
+        w.write(zpf.Participant(session_id=0, participant_id=0))
+        w.write(zpf.Record(session_id=0, sender_pid=0, source_id=0, timestamp=1, payload=b"one"))
+        w.write(zpf.Record(
+            session_id=0, sender_pid=0, source_id=0, timestamp=2, payload=b"two",
+            flags=zpf.RecordFlags(0x2000) | zpf.RecordFlags.PSH,
+        ))
+        w.write(zpf.End())
+    return sink.getvalue()
+
+
+def test_reserved_flag_bits_cost_the_reader_nothing():
+    # A reader has no meaning to attach to a reserved bit, so it ignores the
+    # bits and uses the block. Isolating instead would empty the file: without
+    # its header every later block is "first block must be a File Header", and
+    # without its Session Descriptor a session's records have nowhere to go.
+    with open_bytes(reserved_flag_bits_file()) as f:
+        assert f.header is not None
+        assert f.file_kind == "raw"
+        (session,) = f.sessions()
+        assert session.proto == "tcp"
+        assert len(session.participants) == 1
+        records = list(session.records())
+        assert [r.payload for r in records] == [b"one", b"two"]
+        # The bits are kept as read, not scrubbed — the payload face is faithful.
+        assert int(records[1].flags) == 0x2001
+        assert zpf.RecordFlags.PSH in records[1].flags
+        # Reported, though: three blocks, three findings, and nothing else.
+        assert [d.category for d in f.diagnostics] == ["nonconformant"] * 3
+        assert all("reserved bits" in d.message for d in f.diagnostics)
+
+
+def test_strict_mode_still_raises_on_reserved_flag_bits():
+    with pytest.raises(zpf.AdvisoryError, match="File Header flags 0x0002"):
+        open_bytes(reserved_flag_bits_file(), strict=True)
+
+
 def test_strict_mode_still_raises_on_an_unusable_prim_label():
     with pytest.raises(zpf.AdvisoryError, match="requires payload_len 4"):
         open_bytes(unusable_prim_labels_file(), strict=True)
