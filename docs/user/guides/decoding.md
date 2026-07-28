@@ -133,6 +133,98 @@ left and raises rather than overriding an explicit marker. Pass
 {func}`~zpf.check_coverage` then reports a `coverage-gap` for anything missed —
 with auto-fill on it returns `[]` by construction.
 
+## Reading payload content
+
+The write side above labelled each record with `content_type=` — a decoded
+record says what it *is*. This is the read side of that label: turning a
+payload into a value instead of re-implementing the same `int.from_bytes` or
+`json.loads` in every consumer. The model behind the label, including the
+`dec:` namespace rule, is in
+[Concepts](../concepts.md#typing-a-payload-content_type).
+
+### `prim:` — built in, always
+
+{meth}`Record.content <zpf.blocks.Record.content>` interprets the one scheme
+the format defines completely. Integers are little-endian and signed iff the
+token starts with `i`; you never spell that out:
+
+```python
+for record in session.records():
+    print(record.content_type, record.content())
+    # prim:u32   -> 1234
+    # prim:i8    -> -1
+    # prim:bytes -> b"..."
+```
+
+Everything else falls back to the payload bytes, **untouched** — that is the
+format's own rule, not a shortcut. You get the raw payload for a record with
+no label, for a `mime:`/`dec:`/unknown scheme, and for a `prim:` label the
+payload contradicts (an illegal token, or a width that disagrees with
+`payload_len`): the bytes are never padded, truncated, or reinterpreted to fit
+a label. Such a file is nonconformant and `zpf` will not *write* one, but it
+reads back with the record intact and a `nonconformant` diagnostic — see
+[`AdvisoryError`](../errors.md#advisoryerror-a-writer-only-must).
+
+### `mime:` and `dec:` — your handlers, via a registry
+
+```{warning}
+**Beyond the standard.** The format defines `mime:` only as "an IANA media
+type" and `dec:` as a type private to the record's decoder. It says nothing
+about turning either one's bytes into a Python value, so `zpf` ships **no**
+interpretation of them: a {class}`~zpf.ContentRegistry` supplies the
+*dispatch*, and what a label means is your handler's claim. `prim:` is the
+opposite case — fully normative, built in, and never routed through a
+registry.
+```
+
+Register a handler per media type, or per (decoder **name**, token), and pass
+the registry to {func}`zpf.open`. Then
+{meth}`FileReader.content <zpf.reader.FileReader.content>` dispatches:
+
+```python
+import json
+
+registry = zpf.ContentRegistry()
+registry.register_mime("application/json", json.loads)
+registry.register_dec("http/1.1", "request", parse_http_request)
+
+with zpf.open("rest_decoded.zpf", content=registry) as reader:
+    for record in reader.session(0).records():
+        value = reader.content(record)     # dict, your parsed request, int, or bytes
+```
+
+Four things worth knowing:
+
+- **`dec:` needs the file**, which is why this method lives on the reader: the
+  token's namespace is the *decoder's name*, and a record carries only a
+  `decoder_id`. The reader resolves one to the other. A record with no
+  `decoder_id` — or whose decoder declared no `name` — cannot have a `dec:`
+  token resolved at all, and falls back to bytes.
+- **Media types match without their parameters**, case-insensitively, as IANA
+  defines them: one `"text/plain"` handler serves
+  `mime:text/plain; charset=utf-8`. Decoder names and `dec:` tokens match
+  exactly.
+- **A handler's exceptions reach you unchanged.** A handler that fails is a bug
+  or corrupt input, not a fallback condition, so the library will not quietly
+  hand back bytes and hide it.
+- **With no registry, `reader.content(record)` is exactly `record.content()`** —
+  the same normative behaviour, no special cases.
+
+### Insisting on an interpretation
+
+Both methods return `bytes` for two different reasons: `prim:bytes` means "the
+value *is* these bytes", and the fallback means "the label could not be
+honoured". When that difference matters — a pipeline that must not silently
+accept an unusable label — pass `strict=True` and the fallback raises
+{class}`~zpf.ContentError` (a `ZpfError` *and* a `ValueError`) instead:
+
+```python
+try:
+    value = reader.content(record, strict=True)
+except zpf.ContentError as exc:
+    log.warning("unusable label: %s", exc)   # e.g. requires payload_len 4, got 5
+```
+
 ## Advanced
 
 ### More than one decoder in a session
@@ -171,8 +263,13 @@ the TLS-record stream, then the raw capture. Each stage is an ordinary
 - [Decoder tutorial](../tutorial-decoding.md) — the same ideas as a runnable,
   end-to-end example.
 - [Write decode-stage files](../howto/decode_stage.md) — the task-shaped recipe.
+- [Read payloads as typed values](../howto/payload_content.md) — the recipe for
+  the registry.
 - [Concepts: provenance](../concepts.md#provenance-spans-coverage-origins) — the
   normative model for spans, coverage, and origins.
+- [Concepts: typing a payload](../concepts.md#typing-a-payload-content_type) —
+  what each `content_type` scheme does and does not settle.
 - API reference: [`zpf.reassembly`](../../api/reassembly.md) (stream views),
-  [`zpf.decode`](../../api/decode.md) (the orchestrator), and
+  [`zpf.decode`](../../api/decode.md) (the orchestrator),
+  [`zpf.content`](../../api/content.md) (labels and the registry), and
   [`zpf.transform`](../../api/transform.md) ({func}`~zpf.check_coverage`).

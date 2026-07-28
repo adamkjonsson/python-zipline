@@ -18,8 +18,8 @@ symbol:
 - **[Reading files](reading.md)** — opening files, sessions and participants,
   the three record iterators, and laziness.
 - **[Decoding](decoding.md)** — reassembly views, stream vs datagram input,
-  writing a decode stage, coverage, and (advanced) multiple decoders and
-  decoder chaining.
+  writing a decode stage, coverage, reading a payload as its `content_type`
+  says, and (advanced) multiple decoders and decoder chaining.
 - **[Provenance](provenance.md)** — input sources and digests, spans, origins,
   the coverage guarantee, and following the provenance chain to recover bytes.
 - **[Ordering](ordering.md)** — causal order from `seq`/`ack`, `timeline()`,

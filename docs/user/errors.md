@@ -17,9 +17,13 @@ ZpfError
 ├── StructuralError   the byte stream is corrupt — reject the file
 ├── SemanticError     a well-framed block breaks a MUST — isolate it
 │   └── AdvisoryError a writer-only MUST — report it, keep the block
+├── ContentError      a payload isn't what its content_type claims
 ├── TruncatedError    the stream ended inside a block (strict mode only)
 └── EncodeError       a value can't be represented when writing
 ```
+
+`ContentError` is also a {class}`ValueError`, so either `except zpf.ZpfError`
+or `except ValueError` catches it.
 
 ### StructuralError: reject the file
 
@@ -42,12 +46,18 @@ Pass `strict=True` to escalate the first such violation to a raised
 
 ### AdvisoryError: a writer-only MUST
 
-A few of the format's MUSTs bind the *writer* alone: the specification tells
-a reader that meets the violation to ignore the offending label, because the
-bytes are always the source of truth. The example is a `prim:` content type
-whose width disagrees with `payload_len` — the reader "MUST NOT pad,
-truncate, or reinterpret", so it keeps the record with its payload untouched
-and treats the label as unknown.
+A few of the format's MUSTs bind the *writer* alone, because they leave a
+reader nothing it could act on. Two exist today:
+
+- **Reserved `flags` bits** (File Header, Session, Record). A writer must
+  leave them 0, but the format defines no meaning for them, so a reader can
+  only ignore the bits and use the block. Isolating it would throw away
+  well-framed data over flags nobody reads — and losing a File Header or
+  Session Descriptor would take everything that depends on it.
+- **A `prim:` content type the payload contradicts** — an illegal token, or a
+  width that disagrees with `payload_len`. The reader "MUST NOT pad,
+  truncate, or reinterpret", so it keeps the payload untouched and treats the
+  label as unknown.
 
 {class}`~zpf.AdvisoryError` is a `SemanticError` subclass, which lets both
 duties hold at once:
@@ -55,7 +65,9 @@ duties hold at once:
 - **Writing** — {func}`zpf.create` and the flat writers with `check=True`
   refuse the block, exactly as for any other violation.
 - **Reading, lenient** — the finding becomes a `nonconformant`
-  {class}`~zpf.Diagnostic` and the record is still handed to you.
+  {class}`~zpf.Diagnostic` and the block is still handed to you. A block that
+  breaks several advisory rules is reported as one diagnostic naming all of
+  them.
 - **Reading, `strict=True`** — it is raised, like any semantic violation.
 
 ```python
@@ -65,6 +77,20 @@ with zpf.open("suspect.zpf") as reader:
     for diagnostic in reader.diagnostics:
         print(diagnostic.category, diagnostic.message)  # ...and reported
 ```
+
+### ContentError: the label could not be honoured
+
+{meth}`zpf.Record.content` reads a payload as its `content_type` says, and
+{meth}`zpf.FileReader.content` does the same with your
+{class}`~zpf.ContentRegistry` handlers for the advisory schemes. When the
+label can't be honoured — an unusable `prim:` width, a `mime:`/`dec:` label
+with no handler registered, or no label at all — the format's answer is the
+raw payload, so `content()` returns bytes and raises nothing. Pass
+`strict=True` when that ambiguity matters (bytes as *the value* versus bytes
+as *the fallback*) and the same case raises {class}`~zpf.ContentError`
+instead. It is never raised by reading a file, only by asking for that
+guarantee. A registered handler's own exceptions are not converted: they
+reach you unchanged, `strict` or not.
 
 ### TruncatedError: the stream ended early
 

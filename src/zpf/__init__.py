@@ -39,9 +39,11 @@ from zpf.blocks import (
     parse_block,
 )
 from zpf.conformance import ConformanceChecker
+from zpf.content import PRIM_WIDTHS, ContentRegistry, ContentType, decode_prim
 from zpf.decode import DecodeStage, DecodeStream, decode_stage
 from zpf.errors import (
     AdvisoryError,
+    ContentError,
     Diagnostic,
     EncodeError,
     SemanticError,
@@ -80,6 +82,9 @@ __all__ = [
     "BlockReader",
     "BlockWriter",
     "ConformanceChecker",
+    "ContentError",
+    "ContentRegistry",
+    "ContentType",
     "Custom",
     "Datagram",
     "DecodeStage",
@@ -99,6 +104,7 @@ __all__ = [
     "JsonlWriter",
     "NameResolution",
     "Origin",
+    "PRIM_WIDTHS",
     "Participant",
     "ParticipantHandle",
     "RawOption",
@@ -126,6 +132,7 @@ __all__ = [
     "causal_merge",
     "check_coverage",
     "create",
+    "decode_prim",
     "decode_stage",
     "detect_face",
     "dumps_block",

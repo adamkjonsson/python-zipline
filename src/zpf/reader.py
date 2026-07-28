@@ -54,6 +54,7 @@ from zpf.blocks import (
     parse_block,
 )
 from zpf.conformance import ConformanceChecker
+from zpf.content import ContentRegistry, ContentType
 from zpf.errors import AdvisoryError, Diagnostic, SemanticError, StructuralError, ZpfError
 from zpf.jsonl import JsonlReader
 from zpf.order import causal_merge, verify_sequenced
@@ -254,6 +255,10 @@ class FileReader:
         path: The filesystem path this file was opened from, or None when
             it came from an already-open stream.
 
+    The reader also interprets a record's payload per its ``content_type``:
+    see :meth:`content`, and the ``content=`` registry :func:`open` takes for
+    the advisory schemes.
+
     """
 
     def __init__(
@@ -262,12 +267,14 @@ class FileReader:
         *,
         strict: bool = False,
         face: Literal["auto", "binary", "jsonl"] = "auto",
+        content: ContentRegistry | None = None,
     ) -> None:
         stream, owns = _as_stream(source)
         self._stream: IO[Any] = stream
         self._owns_stream = owns
         self.path = os.fspath(source) if isinstance(source, (str, os.PathLike)) else None
         self.strict = strict
+        self._content = content
         self.complete = False
         self.truncated = False
         self.diagnostics: list[Diagnostic] = []
@@ -378,6 +385,70 @@ class FileReader:
 
         """
         return SessionReader(self._sessions[session_id], self._resolve)
+
+    def content(self, record: Record, *, strict: bool = False) -> Any:
+        """Return a record's payload interpreted as its ``content_type`` says.
+
+        The file-aware counterpart of :meth:`zpf.Record.content`, and the
+        only place a ``dec:`` label can be resolved: its token is namespaced
+        by the producing decoder's **name**, which this reader can look up
+        from the record's ``decoder_id``.
+
+        Dispatch order:
+
+        1. ``prim:`` — normative, built in, and never overridable.
+        2. ``mime:``/``dec:`` — a handler from the
+           :class:`~zpf.content.ContentRegistry` passed to :func:`open`, if
+           one is registered for the media type or the
+           (decoder name, token) pair. A handler's exceptions propagate.
+        3. Otherwise the payload bytes, exactly as
+           :meth:`zpf.Record.content` would return them.
+
+        With no registry this *is* ``record.content()``.
+
+        ⚠ **Beyond the standard** in step 2 only: the format calls ``mime:``
+        and ``dec:`` advisory and defines no decoding for them, so a handler's
+        answer is the handler's claim. Steps 1 and 3 are the format's own.
+
+        Args:
+            record: A record of this file (its ``decoder_id`` is resolved
+                against this file's Decoder blocks).
+            strict: Raise :class:`~zpf.errors.ContentError` instead of
+                falling back to the payload — i.e. when neither ``prim:`` nor
+                a registered handler could interpret the label.
+
+        Returns:
+            Whatever the matching handler returns, an :class:`int` for a
+            ``prim:`` integer token, or the payload bytes.
+
+        Raises:
+            ContentError: With ``strict=True``, if nothing could interpret
+                the label.
+
+        Example:
+            >>> registry = zpf.ContentRegistry()
+            >>> registry.register_dec("http/1.1", "request", parse_request)
+            >>> with zpf.open("decoded.zpf", content=registry) as reader:
+            ...     for record in reader.session(7).records():
+            ...         print(reader.content(record))
+
+        """
+        if record.content_type is not None and self._content is not None:
+            label = ContentType.parse(record.content_type)
+            if not label.is_prim:
+                handler = self._content.handler(
+                    label, decoder_name=self._decoder_name(record)
+                )
+                if handler is not None:
+                    return handler(record.payload)
+        return record.content(strict=strict)
+
+    def _decoder_name(self, record: Record) -> str | None:
+        """Resolve the record's ``decoder_id`` to the decoder's declared name."""
+        if record.decoder_id is None:
+            return None
+        decoder = self._decoders.get(record.decoder_id)
+        return None if decoder is None else decoder.name
 
     def blocks(self) -> Iterator[Block]:
         """Re-walk every block of the file, in file order.
@@ -557,6 +628,7 @@ def open(
     *,
     strict: bool = False,
     face: Literal["auto", "binary", "jsonl"] = "auto",
+    content: ContentRegistry | None = None,
 ) -> FileReader:
     """Open a ``.zpf`` file (either face) for session-first reading.
 
@@ -572,9 +644,12 @@ def open(
             text or bytes for JSONL).
         strict: Escalate semantic violations and truncation to exceptions.
         face: ``"auto"`` (sniff — the default), ``"binary"``, or ``"jsonl"``.
+        content: Handlers for the advisory ``mime:``/``dec:`` content types,
+            used by :meth:`FileReader.content`. Without one, only the
+            spec-defined ``prim:`` scheme is interpreted.
 
     Returns:
         A :class:`FileReader` (context manager).
 
     """
-    return FileReader(source, strict=strict, face=face)
+    return FileReader(source, strict=strict, face=face, content=content)

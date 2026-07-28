@@ -204,6 +204,20 @@ def test_malformed_known_option_is_preserved_raw():
     assert reparsed.to_bytes() == content
 
 
+def test_reserved_record_flag_bits_survive_the_binary_face():
+    # A writer MUST NOT set them and the JSONL face has no token for them, but
+    # the binary face is byte-faithful: a reader must hand back what it read.
+    # (The property generator sticks to the named bits, so this is their home.)
+    record = zpf.Record(
+        session_id=1, sender_pid=0, source_id=0, timestamp=0,
+        flags=zpf.RecordFlags(0x2000) | zpf.RecordFlags.PSH,
+    )
+    reparsed = zpf.Record.from_content(record.to_bytes())
+    assert int(reparsed.flags) == 0x2001
+    assert reparsed == record
+    assert reparsed.to_bytes() == record.to_bytes()
+
+
 def test_unknown_tcp_role_value_is_preserved_raw():
     body = zpf.Participant(session_id=1, participant_id=0).to_bytes()
     content = body + _frame.encode_option(_frame.OPT_TCP_ROLE, b"\x09")

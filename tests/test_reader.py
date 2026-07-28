@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import dataclasses
 import io
+import json
 from typing import TYPE_CHECKING
 
 import pytest
@@ -296,11 +298,168 @@ def test_an_unusable_prim_label_costs_the_reader_nothing():
         assert [d.category for d in f.diagnostics] == ["nonconformant", "nonconformant"]
         assert "requires payload_len 4, got 5" in f.diagnostics[0].message
         assert "not a legal prim: token" in f.diagnostics[1].message
+        # And the label is what gets ignored: the good record reads as a
+        # number, the other two as the bytes they are.
+        assert [r.content() for r in records] == [
+            1234, b"\x01\x02\x03\x04\x05", b"\xff",
+        ]
+
+
+def reserved_flag_bits_file() -> bytes:
+    """Build a readable file whose header, session, and a record set a reserved bit."""
+    sink = io.BytesIO()
+    with zpf.BlockWriter(sink) as w:  # permissive flat writer
+        w.write(zpf.FileHeader(tick_hz=1, flags=zpf.FileFlags(0x0002)))
+        w.write(zpf.Source(source_id=0, kind=zpf.SourceKind.CAPTURE))
+        w.write(zpf.Session(session_id=0, proto="tcp", flags=zpf.SessionFlags(0x0002)))
+        w.write(zpf.Participant(session_id=0, participant_id=0))
+        w.write(zpf.Record(session_id=0, sender_pid=0, source_id=0, timestamp=1, payload=b"one"))
+        w.write(zpf.Record(
+            session_id=0, sender_pid=0, source_id=0, timestamp=2, payload=b"two",
+            flags=zpf.RecordFlags(0x2000) | zpf.RecordFlags.PSH,
+        ))
+        w.write(zpf.End())
+    return sink.getvalue()
+
+
+def test_reserved_flag_bits_cost_the_reader_nothing():
+    # A reader has no meaning to attach to a reserved bit, so it ignores the
+    # bits and uses the block. Isolating instead would empty the file: without
+    # its header every later block is "first block must be a File Header", and
+    # without its Session Descriptor a session's records have nowhere to go.
+    with open_bytes(reserved_flag_bits_file()) as f:
+        assert f.header is not None
+        assert f.file_kind == "raw"
+        (session,) = f.sessions()
+        assert session.proto == "tcp"
+        assert len(session.participants) == 1
+        records = list(session.records())
+        assert [r.payload for r in records] == [b"one", b"two"]
+        # The bits are kept as read, not scrubbed — the payload face is faithful.
+        assert int(records[1].flags) == 0x2001
+        assert zpf.RecordFlags.PSH in records[1].flags
+        # Reported, though: three blocks, three findings, and nothing else.
+        assert [d.category for d in f.diagnostics] == ["nonconformant"] * 3
+        assert all("reserved bits" in d.message for d in f.diagnostics)
+
+
+def test_strict_mode_still_raises_on_reserved_flag_bits():
+    with pytest.raises(zpf.AdvisoryError, match="File Header flags 0x0002"):
+        open_bytes(reserved_flag_bits_file(), strict=True)
 
 
 def test_strict_mode_still_raises_on_an_unusable_prim_label():
     with pytest.raises(zpf.AdvisoryError, match="requires payload_len 4"):
         open_bytes(unusable_prim_labels_file(), strict=True)
+
+
+# --- Reading payload content -------------------------------------------------------------
+
+
+def labelled_file() -> bytes:
+    """Build a decode-stage file whose records carry one label of each scheme."""
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1, produced_by="test 1.0", produced_at=1_719_500_000) as w:
+        source = w.add_source("zpf-input", uri="in.zpf")
+        http = w.add_decoder("http/1.1")
+        smtp = w.add_decoder("smtp")
+        with w.begin_session(session_id=7) as s:
+            sender = s.participant("client")
+            for decoder, label, payload in (
+                (http, "prim:u32", (1234).to_bytes(4, "little")),
+                (http, "mime:application/json", b'{"ok": true}'),
+                (http, "mime:text/plain; charset=utf-8", b"hello"),
+                (http, "dec:request", b"GET /"),
+                (smtp, "dec:request", b"MAIL FROM"),  # same token, other decoder
+                (http, "dec:unregistered", b"?"),
+                (http, "x-private:thing", b"opaque"),
+            ):
+                s.record(sender, ts=0, payload=payload, source=source,
+                         decoder=decoder, content_type=label)
+    return sink.getvalue()
+
+
+def content_registry() -> zpf.ContentRegistry:
+    registry = zpf.ContentRegistry()
+    registry.register_mime("application/json", json.loads)
+    registry.register_mime("text/plain", lambda payload: payload.decode("ascii"))
+    registry.register_dec("http/1.1", "request", lambda payload: ("http", payload))
+    registry.register_dec("smtp", "request", lambda payload: ("smtp", payload))
+    return registry
+
+
+def test_content_without_a_registry_is_exactly_the_records_own():
+    with open_bytes(labelled_file()) as f:
+        records = list(f.session(7).records())
+        assert [f.content(r) for r in records] == [r.content() for r in records]
+        assert [f.content(r) for r in records[:2]] == [1234, b'{"ok": true}']
+
+
+def test_a_registry_resolves_the_advisory_schemes():
+    with open_bytes(labelled_file(), content=content_registry()) as f:
+        assert [f.content(r) for r in f.session(7).records()] == [
+            1234,  # prim: is built in, and never routed through the registry
+            {"ok": True},  # mime:, by media type
+            "hello",  # mime:, parameters ignored when matching
+            ("http", b"GET /"),  # dec:, namespaced by the decoder's name...
+            ("smtp", b"MAIL FROM"),  # ...so the same token differs per decoder
+            b"?",  # dec: token nobody registered: the payload, unchanged
+            b"opaque",  # unknown scheme: opaque, per the format
+        ]
+
+
+def test_a_registry_cannot_override_the_normative_scheme():
+    registry = zpf.ContentRegistry()
+    registry.register_mime("application/json", json.loads)
+    # prim: is fully spec-defined, so a handler for it is not even expressible;
+    # the built-in decode answers, and an unusable prim: label still falls back.
+    with open_bytes(unusable_prim_labels_file(), content=registry) as f:
+        assert [f.content(r) for r in f.session(0).records()] == [
+            1234, b"\x01\x02\x03\x04\x05", b"\xff",
+        ]
+
+
+def test_strict_content_raises_only_where_nothing_could_interpret():
+    with open_bytes(labelled_file(), content=content_registry()) as f:
+        records = list(f.session(7).records())
+        for record in records[:5]:  # prim: + every registered handler
+            f.content(record, strict=True)
+        for record in records[5:]:  # unregistered dec:, unknown scheme
+            with pytest.raises(zpf.ContentError):
+                f.content(record, strict=True)
+
+
+def test_a_handlers_exception_reaches_the_caller():
+    # A handler that fails is a bug or corrupt input, not a fallback: the
+    # library must not quietly hand back bytes and hide it.
+    class Boom(Exception):
+        pass
+
+    def explode(payload: bytes) -> object:
+        raise Boom(payload)
+
+    registry = zpf.ContentRegistry()
+    registry.register_mime("application/json", explode)
+    with open_bytes(labelled_file(), content=registry) as f:
+        record = next(
+            r for r in f.session(7).records() if r.content_type == "mime:application/json"
+        )
+        with pytest.raises(Boom):
+            f.content(record)
+        with pytest.raises(Boom):
+            f.content(record, strict=True)  # nor does strict= make it a fallback
+
+
+def test_a_dec_label_needs_the_files_decoder_name():
+    registry = zpf.ContentRegistry()
+    registry.register_dec("http/1.1", "request", lambda payload: ("http", payload))
+    with open_bytes(labelled_file(), content=registry) as f:
+        record = next(r for r in f.session(7).records() if r.content_type == "dec:request")
+        assert f.content(record) == ("http", b"GET /")
+        # Without a decoder_id there is no namespace to resolve the token in,
+        # and an id this file never declared resolves to no name either.
+        assert f.content(dataclasses.replace(record, decoder_id=None)) == b"GET /"
+        assert f.content(dataclasses.replace(record, decoder_id=99)) == b"GET /"
 
 
 # --- Truncation and completeness -------------------------------------------------------

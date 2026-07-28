@@ -171,6 +171,43 @@ rarely align — one HTTP message can start and end mid-way through raw
 records. Chaining is uniform: `raw → tls-records → http` is the same
 file → file mechanism applied twice.
 
+## Typing a payload: `content_type`
+
+A record may label what its payload *is*, as `scheme:value`. The label is
+metadata *about* the bytes, never a replacement for them — the format's rule
+is that **the bytes always stay the source of truth**. Three schemes exist,
+and the format defines them to very different depths:
+
+| Scheme | What the format settles |
+| ------ | ----------------------- |
+| `prim:<token>` | **Everything.** A closed vocabulary (`u8`…`u64`, `i8`…`i64`, `bytes`), little-endian byte order, signedness from the token's `u`/`i`, and a width that MUST equal `payload_len`. |
+| `mime:<type>` | Only that the value is an IANA media type. Nothing about turning the bytes into a value. |
+| `dec:<token>` | Nothing: a type **private to the record's decoder**, meaning whatever that decoder documents. |
+
+A `dec:` token is namespaced by the producing decoder's **`name`** — not its
+id, and not its version. `dec:request` from a decoder named `http/1.1` and
+`dec:request` from one named `smtp` are two unrelated types, and a consumer
+must resolve the token *through the record's `decoder_id` to that decoder's
+name* before attaching any meaning to it. This is why the label alone is not
+enough to interpret a record: {meth}`Record.content
+<zpf.blocks.Record.content>` handles the self-contained `prim:` scheme, while
+`dec:` needs the file — {meth}`FileReader.content
+<zpf.reader.FileReader.content>`, which can do that lookup.
+
+Two fallback rules follow from bytes-as-truth, and both are normative:
+
+- **An unknown scheme is opaque** — not an error. The payload is simply bytes.
+- **A `prim:` width that disagrees with `payload_len` MUST be treated as
+  unknown**, and the reader "MUST NOT pad, truncate, or reinterpret". Emitting
+  such a record is a *writer* violation, so `zpf` refuses to write one; on
+  read it is reported as a diagnostic and the record is kept intact (see
+  [`AdvisoryError`](errors.md#advisoryerror-a-writer-only-must)).
+
+Because `mime:` and `dec:` mean nothing the format defines, interpreting them
+is a **caller-supplied** claim: you register handlers in a
+{class}`~zpf.ContentRegistry`. The [decoding guide](guides/decoding.md#reading-payload-content)
+shows both halves — labelling on write, interpreting on read.
+
 ## Provenance: spans, coverage, origins
 
 A derived file must say where its bytes came from.
@@ -235,3 +272,9 @@ The format plans for imperfect files, and the library mirrors its rules:
   the reader can drop the offending block or session and reports what it
   did via {class}`~zpf.errors.Diagnostic` objects. Data never vanishes
   silently. See [Errors and diagnostics](errors.md).
+- **Some violations bind only the writer.** Reserved `flags` bits, and a
+  `prim:` label its payload contradicts, leave a reader nothing to act on —
+  the format tells it to ignore the bits or the label and use the block. So
+  `zpf` refuses to *write* such a block, but reading one keeps it and merely
+  reports the finding ({class}`~zpf.errors.AdvisoryError`): the alternative
+  would discard well-framed data over metadata nobody consults.

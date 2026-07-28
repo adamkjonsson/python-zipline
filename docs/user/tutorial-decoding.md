@@ -165,6 +165,9 @@ rest_decoded.zpf: OK
 - The [decode-stage how-to](howto/decode_stage.md) for the task-shaped
   recipe, and the [validate how-to](howto/validate.md) for reading coverage
   diagnostics.
+- [Read payloads as typed values](howto/payload_content.md) — the other end of
+  the `content_type=` labels this tutorial wrote: how a consumer turns
+  `dec:http-request` back into a parsed value.
 - The API reference for [`zpf.decode`](../api/decode.md) (the orchestrator),
   [`zpf.reassembly`](../api/reassembly.md) (stream views), and
   [`zpf.transform`](../api/transform.md) ({func}`~zpf.check_coverage`).

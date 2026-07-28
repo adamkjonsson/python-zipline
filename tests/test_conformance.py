@@ -244,9 +244,43 @@ def test_derived_files_must_declare_their_provenance():
 
 
 def test_reserved_flag_bits_must_be_zero():
-    reject(zpf.FileHeader(tick_hz=1, flags=zpf.FileFlags(0x0002)), match="reserved bits")
-    reject(HEADER, zpf.Session(session_id=5, flags=zpf.SessionFlags(0x0002)), match="reserved")
-    reject(*RAW_PRELUDE, raw_record(flags=zpf.RecordFlags(0x2000)), match="reserved bits")
+    # A writer MUST leave them 0, so every flags field is checked — but the
+    # format gives the reserved bits no meaning a reader could act on, so
+    # ignoring them is the only reading available: advisory, never isolating.
+    advise(zpf.FileHeader(tick_hz=1, flags=zpf.FileFlags(0x0002)), match="reserved bits")
+    advise(HEADER, zpf.Session(session_id=5, flags=zpf.SessionFlags(0x0002)), match="reserved")
+    advise(*RAW_PRELUDE, raw_record(flags=zpf.RecordFlags(0x2000)), match="reserved bits")
+    # The finding names the offending bits, not the whole field.
+    advise(
+        *RAW_PRELUDE, raw_record(flags=zpf.RecordFlags(0x2000) | zpf.RecordFlags.PSH),
+        match=r"flags 0x2000 set reserved bits",
+    )
+
+
+def test_a_block_with_reserved_bits_is_still_absorbed():
+    # The cascade this prevents: a dropped File Header would make every later
+    # block "first block must be a File Header", emptying the whole file, and
+    # a dropped Session Descriptor would take its participants and records.
+    checker = advise(zpf.FileHeader(tick_hz=1, flags=zpf.FileFlags(0x0002)), match="reserved")
+    checker.check([CAP, SESS, PART, raw_record()])  # the header counted; the file reads on
+    assert checker.file_kind == "raw"
+
+    checker = advise(
+        HEADER, CAP, zpf.Session(session_id=5, flags=zpf.SessionFlags(0x0002)), match="reserved"
+    )
+    checker.check([PART, raw_record()])  # the session counted; its records belong to it
+
+
+def test_all_of_a_blocks_advisory_findings_are_reported_together():
+    # One block, one diagnostic — so it must name every rule it broke.
+    with pytest.raises(zpf.AdvisoryError, match="reserved bits.*payload_len 4") as caught:
+        accept(
+            *RAW_PRELUDE,
+            raw_record(
+                payload=b"abc", content_type="prim:u32", flags=zpf.RecordFlags(0x2000)
+            ),
+        )
+    assert str(caught.value).count("Record(session 5, sender 0)") == 2  # each is self-describing
 
 
 def test_prim_width_binds_payload_len():
@@ -280,15 +314,18 @@ def test_an_advisory_record_is_absorbed_before_it_is_reported():
 
 def test_an_isolating_violation_outranks_an_advisory_one():
     # Same record, two findings: the one that costs the caller the block wins,
-    # since the checker must not absorb a record it is about to isolate.
+    # since the checker must not absorb a record it is about to isolate — and
+    # the advisory notes go with the dropped block rather than being reported.
     reject(
         *RAW_PRELUDE, raw_record(payload=b"abc", content_type="prim:u32", decoder_id=9),
         match="undeclared decoder",
     )
     reject(
         *RAW_PRELUDE,
-        raw_record(payload=b"abc", content_type="prim:u32", flags=zpf.RecordFlags(0x2000)),
-        match="reserved bits",
+        raw_record(seq_start=100),
+        raw_record(payload=b"abc", content_type="prim:u32", flags=zpf.RecordFlags(0x2000),
+                   seq_start=50),
+        match="seq_start order",
     )
 
 
@@ -331,13 +368,20 @@ def test_flat_writers_check_only_when_asked():
 
 def test_writers_still_refuse_an_advisory_violation():
     # The writer obligation is unchanged by the reader's leniency: a checking
-    # writer refuses a prim: label its payload cannot hold.
-    bad = raw_record(payload=b"abc", content_type="prim:u32")
+    # writer refuses a prim: label its payload cannot hold, and refuses to set
+    # a reserved flag bit the reader would only be able to ignore.
     with zpf.BlockWriter(io.BytesIO(), check=True) as checked:
         for block in RAW_PRELUDE:
             checked.write(block)
         with pytest.raises(zpf.AdvisoryError, match="requires payload_len 4"):
-            checked.write(bad)
+            checked.write(raw_record(payload=b"abc", content_type="prim:u32"))
+        with pytest.raises(zpf.AdvisoryError, match="reserved bits"):
+            checked.write(raw_record(flags=zpf.RecordFlags(0x2000)))
+    with (
+        zpf.BlockWriter(io.BytesIO(), check=True) as checked,
+        pytest.raises(zpf.AdvisoryError, match="reserved bits"),
+    ):
+        checked.write(zpf.FileHeader(tick_hz=1, flags=zpf.FileFlags(0x0002)))
     sink = io.BytesIO()
     with zpf.create(sink, tick_hz=1) as writer:  # the ergonomic writer always checks
         writer.add_source("capture")

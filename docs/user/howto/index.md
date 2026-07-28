@@ -10,6 +10,7 @@ is and how to wield it, each recipe points up at its [guide](../guides/index.md)
 | [Validate a file](validate.md) | [Provenance](../guides/provenance.md) |
 | [Merge two captured directions](merge.md) | [Ordering](../guides/ordering.md) |
 | [Write decode-stage files](decode_stage.md) | [Decoding](../guides/decoding.md) |
+| [Read payloads as typed values](payload_content.md) | [Decoding](../guides/decoding.md) |
 | [Handle imperfect files](robustness.md) | [Faces and I/O](../guides/faces-and-io.md) |
 
 ```{toctree}
@@ -19,5 +20,6 @@ convert
 validate
 merge
 decode_stage
+payload_content
 robustness
 ```

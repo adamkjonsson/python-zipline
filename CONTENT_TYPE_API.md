@@ -149,7 +149,9 @@ These change the work materially, so they are worth settling before stage 2.
 1. **Return-value ambiguity.** `content()` returns `bytes` both for `prim:bytes`
    (a real, interpreted answer) and for "couldn't interpret". *Recommendation:*
    accept it for the common path and let `strict=True` disambiguate, rather than
-   wrapping every result in a `Content(value, interpreted)` object.
+   wrapping every result in a `Content(value, interpreted)` object. *Settled in
+   stage 3 as recommended;* `strict=True` raises `ContentError` (a `ZpfError`
+   **and** a `ValueError`) for every case where the answer would be a fallback.
 2. **How far the built-in `mime:` handlers should go.** *Recommendation:* decode
    `mime:text/*` to `str` **only when an explicit `charset=` parameter is
    present** — never guess an encoding — and ship `application/json` as an
@@ -172,13 +174,13 @@ Each step is independently shippable and leaves the tree green.
   unchanged. Tests in `test_conformance.py` + `test_reader.py` pinning both
   sides, and the [probe](#blocker-we-currently-drop-the-records-this-feature-must-fall-back-on)
   as a regression case.
-- [ ] **2. `zpf/content.py`.** `ContentType.parse`, `PRIM_WIDTHS` (moved from
+- [x] **2. `zpf/content.py`.** `ContentType.parse`, `PRIM_WIDTHS` (moved from
   `conformance.py`, which imports it back), and `decode_prim`. Exhaustive
   round-trip tests over all 8 integer tokens × boundary values (0, ±1, min, max),
   plus every opaque case. New `tests/test_content.py`.
-- [ ] **3. `Record.content()`.** The `prim:` + fallback behaviour on the block
+- [x] **3. `Record.content()`.** The `prim:` + fallback behaviour on the block
   itself, `strict=` included. Re-export nothing new at top level (it's a method).
-- [ ] **4. `ContentRegistry` + `FileReader.content()`.** Handler registration
+- [x] **4. `ContentRegistry` + `FileReader.content()`.** Handler registration
   for `mime:` (by media type) and `dec:` (by decoder **name** + token, per the
   spec's namespacing), `zpf.open(..., content=...)`, and `decoder_id → name`
   resolution. Export `ContentRegistry` from `zpf`.
@@ -188,12 +190,13 @@ Each step is independently shippable and leaves the tree green.
 - [ ] **6. CLI (optional).** A `zpf cat --content` that renders `prim:` values
   as numbers instead of base64. Skip if the JSONL face should stay a byte-exact
   projection — worth a decision at the time.
-- [ ] **7. Docs.** A "Reading payload content" section in
+- [x] **7. Docs.** A "Reading payload content" section in
   [`guides/decoding.md`](docs/user/guides/decoding.md) (it already owns
   `content_type` on the write side), the `dec:`-namespace rule in
-  [`concepts.md`](docs/user/concepts.md), an `api/content.md` autodoc page in
-  the reference toctree, and a how-to if the registry needs a worked example.
+  [`concepts.md`](docs/user/concepts.md), and a how-to if the registry needs a
+  worked example. (`api/content.md` landed with stage 2 — a `-W` nitpicky
+  build fails on the first unresolved reference to a new module.)
   Cite the beyond-the-standard boundary explicitly.
-- [ ] **8. Verify.** `.venv/bin/pytest` green, `ruff check` clean on every
+- [x] **8. Verify.** `.venv/bin/pytest` green, `ruff check` clean on every
   touched file, and `.venv/bin/sphinx-build -W docs docs/_build/html` clean
   (`nitpicky` is on, so a stale reference fails the build).
