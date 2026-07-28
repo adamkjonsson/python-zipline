@@ -17,7 +17,9 @@ label and keep the bytes — and those raise
 :class:`~zpf.errors.AdvisoryError`, a :class:`~zpf.errors.SemanticError`
 subclass, so writers still refuse the block while a lenient reader can
 report it and hand the block over. Today's advisory findings are the
-``prim:`` content-type ones (illegal token, width against ``payload_len``).
+``prim:`` content-type ones (illegal token, width against ``payload_len``);
+the label grammar and the vocabulary they check against live in
+:mod:`zpf.content`.
 
 Memory stays bounded on unbounded streams: per-session state is freed at
 the session's Session End; only the set of ended session ids is retained
@@ -48,6 +50,7 @@ from zpf.blocks import (
     SourceKind,
     Undecoded,
 )
+from zpf.content import PRIM_BYTES, PRIM_WIDTHS, ContentType
 from zpf.errors import AdvisoryError, SemanticError
 from zpf.order import seq_leq
 
@@ -59,17 +62,6 @@ if TYPE_CHECKING:
 _RECORD_RESERVED_FLAGS = 0xFF20
 _FILE_RESERVED_FLAGS = 0xFFFE  # everything above SINGLE_CLOCK
 _SESSION_RESERVED_FLAGS = 0xFFFE  # everything above SEQUENCED
-
-_PRIM_WIDTHS = {
-    "u8": 1,
-    "i8": 1,
-    "u16": 2,
-    "i16": 2,
-    "u32": 4,
-    "i32": 4,
-    "u64": 8,
-    "i64": 8,
-}
 
 _RAW = "raw"
 _DECODE = "decode-stage"
@@ -378,15 +370,16 @@ def _prim_finding(block: Record, described: str) -> str | None:
     token or a width mismatch to treat the label as unknown and keep the
     payload — it "MUST NOT pad, truncate, or reinterpret". So this is a
     writer obligation whose breach costs a reader nothing: reported, never
-    isolating.
+    isolating. It is the exact complement of
+    :func:`~zpf.content.decode_prim` returning None on a ``prim:`` label.
     """
     content_type = block.content_type
-    if content_type is None or not content_type.startswith("prim:"):
+    if content_type is None:
         return None
-    token = content_type[len("prim:") :]
-    if token == "bytes":
+    parsed = ContentType.parse(content_type)
+    if not parsed.is_prim or parsed.value == PRIM_BYTES:
         return None
-    width = _PRIM_WIDTHS.get(token)
+    width = PRIM_WIDTHS.get(parsed.value)
     if width is None:
         return f"{described} content_type {content_type!r} is not a legal prim: token"
     if len(block.payload) != width:

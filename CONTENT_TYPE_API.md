@@ -172,7 +172,7 @@ Each step is independently shippable and leaves the tree green.
   unchanged. Tests in `test_conformance.py` + `test_reader.py` pinning both
   sides, and the [probe](#blocker-we-currently-drop-the-records-this-feature-must-fall-back-on)
   as a regression case.
-- [ ] **2. `zpf/content.py`.** `ContentType.parse`, `PRIM_WIDTHS` (moved from
+- [x] **2. `zpf/content.py`.** `ContentType.parse`, `PRIM_WIDTHS` (moved from
   `conformance.py`, which imports it back), and `decode_prim`. Exhaustive
   round-trip tests over all 8 integer tokens × boundary values (0, ±1, min, max),
   plus every opaque case. New `tests/test_content.py`.
@@ -191,8 +191,9 @@ Each step is independently shippable and leaves the tree green.
 - [ ] **7. Docs.** A "Reading payload content" section in
   [`guides/decoding.md`](docs/user/guides/decoding.md) (it already owns
   `content_type` on the write side), the `dec:`-namespace rule in
-  [`concepts.md`](docs/user/concepts.md), an `api/content.md` autodoc page in
-  the reference toctree, and a how-to if the registry needs a worked example.
+  [`concepts.md`](docs/user/concepts.md), and a how-to if the registry needs a
+  worked example. (`api/content.md` landed with stage 2 — a `-W` nitpicky
+  build fails on the first unresolved reference to a new module.)
   Cite the beyond-the-standard boundary explicitly.
 - [ ] **8. Verify.** `.venv/bin/pytest` green, `ruff check` clean on every
   touched file, and `.venv/bin/sphinx-build -W docs docs/_build/html` clean
