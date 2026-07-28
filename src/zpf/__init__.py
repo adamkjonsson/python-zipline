@@ -39,7 +39,7 @@ from zpf.blocks import (
     parse_block,
 )
 from zpf.conformance import ConformanceChecker
-from zpf.content import PRIM_WIDTHS, ContentType, decode_prim
+from zpf.content import PRIM_WIDTHS, ContentRegistry, ContentType, decode_prim
 from zpf.decode import DecodeStage, DecodeStream, decode_stage
 from zpf.errors import (
     AdvisoryError,
@@ -83,6 +83,7 @@ __all__ = [
     "BlockWriter",
     "ConformanceChecker",
     "ContentError",
+    "ContentRegistry",
     "ContentType",
     "Custom",
     "Datagram",

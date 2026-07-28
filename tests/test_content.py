@@ -1,12 +1,22 @@
-"""Tests for zpf.content: the content_type grammar and the normative prim: decode."""
+"""Tests for zpf.content: the content_type grammar, the prim: decode, the registry."""
 
 from __future__ import annotations
+
+import json
 
 import pytest
 from test_conformance import RAW_PRELUDE, raw_record
 
 import zpf
-from zpf.content import PRIM_BYTES, PRIM_WIDTHS, ContentType, decode_prim, prim_fault
+from zpf.content import (
+    PRIM_BYTES,
+    PRIM_WIDTHS,
+    ContentRegistry,
+    ContentType,
+    decode_prim,
+    media_type_of,
+    prim_fault,
+)
 
 # --- The label grammar ------------------------------------------------------------
 
@@ -302,7 +312,90 @@ def test_content_never_touches_the_record():
     assert block.to_bytes() == twin.to_bytes()  # the bytes on the wire are untouched
 
 
+# --- ContentRegistry ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("application/json", "application/json"),
+        ("text/plain; charset=utf-8", "text/plain"),
+        ("Text/Plain", "text/plain"),  # IANA: type and subtype are case-insensitive
+        ("  text/plain  ", "text/plain"),
+        ("text/plain;charset=utf-8;fmt=flowed", "text/plain"),
+        ("", ""),
+    ],
+)
+def test_a_media_type_is_its_label_without_parameters(value: str, expected: str):
+    assert media_type_of(value) == expected
+
+
+def test_mime_handlers_are_found_by_media_type():
+    registry = zpf.ContentRegistry()
+    registry.register_mime("application/json", json.loads)
+    for label in ("mime:application/json", "mime:application/json; charset=utf-8"):
+        handler = registry.handler(ContentType.parse(label))
+        assert handler is not None
+        assert handler(b'{"a": 1}') == {"a": 1}
+    # Case-insensitive on the media type, as IANA defines it.
+    assert registry.handler(ContentType.parse("mime:Application/JSON")) is json.loads
+    assert registry.handler(ContentType.parse("mime:text/plain")) is None
+
+
+def test_dec_handlers_are_namespaced_by_the_decoder_name():
+    registry = zpf.ContentRegistry()
+    registry.register_dec("http/1.1", "request", bytes.splitlines)
+    label = ContentType.parse("dec:request")
+    assert registry.handler(label, decoder_name="http/1.1") is bytes.splitlines
+    # A different decoder's "request" is a different type — that is the whole
+    # point of the format namespacing dec: tokens by the decoder's name.
+    assert registry.handler(label, decoder_name="smtp") is None
+    assert registry.handler(label, decoder_name="HTTP/1.1") is None  # matched exactly
+    # And an undecoded record (or a decoder with no declared name) cannot
+    # resolve a dec: token at all.
+    assert registry.handler(label) is None
+    assert registry.handler(ContentType.parse("dec:response"), decoder_name="http/1.1") is None
+
+
+def test_the_registry_never_answers_for_prim_or_an_unknown_scheme():
+    registry = zpf.ContentRegistry()
+    registry.register_mime("application/json", json.loads)
+    registry.register_dec("http/1.1", "request", bytes.splitlines)
+    # prim: is normative and built in, so it is never dispatched here...
+    assert registry.handler(ContentType.parse("prim:u32")) is None
+    # ...and the format calls every other scheme opaque.
+    for label in ("x-private:thing", "prim", "", ":u32"):
+        assert registry.handler(ContentType.parse(label)) is None
+
+
+def test_registering_a_key_twice_replaces_the_handler():
+    registry = zpf.ContentRegistry()
+    registry.register_mime("application/json", json.loads)
+    registry.register_mime("application/json", bytes.strip)
+    assert registry.handler(ContentType.parse("mime:application/json")) is bytes.strip
+
+
+@pytest.mark.parametrize(
+    ("media_type", "message"),
+    [
+        ("application/json; charset=utf-8", "carries parameters"),
+        ("", "must not be empty"),
+        ("   ", "must not be empty"),
+    ],
+)
+def test_an_unusable_mime_registration_is_refused(media_type: str, message: str):
+    with pytest.raises(ValueError, match=message):
+        zpf.ContentRegistry().register_mime(media_type, json.loads)
+
+
+@pytest.mark.parametrize(("name", "token"), [("", "request"), ("http/1.1", ""), ("", "")])
+def test_an_unusable_dec_registration_is_refused(name: str, token: str):
+    with pytest.raises(ValueError, match="needs both a decoder name and a token"):
+        zpf.ContentRegistry().register_dec(name, token, bytes.splitlines)
+
+
 def test_the_top_level_re_exports_are_the_flat_modules():
     assert zpf.ContentType is ContentType
     assert zpf.decode_prim is decode_prim
     assert zpf.PRIM_WIDTHS is PRIM_WIDTHS
+    assert zpf.ContentRegistry is ContentRegistry

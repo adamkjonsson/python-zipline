@@ -80,13 +80,17 @@ with zpf.open("suspect.zpf") as reader:
 
 ### ContentError: the label could not be honoured
 
-{meth}`zpf.Record.content` reads a payload as its `content_type` says. When
-the label can't be honoured — an unusable `prim:` width, an advisory
-`mime:`/`dec:` label, or no label at all — the format's answer is the raw
-payload, so `content()` returns bytes and raises nothing. Pass `strict=True`
-when that ambiguity matters (bytes as *the value* versus bytes as *the
-fallback*) and the same case raises {class}`~zpf.ContentError` instead. It is
-never raised by reading a file, only by asking for that guarantee.
+{meth}`zpf.Record.content` reads a payload as its `content_type` says, and
+{meth}`zpf.FileReader.content` does the same with your
+{class}`~zpf.ContentRegistry` handlers for the advisory schemes. When the
+label can't be honoured — an unusable `prim:` width, a `mime:`/`dec:` label
+with no handler registered, or no label at all — the format's answer is the
+raw payload, so `content()` returns bytes and raises nothing. Pass
+`strict=True` when that ambiguity matters (bytes as *the value* versus bytes
+as *the fallback*) and the same case raises {class}`~zpf.ContentError`
+instead. It is never raised by reading a file, only by asking for that
+guarantee. A registered handler's own exceptions are not converted: they
+reach you unchanged, `strict` or not.
 
 ### TruncatedError: the stream ended early
 

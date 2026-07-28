@@ -38,6 +38,7 @@ html_theme = "furo"
 nitpicky = True
 
 nitpick_ignore = [
+    ("py:class", "collections.abc.Callable"),
     ("py:class", "collections.abc.Mapping"),
     ("py:class", "datetime"),
     ("py:class", "datetime.datetime"),

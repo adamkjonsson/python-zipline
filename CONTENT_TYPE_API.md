@@ -180,7 +180,7 @@ Each step is independently shippable and leaves the tree green.
   plus every opaque case. New `tests/test_content.py`.
 - [x] **3. `Record.content()`.** The `prim:` + fallback behaviour on the block
   itself, `strict=` included. Re-export nothing new at top level (it's a method).
-- [ ] **4. `ContentRegistry` + `FileReader.content()`.** Handler registration
+- [x] **4. `ContentRegistry` + `FileReader.content()`.** Handler registration
   for `mime:` (by media type) and `dec:` (by decoder **name** + token, per the
   spec's namespacing), `zpf.open(..., content=...)`, and `decoder_id → name`
   resolution. Export `ContentRegistry` from `zpf`.
