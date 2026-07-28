@@ -197,6 +197,6 @@ Each step is independently shippable and leaves the tree green.
   worked example. (`api/content.md` landed with stage 2 — a `-W` nitpicky
   build fails on the first unresolved reference to a new module.)
   Cite the beyond-the-standard boundary explicitly.
-- [ ] **8. Verify.** `.venv/bin/pytest` green, `ruff check` clean on every
+- [x] **8. Verify.** `.venv/bin/pytest` green, `ruff check` clean on every
   touched file, and `.venv/bin/sphinx-build -W docs docs/_build/html` clean
   (`nitpicky` is on, so a stale reference fails the build).
