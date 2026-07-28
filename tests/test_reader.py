@@ -296,6 +296,11 @@ def test_an_unusable_prim_label_costs_the_reader_nothing():
         assert [d.category for d in f.diagnostics] == ["nonconformant", "nonconformant"]
         assert "requires payload_len 4, got 5" in f.diagnostics[0].message
         assert "not a legal prim: token" in f.diagnostics[1].message
+        # And the label is what gets ignored: the good record reads as a
+        # number, the other two as the bytes they are.
+        assert [r.content() for r in records] == [
+            1234, b"\x01\x02\x03\x04\x05", b"\xff",
+        ]
 
 
 def test_strict_mode_still_raises_on_an_unusable_prim_label():

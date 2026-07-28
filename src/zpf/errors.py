@@ -57,6 +57,22 @@ class AdvisoryError(SemanticError):
     """
 
 
+class ContentError(ZpfError, ValueError):
+    """A payload cannot be interpreted as its ``content_type`` claims.
+
+    Raised only where the caller asked for that guarantee —
+    ``Record.content(strict=True)`` — because the format's own answer is a
+    fallback, not an error: an unusable or unrecognized label leaves the
+    payload as plain bytes. Use ``strict=True`` when the difference between
+    "these bytes *are* the value" and "the label could not be honoured"
+    must not pass silently.
+
+    It is a :class:`ValueError` as well as a :class:`ZpfError`, so both the
+    package-wide ``except zpf.ZpfError`` and the ordinary
+    ``except ValueError`` catch it.
+    """
+
+
 class TruncatedError(ZpfError):
     """The stream ended inside a block (strict mode only).
 

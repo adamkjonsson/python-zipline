@@ -13,6 +13,7 @@ Hypothesis property tests. Every test must stay green on every change.
 | `test_jsonl.py` | The JSONL projection: spec examples, per-block field mapping, unknown-key and edge-case policy. |
 | `test_golden.py` | **The golden file** — the spec's 196-byte worked example (see below). |
 | `test_conformance.py` | The `ConformanceChecker` and its flat-writer (`check=True`) wiring. |
+| `test_content.py` | `zpf.content` — the `content_type` grammar and the `prim:` decode — plus `Record.content()`, which reads a payload through it. |
 | `test_order.py` | Serial arithmetic, the streaming causal merge, and sequenced-order verification — including **the skewed worked example** (below). |
 | `test_reader.py` | The session-first reader `zpf.open`: sessions, lazy records, strict/lenient modes. |
 | `test_writer.py` | The ergonomic handle-based writer `zpf.create`. |

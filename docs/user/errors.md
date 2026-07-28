@@ -17,9 +17,13 @@ ZpfError
 ├── StructuralError   the byte stream is corrupt — reject the file
 ├── SemanticError     a well-framed block breaks a MUST — isolate it
 │   └── AdvisoryError a writer-only MUST — report it, keep the block
+├── ContentError      a payload isn't what its content_type claims
 ├── TruncatedError    the stream ended inside a block (strict mode only)
 └── EncodeError       a value can't be represented when writing
 ```
+
+`ContentError` is also a {class}`ValueError`, so either `except zpf.ZpfError`
+or `except ValueError` catches it.
 
 ### StructuralError: reject the file
 
@@ -65,6 +69,16 @@ with zpf.open("suspect.zpf") as reader:
     for diagnostic in reader.diagnostics:
         print(diagnostic.category, diagnostic.message)  # ...and reported
 ```
+
+### ContentError: the label could not be honoured
+
+{meth}`zpf.Record.content` reads a payload as its `content_type` says. When
+the label can't be honoured — an unusable `prim:` width, an advisory
+`mime:`/`dec:` label, or no label at all — the format's answer is the raw
+payload, so `content()` returns bytes and raises nothing. Pass `strict=True`
+when that ambiguity matters (bytes as *the value* versus bytes as *the
+fallback*) and the same case raises {class}`~zpf.ContentError` instead. It is
+never raised by reading a file, only by asking for that guarantee.
 
 ### TruncatedError: the stream ended early
 

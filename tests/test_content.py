@@ -6,7 +6,7 @@ import pytest
 from test_conformance import RAW_PRELUDE, raw_record
 
 import zpf
-from zpf.content import PRIM_BYTES, PRIM_WIDTHS, ContentType, decode_prim
+from zpf.content import PRIM_BYTES, PRIM_WIDTHS, ContentType, decode_prim, prim_fault
 
 # --- The label grammar ------------------------------------------------------------
 
@@ -142,6 +142,34 @@ def test_an_unusable_label_is_opaque_not_an_error(payload: bytes, token: str, wh
     assert decode_prim(payload, token) is None, why
 
 
+# --- Explaining an opaque label -----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("payload", "token", "fault"),
+    [
+        (b"abc", "u32", "requires payload_len 4, got 3"),
+        (b"", "u8", "requires payload_len 1, got 0"),
+        (b"\x01" * 9, "u64", "requires payload_len 8, got 9"),
+        (b"\x01", "u128", "is not a legal prim: token"),
+        (b"\x01", "U8", "is not a legal prim: token"),
+    ],
+)
+def test_a_fault_completes_the_sentence_about_the_label(payload: bytes, token: str, fault: str):
+    # The phrasing is shared, so the checker's diagnostic and the strict
+    # Record.content() refusal name the same rule in the same words.
+    assert prim_fault(payload, token) == fault
+
+
+@pytest.mark.parametrize(
+    ("payload", "token"),
+    [(b"\x01", "u8"), (b"\x01\x02\x03\x04", "i32"), (b"", PRIM_BYTES), (b"anything", PRIM_BYTES)],
+)
+def test_an_honourable_label_has_no_fault(payload: bytes, token: str):
+    assert prim_fault(payload, token) is None
+    assert decode_prim(payload, token) is not None  # the complement, by construction
+
+
 # --- The boundary with the conformance checker -------------------------------------
 
 
@@ -164,10 +192,10 @@ def test_opacity_and_the_advisory_finding_are_complements(payload: bytes, token:
     Two modules read the same rule; if they ever disagree, one of them lets a
     record through with a label it cannot honour, or reports a conformant one.
     """
-    record = raw_record(payload=payload, content_type=f"prim:{token}")
+    block = raw_record(payload=payload, content_type=f"prim:{token}")
     checker = zpf.ConformanceChecker()
     try:
-        checker.check([*RAW_PRELUDE, record])
+        checker.check([*RAW_PRELUDE, block])
     except zpf.AdvisoryError:
         flagged = True
     else:
@@ -180,6 +208,98 @@ def test_the_checker_leaves_other_schemes_to_their_handlers():
     # here — a mime:/dec:/unknown label is never the checker's business.
     for label in ("mime:text/plain", "dec:request", "x-private:thing", "prim", ""):
         zpf.ConformanceChecker().check([*RAW_PRELUDE, raw_record(content_type=label)])
+
+
+# --- Record.content() --------------------------------------------------------------
+
+
+def record(payload: bytes, content_type: str | None) -> zpf.Record:
+    return zpf.Record(
+        session_id=0, sender_pid=0, source_id=0, timestamp=0,
+        payload=payload, content_type=content_type,
+    )
+
+
+@pytest.mark.parametrize(
+    ("payload", "label", "expected"),
+    [
+        (b"\x2a", "prim:u8", 42),
+        (b"\xff", "prim:i8", -1),
+        (b"\xd2\x04\x00\x00", "prim:u32", 1234),
+        (b"\xff\xff\xff\xff\xff\xff\xff\xff", "prim:i64", -1),
+        (b"", "prim:bytes", b""),
+        (b"anything", "prim:bytes", b"anything"),
+    ],
+)
+def test_content_interprets_the_spec_defined_scheme(
+    payload: bytes, label: str, expected: int | bytes
+):
+    assert record(payload, label).content() == expected
+    # strict changes nothing when the label *can* be honoured.
+    assert record(payload, label).content(strict=True) == expected
+
+
+@pytest.mark.parametrize(
+    ("payload", "label"),
+    [
+        (b"abc", None),  # nothing claimed
+        (b"hello", "mime:text/plain"),  # advisory: needs a caller-supplied handler
+        (b"hello", "mime:text/plain; charset=utf-8"),
+        (b"\x00\x01", "dec:request"),  # namespaced by decoder name — needs the file
+        (b"\x00\x01", "x-private:thing"),  # unknown scheme is opaque, not an error
+        (b"\x00\x01", "prim"),  # no scheme at all
+        (b"abc", "prim:u32"),  # width disagrees: MUST NOT pad
+        (b"\x01\x02\x03\x04\x05", "prim:u32"),  # MUST NOT truncate
+        (b"", "prim:u8"),
+        (b"\x01" * 16, "prim:u128"),  # outside the closed vocabulary
+        (b"\x01", "prim:U8"),  # nor case-folded into it
+    ],
+)
+def test_content_falls_back_to_the_payload_untouched(payload: bytes, label: str | None):
+    assert record(payload, label).content() == payload
+
+
+def test_the_fallback_hands_back_the_very_same_bytes():
+    # Not a copy, not a reinterpretation: the payload object itself.
+    block = record(b"\x01\x02\x03", "prim:u32")
+    assert block.content() is block.payload
+
+
+@pytest.mark.parametrize(
+    ("payload", "label", "message"),
+    [
+        (b"abc", None, "carries no content_type"),
+        (b"abc", "prim:u32", "requires payload_len 4, got 3"),
+        (b"\x01" * 16, "prim:u128", "is not a legal prim: token"),
+        (b"hello", "mime:text/plain", "advisory, not spec-defined"),
+        (b"hello", "dec:request", "needs a caller-supplied handler"),
+        (b"hello", "x-private:thing", "advisory, not spec-defined"),
+    ],
+)
+def test_strict_refuses_to_pass_off_bytes_as_an_interpretation(
+    payload: bytes, label: str | None, message: str
+):
+    block = record(payload, label)
+    assert block.content() == payload  # lenient: the spec's own fallback
+    with pytest.raises(zpf.ContentError, match=message):
+        block.content(strict=True)
+
+
+def test_a_content_error_is_both_a_zpf_error_and_a_value_error():
+    # The package-wide `except zpf.ZpfError` must stay complete, and callers
+    # who read the signature as "raises ValueError" must be right too.
+    with pytest.raises(zpf.ZpfError):
+        record(b"abc", "prim:u32").content(strict=True)
+    with pytest.raises(ValueError, match="payload_len"):
+        record(b"abc", "prim:u32").content(strict=True)
+
+
+def test_content_never_touches_the_record():
+    block = record(b"\x01\x00", "prim:u16")
+    twin = record(b"\x01\x00", "prim:u16")
+    assert block.content() == 1
+    assert block == twin  # reading the content is not a mutation
+    assert block.to_bytes() == twin.to_bytes()  # the bytes on the wire are untouched
 
 
 def test_the_top_level_re_exports_are_the_flat_modules():

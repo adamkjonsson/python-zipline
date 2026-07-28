@@ -107,6 +107,36 @@ class ContentType:
         return self.scheme == "prim"
 
 
+def prim_fault(payload: bytes, token: str) -> str | None:
+    """Explain why a ``prim:`` token cannot be honoured for this payload.
+
+    The complement of :func:`decode_prim`: this returns a reason exactly
+    when that returns ``None``, which is what keeps the conformance
+    checker's finding and the decode's fallback from ever disagreeing.
+
+    Args:
+        payload: The record's payload bytes.
+        token: A ``prim:`` label's value, e.g. ``"u32"``.
+
+    Returns:
+        A phrase completing "content_type ``<label>`` …", or ``None`` when
+        the label can be honoured.
+
+    Example:
+        >>> prim_fault(b"abc", "u32")
+        'requires payload_len 4, got 3'
+
+    """
+    if token == PRIM_BYTES:
+        return None
+    width = PRIM_WIDTHS.get(token)
+    if width is None:
+        return "is not a legal prim: token"
+    if len(payload) != width:
+        return f"requires payload_len {width}, got {len(payload)}"
+    return None
+
+
 def decode_prim(payload: bytes, token: str) -> int | bytes | None:
     r"""Interpret a payload as a ``prim:`` token says, or report it opaque.
 
@@ -130,9 +160,8 @@ def decode_prim(payload: bytes, token: str) -> int | bytes | None:
         -1
 
     """
+    if prim_fault(payload, token) is not None:
+        return None
     if token == PRIM_BYTES:
         return payload
-    width = PRIM_WIDTHS.get(token)
-    if width is None or len(payload) != width:
-        return None
     return int.from_bytes(payload, "little", signed=token.startswith("i"))

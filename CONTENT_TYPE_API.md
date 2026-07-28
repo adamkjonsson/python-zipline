@@ -149,7 +149,9 @@ These change the work materially, so they are worth settling before stage 2.
 1. **Return-value ambiguity.** `content()` returns `bytes` both for `prim:bytes`
    (a real, interpreted answer) and for "couldn't interpret". *Recommendation:*
    accept it for the common path and let `strict=True` disambiguate, rather than
-   wrapping every result in a `Content(value, interpreted)` object.
+   wrapping every result in a `Content(value, interpreted)` object. *Settled in
+   stage 3 as recommended;* `strict=True` raises `ContentError` (a `ZpfError`
+   **and** a `ValueError`) for every case where the answer would be a fallback.
 2. **How far the built-in `mime:` handlers should go.** *Recommendation:* decode
    `mime:text/*` to `str` **only when an explicit `charset=` parameter is
    present** — never guess an encoding — and ship `application/json` as an
@@ -176,7 +178,7 @@ Each step is independently shippable and leaves the tree green.
   `conformance.py`, which imports it back), and `decode_prim`. Exhaustive
   round-trip tests over all 8 integer tokens × boundary values (0, ±1, min, max),
   plus every opaque case. New `tests/test_content.py`.
-- [ ] **3. `Record.content()`.** The `prim:` + fallback behaviour on the block
+- [x] **3. `Record.content()`.** The `prim:` + fallback behaviour on the block
   itself, `strict=` included. Re-export nothing new at top level (it's a method).
 - [ ] **4. `ContentRegistry` + `FileReader.content()`.** Handler registration
   for `mime:` (by media type) and `dec:` (by decoder **name** + token, per the

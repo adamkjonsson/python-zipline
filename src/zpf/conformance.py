@@ -50,7 +50,7 @@ from zpf.blocks import (
     SourceKind,
     Undecoded,
 )
-from zpf.content import PRIM_BYTES, PRIM_WIDTHS, ContentType
+from zpf.content import ContentType, prim_fault
 from zpf.errors import AdvisoryError, SemanticError
 from zpf.order import seq_leq
 
@@ -377,17 +377,12 @@ def _prim_finding(block: Record, described: str) -> str | None:
     if content_type is None:
         return None
     parsed = ContentType.parse(content_type)
-    if not parsed.is_prim or parsed.value == PRIM_BYTES:
+    if not parsed.is_prim:
         return None
-    width = PRIM_WIDTHS.get(parsed.value)
-    if width is None:
-        return f"{described} content_type {content_type!r} is not a legal prim: token"
-    if len(block.payload) != width:
-        return (
-            f"{described} content_type {content_type!r} requires payload_len {width}, "
-            f"got {len(block.payload)}"
-        )
-    return None
+    fault = prim_fault(block.payload, parsed.value)
+    if fault is None:
+        return None
+    return f"{described} content_type {content_type!r} {fault}"
 
 
 def _describe(block: Block) -> str:

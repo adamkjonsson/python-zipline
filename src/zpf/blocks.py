@@ -28,7 +28,8 @@ from typing import Any, Callable, ClassVar, NamedTuple, Self
 
 from zpf import _frame
 from zpf._frame import RawOption
-from zpf.errors import EncodeError, SemanticError, StructuralError
+from zpf.content import ContentType, decode_prim, prim_fault
+from zpf.errors import ContentError, EncodeError, SemanticError, StructuralError
 
 # A byte-swapped (big-endian, invalid) file's magic reads as this value.
 _SWAPPED_MAGIC = 0x4650495A
@@ -808,7 +809,8 @@ class Record(Block):
     """Record block (``0x20``) — one directed payload unit.
 
     A record is *decoded* iff it carries a ``decoder_id``; a byte-run record
-    (raw or pass-through) carries none.
+    (raw or pass-through) carries none. :meth:`content` reads the payload as
+    the record's ``content_type`` says.
 
     Attributes:
         session_id: The session this record belongs to.
@@ -871,6 +873,73 @@ class Record(Block):
         object.__setattr__(self, "flags", RecordFlags(self.flags))
         object.__setattr__(self, "spans", tuple(self.spans))
         object.__setattr__(self, "extra_options", tuple(self.extra_options))
+
+    def content(self, *, strict: bool = False) -> int | bytes:
+        """Return the payload interpreted as ``content_type`` says.
+
+        Only the ``prim:`` scheme is decoded here, because it is the only
+        one the format defines completely: little-endian integers, signed
+        iff the token starts with ``i``, width equal to ``payload_len``.
+        Everything else falls back to :attr:`payload` unchanged, which is
+        the specification's own rule — the bytes are the source of truth
+        and the label never replaces them.
+
+        The fallback covers a record with no ``content_type``, a
+        ``prim:bytes`` payload, a ``mime:``/``dec:``/unknown scheme, and a
+        ``prim:`` label the payload contradicts (an illegal token, or a
+        width that disagrees — never padded, truncated, or reinterpreted).
+        A ``dec:`` token cannot be resolved from a record at all: the
+        format namespaces it by the *decoder's name*, and a record knows
+        only its ``decoder_id``, so resolving it needs the file.
+
+        Args:
+            strict: Raise instead of falling back, so the return value is
+                always the label's meaning rather than possibly the raw
+                bytes. Interpreting ``prim:bytes`` still succeeds — the
+                label asks for the bytes.
+
+        Returns:
+            An :class:`int` for a ``prim:`` integer token, otherwise the
+            payload bytes.
+
+        Raises:
+            ContentError: With ``strict=True``, if the payload could not be
+                interpreted as the label claims (also a
+                :class:`ValueError`).
+
+        Example:
+            >>> record = Record(
+            ...     session_id=0, sender_pid=0, source_id=0, timestamp=0,
+            ...     payload=(1234).to_bytes(4, "little"),
+            ...     content_type="prim:u32",
+            ... )
+            >>> record.content()
+            1234
+
+        """
+        if self.content_type is not None:
+            parsed = ContentType.parse(self.content_type)
+            if parsed.is_prim:
+                value = decode_prim(self.payload, parsed.value)
+                if value is not None:
+                    return value
+        if strict:
+            raise ContentError(self._uninterpretable())
+        return self.payload
+
+    def _uninterpretable(self) -> str:
+        """Say why :meth:`content` had to fall back to the raw payload."""
+        content_type = self.content_type
+        if content_type is None:
+            return "record carries no content_type, so its payload has no declared meaning"
+        parsed = ContentType.parse(content_type)
+        fault = prim_fault(self.payload, parsed.value) if parsed.is_prim else None
+        if fault is not None:
+            return f"content_type {content_type!r} {fault}"
+        return (
+            f"content_type {content_type!r} is advisory, not spec-defined: only prim: can be "
+            "interpreted from a record alone, so this label needs a caller-supplied handler"
+        )
 
     def _encode(self) -> bytes:
         body = _RECORD_BODY.pack(

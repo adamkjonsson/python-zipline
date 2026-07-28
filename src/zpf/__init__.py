@@ -43,6 +43,7 @@ from zpf.content import PRIM_WIDTHS, ContentType, decode_prim
 from zpf.decode import DecodeStage, DecodeStream, decode_stage
 from zpf.errors import (
     AdvisoryError,
+    ContentError,
     Diagnostic,
     EncodeError,
     SemanticError,
@@ -81,6 +82,7 @@ __all__ = [
     "BlockReader",
     "BlockWriter",
     "ConformanceChecker",
+    "ContentError",
     "ContentType",
     "Custom",
     "Datagram",
