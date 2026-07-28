@@ -107,6 +107,22 @@ session_ends = st.builds(
     zpf.SessionEnd, session_id=u64, reason=opt_text, comment=opt_text, extra_options=extra_options
 )
 
+# The flag bits the format names. The rest are reserved and MUST be 0, so no
+# conformant writer emits them and the JSONL face has no token to render them
+# with — it drops them with a diagnostic (owned by
+# test_jsonl.py::test_unrenderable_record_flag_bits, and by the binary
+# preservation test in test_blocks.py). Generating them here would assert
+# projection stability for files that cannot legally exist.
+_DEFINED_RECORD_FLAGS = (
+    zpf.RecordFlags.PSH
+    | zpf.RecordFlags.FIN
+    | zpf.RecordFlags.RST
+    | zpf.RecordFlags.SYN
+    | zpf.RecordFlags.URG
+    | zpf.RecordFlags.RETRANSMIT
+    | zpf.RecordFlags.MESSAGE
+)
+
 records = st.builds(
     zpf.Record,
     session_id=u64,
@@ -114,7 +130,7 @@ records = st.builds(
     source_id=u16,
     timestamp=i64,
     payload=payloads,
-    flags=st.integers(0, 2**16 - 1).map(zpf.RecordFlags),
+    flags=st.integers(0, 2**16 - 1).map(lambda bits: zpf.RecordFlags(bits) & _DEFINED_RECORD_FLAGS),
     seq_start=st.none() | u32,
     ack=st.none() | u32,
     ts_first=st.none() | i64,
@@ -236,27 +252,15 @@ def test_canonical_encoding_is_stable_after_replace(file: ZpfFile):
     assert sink.getvalue() == data
 
 
-_JSONL_RECORD_FLAGS = (
-    zpf.RecordFlags.PSH
-    | zpf.RecordFlags.FIN
-    | zpf.RecordFlags.RST
-    | zpf.RecordFlags.SYN
-    | zpf.RecordFlags.URG
-    | zpf.RecordFlags.RETRANSMIT
-    | zpf.RecordFlags.MESSAGE
-)
-
-
 def jsonl_normalized(block: zpf.Block) -> zpf.Block:
     """Apply the documented JSONL normalizations to an expected block.
 
-    ``TcpRole.UNKNOWN`` projects as an omitted key (spec-mandated), and
-    Record flag bits with no JSON token are dropped (our lenient policy).
+    ``TcpRole.UNKNOWN`` projects as an omitted key (spec-mandated). Record
+    flag bits with no JSON token would be dropped too, but the generator
+    does not produce those — see ``_DEFINED_RECORD_FLAGS``.
     """
     if isinstance(block, zpf.Participant) and block.tcp_role == zpf.TcpRole.UNKNOWN:
         return dataclasses.replace(block, tcp_role=None)
-    if isinstance(block, zpf.Record):
-        return dataclasses.replace(block, flags=block.flags & _JSONL_RECORD_FLAGS)
     return block
 
 
