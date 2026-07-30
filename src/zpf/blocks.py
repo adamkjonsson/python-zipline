@@ -1,4 +1,4 @@
-"""Typed block model for the Zipline Payload Format v1.0.
+"""Typed block model for the Zipline Payload Format v0.9.
 
 One frozen dataclass per block type, mirroring the specification's normative
 binary encoding. Each class knows how to serialize itself (:meth:`Block.to_bytes`)
@@ -438,6 +438,9 @@ class FileHeader(Block):
     Attributes:
         tick_hz: Time units per second for all timestamps; must be non-zero.
         version_major: Format major version; this implementation writes 1.
+            Spec 0.9 stamps ``1``/``0`` on the wire — the version was published
+            as "1.0" and renumbered afterwards, so the field does not track the
+            spec's current name.
         version_minor: Format minor version.
         time_epoch: Origin for record timestamps, in ``tick_hz`` ticks since
             the Unix epoch; ``None`` means the default origin (0).

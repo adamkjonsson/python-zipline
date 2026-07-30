@@ -4,8 +4,8 @@ This page is the mental model behind the Zipline Payload Format and this
 library. The [tutorial](tutorial.md) walks you through the API; this page
 explains *why* the format looks the way it does, and defines the vocabulary
 the rest of the documentation uses. Deep links go to the
-[v1.0 specification](https://github.com/adamkjonsson/zipline/blob/v1.0/docs/payload-format.md),
-which is normative.
+[v0.9 specification](https://github.com/adamkjonsson/zipline/blob/v0.9/docs/payload-format.md),
+which is normative for this library.
 
 ## What a `.zpf` file holds
 

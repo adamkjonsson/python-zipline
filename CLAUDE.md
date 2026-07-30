@@ -2,9 +2,22 @@
 
 ## The product
 
-This code is a Python implementation of v1.0 of the Zipline Payload Format, which
-is defined in `https://github.com/adamkjonsson/zipline/releases/tag/v1.0`. It is a
+This code is a Python implementation of v0.9 of the Zipline Payload Format, which
+is defined in `https://github.com/adamkjonsson/zipline/releases/tag/v0.9`. It is a
 module that readers and writers of zpf-files use to access and create files.
+
+"The standard" in this file always means **0.9**. That version was published as
+"1.0" and designated final, then retroactively renumbered when the first
+implementation forced a breaking revision; the v0.9 tag holds the original text
+unchanged, so a 0.9 file still stamps `version_major = 1`, `version_minor = 0`
+and projects `"zipline-payload/1"`. Do not "correct" those to 0/9.
+
+A newer specification, **0.10**
+(`https://github.com/adamkjonsson/zipline/blob/v0.10/docs/zipline-payload-format.md`),
+exists and is breaking — it stamps `version_major = 0`, `version_minor = 10`,
+replaces the JSONL key `time_units` with `tick_hz`, and renames the `Undecoded`
+reason `tcp-gap` to `gap`, among other changes. This library does not implement
+it. Do not apply 0.10 rules to this code unless explicitly asked to.
 
 The API should be easy to use and feel logical. It must always follow the standard. The support for the standard should be complete. Always warn if a feature requires the code to go beyond the standard.
 

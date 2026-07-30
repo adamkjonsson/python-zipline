@@ -4,15 +4,25 @@
 
 The Zipline Payload Format (`.zpf`) stores the payload of network traffic —
 the bytes exchanged between endpoints once packets have been reassembled into
-sessions, plus the metadata needed to consume them. Version 1.0 of the format
-is specified in the [zipline repository](https://github.com/adamkjonsson/zipline).
+sessions, plus the metadata needed to consume them. This library implements
+[version 0.9](https://github.com/adamkjonsson/zipline/blob/v0.9/docs/payload-format.md)
+of the format, specified in the
+[zipline repository](https://github.com/adamkjonsson/zipline).
+
+> **On the version number.** 0.9 was published as "1.0" and designated final,
+> then retroactively renumbered: no implementation existed at the time, and the
+> first one found enough to force a breaking revision. The current
+> specification is
+> [0.10](https://github.com/adamkjonsson/zipline/blob/v0.10/docs/zipline-payload-format.md),
+> which this library does not yet implement. 0.10 claims no compatibility with
+> 0.9, so the two are separate formats rather than successive refinements.
 
 The package is named `zpf` (not `zipline`) because the `zipline` name on PyPI
 belongs to an unrelated project.
 
 ## Features
 
-- Complete v1.0 support: the binary container and the JSON-Lines projection,
+- Complete 0.9 support: the binary container and the JSON-Lines projection,
   raw, decode-stage, and pass-through files, with lossless converters.
 - An ergonomic writer (`zpf.create`) that makes non-conformant files hard to
   write, and a session-first reader (`zpf.open`) with lazy record access.

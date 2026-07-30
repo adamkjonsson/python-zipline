@@ -88,11 +88,12 @@ subject, from the reader's side.
 ## Going beyond the standard
 
 Per `CLAUDE.md`, support must stay complete *and* must not silently exceed the
-v1.0 spec: any behavior beyond the standard has to be flagged to the user with
+v0.9 spec: any behavior beyond the standard has to be flagged to the user with
 an explicit callout. As of this version nothing does — the checker's rules are
 the spec's, and the two out-of-band checks (sequenced order, coverage) are
 spec requirements enforced elsewhere, not extensions. A new rule that isn't in
-v1.0 does not belong in the `ConformanceChecker`.
+v0.9 does not belong in the `ConformanceChecker` — including a rule from 0.10,
+which this library does not implement.
 
 ## Where to go next
 
