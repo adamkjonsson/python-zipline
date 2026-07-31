@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 # "A first example": a 3-party chat room, dave joins mid-stream. Blank lines
 # appear exactly as in the spec (they must be skipped).
 CHAT_EXAMPLE = """\
-{"type":"file","format":"zipline-payload/1","time_units":"us"}
+{"type":"file","format":"zipline-payload/0.12","time_units":"us"}
 {"type":"source","source_id":1,"kind":"capture","uri":"chat.pcap"}
 
 {"type":"session","session_id":8,"proto":"irc","key":"#zipline@irc.example.net"}
@@ -40,7 +40,7 @@ CHAT_EXAMPLE = """\
 
 # "Worked example: a skewed two-file capture".
 SKEWED_EXAMPLE = """\
-{"type":"file","format":"zipline-payload/1","time_units":"us"}
+{"type":"file","format":"zipline-payload/0.12","time_units":"us"}
 {"type":"source","source_id":1,"kind":"capture","uri":"sideA.pcap"}
 {"type":"source","source_id":2,"kind":"capture","uri":"sideB.pcap"}
 {"type":"session","session_id":7,"proto":"tcp","key":"10.0.0.1:51000 <-> 93.184.216.34:80"}
@@ -53,7 +53,7 @@ SKEWED_EXAMPLE = """\
 # The merged pass-through file derived from the skewed capture.
 MERGED_EXAMPLE = "\n".join(
     [
-        '{"type":"file","format":"zipline-payload/1","time_units":"us",'
+        '{"type":"file","format":"zipline-payload/0.12","time_units":"us",'
         '"produced_by":"zpf-merge 1.2","produced_at":1719510000}',
         '{"type":"source","source_id":1,"kind":"zpf-input","uri":"sideA.zpf","digest":"sha256:11aa…"}',
         '{"type":"source","source_id":2,"kind":"zpf-input","uri":"sideB.zpf","digest":"sha256:22bb…"}',
@@ -74,7 +74,7 @@ MERGED_EXAMPLE = "\n".join(
 # "A decoded file, end to end" (payload placeholders replaced with real base64).
 DECODED_EXAMPLE = "\n".join(
     [
-        '{"type":"file","format":"zipline-payload/1","time_units":"us",'
+        '{"type":"file","format":"zipline-payload/0.12","time_units":"us",'
         '"produced_by":"zpf-decode 0.4","produced_at":1719500000}',
         '{"type":"source","source_id":1,"kind":"zpf-input","uri":"raw.zpf","digest":"sha256:9f2c…"}',
         '{"type":"decoder","decoder_id":1,"name":"http/1.1","version":"0.4",'
@@ -285,15 +285,15 @@ def test_time_units_encoding(tick_hz: int, expected: int | str):
 
 def test_time_units_accepts_decimal_strings():
     header = obj_to_block(
-        {"type": "file", "format": "zipline-payload/1", "time_units": str(2**60)}
+        {"type": "file", "format": "zipline-payload/0.12", "time_units": str(2**60)}
     )
     assert header.tick_hz == 2**60
 
 
-def test_format_minor_version_round_trips():
-    header = zpf.FileHeader(tick_hz=1, version_minor=3)
+def test_format_string_round_trips_the_supported_version():
+    header = zpf.FileHeader(tick_hz=1)
     obj = block_to_obj(header)
-    assert obj["format"] == "zipline-payload/1.3"
+    assert obj["format"] == "zipline-payload/0.12"
     assert obj_to_block(obj) == header
 
 
@@ -419,7 +419,7 @@ def test_reader_requires_a_file_line_first():
 
 
 def test_reader_rejects_second_file_line():
-    line = '{"type":"file","format":"zipline-payload/1","time_units":"us"}\n'
+    line = '{"type":"file","format":"zipline-payload/0.12","time_units":"us"}\n'
     with pytest.raises(zpf.StructuralError):
         read_all(line + line)
 
@@ -427,6 +427,18 @@ def test_reader_rejects_second_file_line():
 def test_reader_rejects_unsupported_major_version():
     with pytest.raises(zpf.StructuralError):
         read_all('{"type":"file","format":"zipline-payload/2","time_units":"us"}\n')
+
+
+def test_reader_rejects_an_unimplemented_minor():
+    """While the major is 0, an unknown minor is structural corruption."""
+    with pytest.raises(zpf.StructuralError):
+        read_all('{"type":"file","format":"zipline-payload/0.11","time_units":"us"}\n')
+
+
+def test_format_components_are_compared_separately():
+    """0.9 is *older* than 0.12: a float parse would sort it as newer."""
+    with pytest.raises(zpf.StructuralError):
+        read_all('{"type":"file","format":"zipline-payload/0.9","time_units":"us"}\n')
 
 
 def test_truncated_final_line():

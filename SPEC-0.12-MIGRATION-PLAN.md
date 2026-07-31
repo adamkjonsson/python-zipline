@@ -142,18 +142,44 @@ Three findings, all of which justified the phase:
 
 *Verification:* `429 passed, 27 xfailed`; `ruff check` clean; no `src/` change.
 
-### Phase 1 — Version and header
+### Phase 1 — Version and header — **DONE**
 
-Stamp `version_major = 0`, `version_minor = 12`. Accept `0`/`12`; reject any
-unimplemented major **and** — while major is 0 — any unimplemented minor, as
-structural corruption.
+Stamps `version_major = 0`, `version_minor = 12`, and gates reads on both. The
+rule lives once, in `blocks.unsupported_version()`, and encodes the *two
+regimes* rather than the current one: while the major is `0` an unimplemented
+minor is structural corruption; from `1.0` onward a reader must not gate on the
+minor at all. That costs nothing now and stops the gate being wrong later.
+`SPEC_VERSION = (0, 12)` is the single source of truth and is exported, so
+"which version does this library implement" is answerable programmatically.
 
-*Files:* [blocks.py:456-457, 480, 510](src/zpf/blocks.py#L456),
-[jsonl.py:904](src/zpf/jsonl.py#L904).
-*Unlocks:* `reject-unknown-major`, `reject-unknown-minor`; every `accept` vector
-becomes parseable.
-*Note:* `_parse_format` already parses componentwise and `_format_string`
-already renders `0.12` correctly — no change needed there.
+Call sites: `FileHeader.__post_init__` (writer side, `EncodeError`),
+`FileHeader._parse` (binary read, `StructuralError`), `JsonlReader._admit`
+(JSONL read, `StructuralError`).
+
+**Vectors: 8 of 28**, up from 1 — the whole `reject` tier plus three of five
+`isolate`. As predicted, the version gate was masking everything: three reject
+vectors and four isolate vectors were unreachable behind it.
+
+Two things worth recording:
+
+- **The golden blob and `raw-minimal` are now byte-identical.** `test_golden.py`
+  transcribed the specification's worked example by hand; upstream built the
+  vector from the same example independently. Changing two bytes of version
+  stamp made them agree exactly, which is a strong independent check that the
+  stamp is right. A new test asserts the equality for as long as both exist.
+- **`isolate-coverage-gap` is a defective vector.** Its File Header carries no
+  options at all, so the file is *also* missing the `produced_by`/`produced_at`
+  that every derived file MUST set. A reader therefore isolates it for that
+  instead of for the coverage gap, and passes the vector with the coverage check
+  entirely unimplemented — which is what ours did. The harness now checks what
+  each `isolate` vector is diagnosed *for*, which demoted it to an honest
+  failure. Auditing the rest of the tree for the same fault found two more
+  (`undecoded-skipped`, `undecoded-reason-class`, both `accept` tier, both of
+  which would fail a *correct* reader). All are catalogued in
+  [VECTOR-DEFECTS.md](VECTOR-DEFECTS.md) for one batch report upstream.
+
+*Verification:* `439 passed, 20 xfailed`; `ruff check` clean; docs build clean
+under `-W`. Test updates landed with the change, per the phase rule.
 
 ### Phase 2 — JSONL projection
 

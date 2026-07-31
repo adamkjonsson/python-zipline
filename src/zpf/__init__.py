@@ -18,6 +18,7 @@ from __future__ import annotations
 from zpf._frame import RawOption
 from zpf.binary import BlockReader, BlockWriter
 from zpf.blocks import (
+    SPEC_VERSION,
     Block,
     Custom,
     Decoder,
@@ -121,6 +122,7 @@ __all__ = [
     "SessionWriter",
     "Source",
     "SourceHandle",
+    "SPEC_VERSION",
     "SourceKind",
     "Span",
     "StreamView",

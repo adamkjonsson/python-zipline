@@ -34,6 +34,40 @@ from zpf.errors import ContentError, EncodeError, SemanticError, StructuralError
 # A byte-swapped (big-endian, invalid) file's magic reads as this value.
 _SWAPPED_MAGIC = 0x4650495A
 
+#: The specification version this implementation reads and writes, as
+#: ``(version_major, version_minor)``. A writer stamps the version it
+#: implements; there is no obligation to compute the lowest version whose
+#: features a file happens to use.
+SPEC_VERSION: tuple[int, int] = (0, 12)
+
+
+def unsupported_version(version_major: int, version_minor: int) -> str | None:
+    """Report why a file's stamped version cannot be read, if it cannot.
+
+    The specification has two compatibility regimes. While ``version_major``
+    is ``0`` the pair is the compatibility identity, so a reader MUST reject a
+    ``version_minor`` it does not implement exactly as it rejects an unknown
+    major. From ``1.0`` onward a minor bump only adds skippable surface, and a
+    reader MUST NOT gate on the minor at all.
+
+    Args:
+        version_major: The file's stamped major version.
+        version_minor: The file's stamped minor version.
+
+    Returns:
+        A diagnostic naming the offending field, or ``None`` if supported.
+
+    """
+    major, minor = SPEC_VERSION
+    if version_major != major:
+        return f"unsupported version_major {version_major}; this implementation reads {major}"
+    if major == 0 and version_minor != minor:
+        return (
+            f"unsupported version_minor {version_minor}; while version_major is 0 every "
+            f"minor is a separate format and this implementation reads {minor}"
+        )
+    return None
+
 
 class SourceKind(IntEnum):
     """The ``kind`` of a Source Descriptor."""
@@ -437,11 +471,10 @@ class FileHeader(Block):
 
     Attributes:
         tick_hz: Time units per second for all timestamps; must be non-zero.
-        version_major: Format major version; this implementation writes 1.
-            Spec 0.9 stamps ``1``/``0`` on the wire — the version was published
-            as "1.0" and renumbered afterwards, so the field does not track the
-            spec's current name.
-        version_minor: Format minor version.
+        version_major: Format major version; see :data:`SPEC_VERSION`.
+        version_minor: Format minor version. While the major is ``0`` this
+            selects the format outright — ``0.12`` and ``0.11`` are different
+            formats, not compatible refinements.
         time_epoch: Origin for record timestamps, in ``tick_hz`` ticks since
             the Unix epoch; ``None`` means the default origin (0).
         creator: Tool + version that wrote the file.
@@ -456,8 +489,8 @@ class FileHeader(Block):
     block_type: ClassVar[int] = _frame.BT_FILE_HEADER
 
     tick_hz: int
-    version_major: int = 1
-    version_minor: int = 0
+    version_major: int = SPEC_VERSION[0]
+    version_minor: int = SPEC_VERSION[1]
     time_epoch: int | None = None
     creator: str | None = None
     produced_by: str | None = None
@@ -480,10 +513,10 @@ class FileHeader(Block):
         if self.tick_hz == 0:
             msg = "tick_hz must be non-zero"
             raise EncodeError(msg)
-        if self.version_major != 1:
-            msg = f"only version_major 1 is supported, got {self.version_major}"
-            raise EncodeError(msg)
         _check_uint(self.version_minor, 16, "version_minor")
+        unsupported = unsupported_version(self.version_major, self.version_minor)
+        if unsupported is not None:
+            raise EncodeError(unsupported)
         _check_i64_opt(self.time_epoch, "time_epoch")
         _check_i64_opt(self.produced_at, "produced_at")
         _check_uint(int(self.flags), 16, "flags")
@@ -510,9 +543,9 @@ class FileHeader(Block):
         if magic != _frame.MAGIC:
             msg = f"bad magic 0x{magic:08X}; not a ZPF file"
             raise StructuralError(msg)
-        if version_major != 1:
-            msg = f"unsupported version_major {version_major}"
-            raise StructuralError(msg)
+        unsupported = unsupported_version(version_major, version_minor)
+        if unsupported is not None:
+            raise StructuralError(unsupported)
         if tick_hz == 0:
             msg = "tick_hz must be non-zero"
             raise StructuralError(msg)

@@ -56,6 +56,7 @@ from zpf.blocks import (
     TcpRole,
     Undecoded,
     UnknownBlock,
+    unsupported_version,
 )
 from zpf.conformance import ConformanceChecker
 from zpf.errors import (
@@ -901,9 +902,9 @@ class JsonlReader:
 
     def _admit(self, block: Block) -> Block:
         if isinstance(block, FileHeader):
-            if block.version_major != 1:
-                msg = f"unsupported version_major {block.version_major}"
-                raise StructuralError(msg)
+            unsupported = unsupported_version(block.version_major, block.version_minor)
+            if unsupported is not None:
+                raise StructuralError(unsupported)
             self.header = block
         elif isinstance(block, End):
             self.complete = True

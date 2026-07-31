@@ -9,13 +9,14 @@ field values.
 from __future__ import annotations
 
 import io
+import pathlib
 
 import zpf
 
 GOLDEN = bytes.fromhex(
     # File Header (0x01)
     "01000000 10000000"
-    "4650495a 01000000"
+    "4650495a 00000c00"
     "40420f00 00000000"
     # Source Descriptor (0x02)
     "02000000 14000000"
@@ -86,7 +87,7 @@ def test_parsing_the_golden_bytes_yields_the_blocks():
 
 def test_parsed_field_values_match_the_spec_annotations():
     header, source, session, participant, record = list(zpf.BlockReader(io.BytesIO(GOLDEN)))
-    assert (header.version_major, header.version_minor) == (1, 0)
+    assert (header.version_major, header.version_minor) == (0, 12)
     assert header.tick_hz == 1_000_000
     assert (source.source_id, source.kind, source.uri) == (1, zpf.SourceKind.CAPTURE, "sideA.pcap")
     assert (session.session_id, session.proto) == (7, "tcp")
@@ -109,3 +110,15 @@ def test_reparse_and_rewrite_is_byte_identical():
         for block in blocks:
             writer.write(block)
     assert sink.getvalue() == GOLDEN
+
+
+def test_golden_matches_the_upstream_vector():
+    """The hand-written blob and the shipped vector are the same 196 bytes.
+
+    Upstream builds ``raw-minimal`` from the specification's worked example,
+    and this blob was transcribed from the same example independently. While
+    both exist they must agree; when this blob is retired the vector is what
+    remains.
+    """
+    vector = pathlib.Path(__file__).parent / "vectors/raw-minimal/raw-minimal.zpf"
+    assert vector.read_bytes() == GOLDEN

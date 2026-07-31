@@ -33,14 +33,33 @@ VECTORS = Path(__file__).parent / "vectors"
 #: Vector cases that MUST pass. Grow it as phases land; never remove a name,
 #: because that is the regression guard.
 #:
-#: Phase 0 baseline: one case. ``reject-bad-magic`` is the only vector this
-#: 0.9 implementation refuses for the reason the vector is testing — every
-#: other 0.12 file dies at the version gate first.
+#: Phase 1: the whole ``reject`` tier, plus the ``isolate`` cases whose
+#: violation the indexing pass already detects. The remaining two need work
+#: this library has not done yet — ``isolate-coverage-gap`` the coverage
+#: check (Phase 5), ``isolate-sequenced-no-basis`` the ``sequenced_basis``
+#: option (Phase 3) and hint-less detection (Phase 4).
 KNOWN_PASSING: frozenset[str] = frozenset(
     {
+        "isolate-duplicate-id",
+        "isolate-undeclared-session",
+        "isolate-unknown-source-kind",
         "reject-bad-magic",
+        "reject-length-misaligned",
+        "reject-payload-len-overrun",
+        "reject-unknown-major",
+        "reject-unknown-minor",
     }
 )
+
+#: Vectors that cannot pass until **upstream** fixes them, and why. Catalogued
+#: in ``VECTOR-DEFECTS.md``. Kept distinct from the not-yet-ported xfails so
+#: that nobody bends this implementation to match a broken fixture: if one of
+#: these starts passing, the vector was fixed — or we got it wrong.
+DEFECTIVE: dict[str, str] = {
+    "undecoded-skipped": "defect 1: decode stage with no produced_by/produced_at",
+    "undecoded-reason-class": "defect 1: decode stage with no produced_by/produced_at",
+    "isolate-coverage-gap": "defect 1: second violation masks the coverage gap",
+}
 
 #: What each ``reject`` vector must be refused *for*. Asserting only that some
 #: exception escaped is not enough: while the version gate is wrong, a 0.12
@@ -53,6 +72,19 @@ _REJECT_REASONS: dict[str, str] = {
     "reject-unknown-minor": "version_minor",
     "reject-length-misaligned": "length",
     "reject-payload-len-overrun": "payload_len",
+}
+
+#: What each ``isolate`` vector must be diagnosed *for*. Same discipline as
+#: ``_REJECT_REASONS``, and it earns its keep: ``isolate-coverage-gap`` is
+#: isolated today for a missing ``produced_by`` rather than for the coverage
+#: gap it exists to test, so without this it would pass with the coverage
+#: check unimplemented.
+_ISOLATE_REASONS: dict[str, str] = {
+    "isolate-coverage-gap": "coverage",
+    "isolate-duplicate-id": "twice",
+    "isolate-undeclared-session": "undeclared session",
+    "isolate-unknown-source-kind": "unknown kind",
+    "isolate-sequenced-no-basis": "sequenced_basis",
 }
 
 #: Fields the projection may render as a JSON number *or* a decimal string
@@ -139,11 +171,11 @@ def _params(tier: str) -> list[Any]:
     for case in CASES:
         if case.tier != tier:
             continue
-        marks = (
-            ()
-            if case.name in KNOWN_PASSING
-            else (pytest.mark.xfail(reason="not yet ported to 0.12", strict=False),)
-        )
+        if case.name in KNOWN_PASSING:
+            marks: tuple[Any, ...] = ()
+        else:
+            reason = DEFECTIVE.get(case.name, "not yet ported to 0.12")
+            marks = (pytest.mark.xfail(reason=reason, strict=False),)
         params.append(pytest.param(case, id=case.name, marks=marks))
     return params
 
@@ -263,6 +295,13 @@ def test_isolate(case: Case) -> None:
             diagnostics = list(reader.diagnostics)
     except zpf.StructuralError:
         pytest.fail(f"{case.name}: semantic violation rejected as structural corruption")
-    except zpf.SemanticError:
-        return  # Rejecting the file outright is permitted.
-    assert diagnostics, f"{case.name}: accepted silently — {case.summary}"
+    except zpf.SemanticError as exc:
+        reported = str(exc)  # Rejecting the file outright is permitted.
+    else:
+        assert diagnostics, f"{case.name}: accepted silently — {case.summary}"
+        reported = " ".join(item.message for item in diagnostics)
+    wanted = _ISOLATE_REASONS[case.name]
+    assert wanted.lower() in reported.lower(), (
+        f"{case.name}: isolated, but for the wrong reason — "
+        f"expected {wanted!r} in {reported!r}"
+    )

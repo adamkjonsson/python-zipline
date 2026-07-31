@@ -31,17 +31,21 @@ Re-copy from the new tag and update the table above. Do not hand-edit a vector:
 per the upstream ground rules they are subordinate to the normative text, so a
 vector that seems wrong is a question for the spec repository, not a local patch.
 
-## Note on the `isolate` tier
+## Known defects
 
-The upstream `README.md` is internally inconsistent about this tier, and our
-harness deliberately follows the **specification** rather than the README:
+Some vectors and one part of the upstream `README.md` are wrong. They are
+catalogued in [`VECTOR-DEFECTS.md`](../../VECTOR-DEFECTS.md) at the repository
+root, to be reported upstream in one batch — do not fix them here, since these
+files are vendored verbatim.
 
-- The README's tier table says a reader "MAY reject the file *or* discard the
-  smallest unit it can soundly isolate" — matching the spec's semantic-violation
-  tier.
-- The README's prose then says "a reader that *rejects* an `isolate` vector is as
-  wrong as one that accepts it silently", which contradicts the MAY.
+The two that shape the harness:
 
-The spec is normative and permits either, so [`../test_vectors.py`](../test_vectors.py)
-accepts both outcomes and asserts only what the spec actually requires: the
-violation must not pass **silently**. Reported upstream.
+- **The `isolate` tier.** The README's tier table permits a reader to reject
+  *or* isolate; its prose then calls rejecting "as wrong as" accepting silently.
+  The specification permits either, so [`../test_vectors.py`](../test_vectors.py)
+  follows the spec and asserts only that the violation is not passed silently.
+- **Negative vectors carrying two violations.** `isolate-coverage-gap` can be
+  passed without implementing the coverage check, because it is also missing a
+  derived file's mandatory `produced_by`/`produced_at`. This is why the harness
+  asserts what each negative vector is diagnosed *for*, not merely that
+  something was reported.
