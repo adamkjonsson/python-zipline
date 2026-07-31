@@ -1,6 +1,6 @@
 """File → file transforms: the merge, and the coverage-guarantee validator.
 
-All derivation in ZPF is file → file. This module implements the two
+All derivation in ZPF is file → file. This module implements the
 transform-side tools the specification describes:
 
 * :func:`merge_files` — the **merge transform**: two separately-captured
@@ -8,11 +8,17 @@ transform-side tools the specification describes:
   combined into a single **sequenced pass-through** file. The streaming
   causal merge runs once, here, so every downstream reader consumes the
   session in stored order and never pays for ordering again.
+* :func:`rewrite_decoded` — a decoded-layer **filter or reordering stage**.
+  Both change the offsets stored order defines, so both are decode stages
+  rather than pass-throughs, inheriting the input's ``decoder_id`` values
+  and marking what they drop.
 * :func:`check_coverage` — the decode-stage **coverage guarantee**
   validator: in a decoder's output, every region of every input
   participant stream must be either covered by a decoded record's
   ``spans`` or marked Undecoded — nothing silently dropped, and never
   both.
+* :func:`resolve_spans` — the provenance walk: one hop for a record its own
+  stage built, two for one a pass-through re-emitted.
 
 This version of the merge handles the canonical two-tap case exactly:
 two raw inputs, each holding one session with one participant (one
@@ -30,17 +36,18 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING
 
 from zpf._intervals import complement, intersections
-from zpf.blocks import Origin, SourceKind
+from zpf.blocks import Origin, SourceKind, Span
 from zpf.errors import Diagnostic, ZpfError
 from zpf.order import causal_merge
 from zpf.reader import FileReader, SessionReader
 from zpf.reassembly import stream_extent
-from zpf.writer import FileWriter, ParticipantHandle, SessionWriter
+from zpf.writer import DecoderHandle, DerivedInput, FileWriter, ParticipantHandle, SessionWriter
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterator, Sequence
+    from datetime import datetime
 
-    from zpf.blocks import Record, Source, Span
+    from zpf.blocks import Record, Source
 
 # One input participant stream, and its cited [start, end) offset ranges.
 _StreamKey = tuple[int, int]  # (session_id, pid), in the input's namespace
@@ -433,3 +440,161 @@ def _check_stream(
     return findings
 
 
+
+
+def rewrite_decoded(
+    source: str | os.PathLike[str] | IO[bytes] | IO[str] | FileReader,
+    sink: str | os.PathLike[str] | IO[bytes] | IO[str],
+    *,
+    keep: Callable[[Record], bool] | None = None,
+    reorder: Callable[[Sequence[Record]], Sequence[Record]] | None = None,
+    produced_by: str,
+    produced_at: int | datetime,
+    uri: str | None = None,
+    digest: str | None = None,
+    comment: str | None = None,
+) -> None:
+    """Filter and/or reorder a decoded file's records into a new stage.
+
+    Dropping or reordering a decoded record changes that participant's
+    offset space, because stored order is what *defines* it. So this is
+    **not** a pass-through, however byte-preserving it looks: the output
+    cannot claim to have preserved what it just moved. It is a decode stage,
+    and it carries a decode stage's obligations —
+
+    * every emitted record cites the input range it came from in ``spans``;
+    * every dropped range is marked :class:`~zpf.Undecoded` with
+      ``reason="skipped"``, a deliberate decision not to carry data forward,
+      so the coverage guarantee holds over the whole input;
+    * ``decoder_id`` names a **layer**, not a stage, so the input's are
+      inherited and their Decoder Descriptors re-declared. This stage
+      declares no decoder of its own — a filtered HTTP message is still an
+      HTTP message — and identifies itself through ``produced_by``.
+
+    A reordering stage's spans will *not* ascend with stored order. That is
+    expected: coverage depends on which ranges are covered, not on the order
+    they appear in.
+
+    Known gap, inherited from the format: a transform that produces records
+    without decoding them has no ``params_digest`` to record its own
+    configuration in, so the output states *what* it came from but not
+    *how*. A merge has the same gap.
+
+    Args:
+        source: The decoded input ``.zpf`` — a path, a seekable stream, or
+            an already-open :class:`~zpf.FileReader` (left open).
+        sink: Where to write the resulting decode-stage file.
+        keep: Predicate deciding which input records survive; the default
+            keeps every record, for a pure reordering stage.
+        reorder: Rearranges one participant's surviving records. Applied
+            after ``keep``, per participant, and defaults to leaving stored
+            order alone.
+        produced_by: Tool + version running the transform.
+        produced_at: Build time; Unix seconds or a tz-aware datetime.
+        uri: Where the input lives; defaults to the path it was opened from.
+        digest: Content hash of the input; SHA-256 of it when omitted.
+        comment: Free-text note for the File Header.
+
+    Raises:
+        ZpfError: If the input is not a file carrying a decoded layer.
+
+    Example:
+        >>> rewrite_decoded(
+        ...     "decoded.zpf", "requests.zpf",
+        ...     keep=lambda r: r.content_type == "dec:request",
+        ...     produced_by="zpf-filter 1.0", produced_at=1719520000,
+        ... )
+
+    """
+    owns_reader = not isinstance(source, FileReader)
+    reader = FileReader(source) if owns_reader else source
+    try:
+        _require_decoded_input(reader)
+        header = reader.header
+        writer = FileWriter(
+            sink,
+            tick_hz=header.tick_hz,
+            time_epoch=header.time_epoch,
+            produced_by=produced_by,
+            produced_at=produced_at,
+            comment=comment,
+        )
+        with writer:
+            derived = writer.derive_from(reader, uri=uri, digest=digest)
+            decoders = {
+                decoder_id: writer.add_decoder(
+                    decoder.name or "",
+                    version=decoder.version,
+                    params_digest=decoder.params_digest,
+                    comment=decoder.comment,
+                )
+                for decoder_id, decoder in reader.decoders.items()
+            }
+            for session in reader.sessions():
+                out = derived.sessions[session.session_id]
+                for participant in session.participants:
+                    _rewrite_stream(
+                        session, participant.participant_id, writer, out, derived,
+                        decoders, keep=keep, reorder=reorder,
+                    )
+                out.end()
+    finally:
+        if owns_reader:
+            reader.close()
+
+
+def _require_decoded_input(reader: FileReader) -> None:
+    """Reject an input that carries no decoded layer to rewrite."""
+    if not reader.decoders:
+        msg = (
+            "rewrite_decoded takes a file carrying a decoded layer; this one "
+            "declares no decoders, so there is no layer to inherit"
+        )
+        raise ZpfError(msg)
+
+
+def _rewrite_stream(
+    session: SessionReader,
+    pid: int,
+    writer: FileWriter,
+    out: SessionWriter,
+    derived: DerivedInput,
+    decoders: dict[int, DecoderHandle],
+    *,
+    keep: Callable[[Record], bool] | None,
+    reorder: Callable[[Sequence[Record]], Sequence[Record]] | None,
+) -> None:
+    """Emit one participant's surviving records, and skip-mark the rest."""
+    handle = derived.participants[(session.session_id, pid)]
+    records = list(session.stream(pid))
+    ranges = session.ranges(pid)
+    cited = {id(record): span for record, span in zip(records, ranges, strict=True)}
+    survivors = [record for record in records if keep is None or keep(record)]
+    if reorder is not None:
+        survivors = list(reorder(survivors))
+    for record in survivors:
+        off_start, off_end = cited[id(record)]
+        out.record(
+            handle,
+            ts=record.timestamp,
+            payload=record.payload,
+            source=derived.source,
+            flags=record.flags,
+            decoder=None if record.decoder_id is None else decoders[record.decoder_id],
+            content_type=record.content_type,
+            spans=(
+                Span(
+                    source_id=derived.source.source_id,
+                    session_id=session.session_id,
+                    participant_id=pid,
+                    off_start=off_start,
+                    off_end=off_end,
+                ),
+            ),
+        )
+    kept = sorted(cited[id(record)] for record in survivors)
+    extent = ranges[-1][1] if ranges else 0
+    for start, end in complement(kept, extent):
+        writer.undecoded(
+            derived.source, session.session_id, pid, start, end, reason="skipped"
+        )

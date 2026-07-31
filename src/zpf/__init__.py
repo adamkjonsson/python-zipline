@@ -77,7 +77,7 @@ from zpf.reassembly import (
     record_ranges,
     stream_extent,
 )
-from zpf.transform import check_coverage, merge_files, resolve_spans
+from zpf.transform import check_coverage, merge_files, resolve_spans, rewrite_decoded
 from zpf.writer import (
     DecoderHandle,
     DerivedInput,
@@ -164,6 +164,7 @@ __all__ = [
     "record_end",
     "record_ranges",
     "resolve_spans",
+    "rewrite_decoded",
     "seq_geq",
     "seq_leq",
     "seq_lt",

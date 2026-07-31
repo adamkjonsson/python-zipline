@@ -46,15 +46,28 @@ Consequences, now settled rather than open:
   gets superseded in Phase 7 — the prose it added about "the standard means 0.9"
   becomes wrong on merge, and is already flagged there.
 
-### D2 — Implement the filter/reorder transform now — **DECIDED: defer**
+### D2 — Implement the filter/reorder transform — **deferred, then done**
 
-`0.10` permits a decoded-layer filter or reordering stage (it is a decode stage,
-inheriting `decoder_id`s and marking dropped regions `skipped`). We will not add
-one during this port.
+Deferred during the port so as not to mix a feature into a migration, and
+implemented once the seven phases had landed, as
+{func}`zpf.rewrite_decoded`.
 
-We must still **read** such files correctly — the `reordered-decoded` vector is
-`accept` tier and Phase 6 covers it. Only the ability to *write* one is deferred.
-Worth a tracking note so it is a conscious gap rather than an oversight.
+One function covers both shapes the specification names, because they are the
+same thing: dropping *or* reordering a decoded record changes the offsets that
+stored order defines, so neither can claim to have preserved them. The output is
+therefore a decode stage — it cites each surviving record's input range in
+`spans`, marks every dropped range `skipped`, and **inherits** the input's
+`decoder_id` values rather than declaring a decoder of its own, since a filtered
+HTTP message is still an HTTP message.
+
+It rests directly on Phase 6: the input is a decoded file, so knowing which range
+each input record occupied *is* `SessionReader.ranges()`.
+
+The reordering case is the one worth seeing, because it looks wrong and is not —
+reversing a three-record stream yields recomputed own-ranges `(0,4) (4,6) (6,9)`
+against cited spans `(5,9) (3,5) (0,3)`, descending. Coverage still holds,
+because coverage depends on which ranges are covered, not the order they appear
+in.
 
 ### D3 — Branch and versioning *(proceeding unless you object)*
 
