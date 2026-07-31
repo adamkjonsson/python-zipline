@@ -376,14 +376,50 @@ walk.
 *Verification:* `484 passed, 3 xfailed`; `ruff check` clean; docs build clean
 under `-W`.
 
-### Phase 7 — Surface and documentation
+### Phase 7 — Surface and documentation — **DONE**
 
-- `zpf.SPEC_VERSION`, docstrings, `CLAUDE.md`, `README.md`, `docs/`.
-- Revisit `CLAUDE.md`'s current instruction that "the standard means 0.9" and the
-  0.10-avoidance note — both become wrong on merge.
-- Delete the hand-maintained hex blob in `test_golden.py`, superseded by
-  `raw-minimal`.
-- Sphinx build clean under `-W`; `ruff check` clean.
+- **`CLAUDE.md` rewritten.** Its "the standard means 0.9" framing and its
+  instruction *not* to apply 0.10 rules had become actively misleading. It now
+  states 0.12, points at `SPEC_VERSION`, explains why there is deliberately no
+  compatibility path, and names the two traps that look like bugs and are not: a
+  0.9 file stamping `1`/`0`, and `decoder_id` not deciding a file's kind. It also
+  records that the vendored vectors are acceptance criteria, not editable.
+- **`README.md`, `docs/index.md`, `concepts.md`, `validate.md`,
+  `contributing.md`, `conformance.md`, `pyproject.toml`** moved to 0.12, with the
+  spec URL following the file's rename to `docs/zipline-payload-format.md` (both
+  links verified live). The conformance page gained a section on the vectors and
+  the two habits that keep them honest.
+- **Stale vocabulary swept**: `tcp-gap` → `gap` across four guides, and the CLI
+  page's JSONL sample now shows `tick_hz` and an array `endpoint`.
+- **The golden hex blob is retired.** `test_golden.py` reads the `raw-minimal`
+  vector instead of transcribing 196 bytes. That strengthens the claim rather
+  than weakening it: `test_writing_the_blocks_produces_the_golden_bytes` now
+  asserts our encoder agrees byte-for-byte with a file someone else built from
+  the normative text.
+
+One real fix fell out. The docs' re-export bridge in `conf.py` mapped
+`zpf.Name` → its defining module via `obj.__module__`, which module-level
+**data** does not have — so every constant this migration exported
+(`SPEC_VERSION`, `UNDECODED_REASONS`, `REASON_CLASSES`, `SEQUENCED_BASES`) was
+documented but unreachable under the name the prose uses. The bridge now falls
+back to finding the defining module by identity. Fixed rather than added to
+`nitpick_ignore`, per the project's own rule about not silencing warnings.
+
+*Verification:* `484 passed, 3 xfailed`; `ruff check` clean; docs build clean
+under `-W`; both spec URLs return 200.
+
+---
+
+## Status
+
+**The migration is complete.** All seven phases have landed; the library
+implements 0.12 and passes every conformance vector it can — 25 of 28, with the
+other three blocked on the upstream defects in
+[VECTOR-DEFECTS.md](VECTOR-DEFECTS.md).
+
+One deliberate gap remains, [D2](#d2--implement-the-filterreorder-transform-now--decided-defer):
+this library **reads** a decoded-layer filter or reordering stage correctly but
+cannot **write** one. That is capability, not conformance.
 
 ---
 

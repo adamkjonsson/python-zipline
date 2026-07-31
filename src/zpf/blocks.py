@@ -1,4 +1,4 @@
-"""Typed block model for the Zipline Payload Format v0.9.
+"""Typed block model for the Zipline Payload Format v0.12.
 
 One frozen dataclass per block type, mirroring the specification's normative
 binary encoding. Each class knows how to serialize itself (:meth:`Block.to_bytes`)

@@ -145,7 +145,7 @@ def _dec_bool(value: Any, name: str) -> bool:
     return value
 
 
-# --- format / time_units -----------------------------------------------------
+# --- format string / hex-token escapes ---------------------------------------
 
 
 def _format_string(header: FileHeader) -> str:

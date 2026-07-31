@@ -4,7 +4,7 @@ This page is the mental model behind the Zipline Payload Format and this
 library. The [tutorial](tutorial.md) walks you through the API; this page
 explains *why* the format looks the way it does, and defines the vocabulary
 the rest of the documentation uses. Deep links go to the
-[v0.9 specification](https://github.com/adamkjonsson/zipline/blob/v0.9/docs/payload-format.md),
+[v0.12 specification](https://github.com/adamkjonsson/zipline/blob/v0.12/docs/zipline-payload-format.md),
 which is normative for this library.
 
 ## What a `.zpf` file holds
@@ -228,7 +228,7 @@ which works in these offsets directly and can {meth}`cite
 <zpf.reassembly.StreamView.cite>` a range without the arithmetic.
 
 What a decoder could *not* parse it must say out loud: an **Undecoded**
-block names an input range and a reason (`undecodable`, `tcp-gap`,
+block names an input range and a reason (`undecodable`, `gap`,
 `truncated`) instead of silently dropping it. Together this yields the
 **coverage guarantee**: every offset of every input stream is either covered
 by some decoded record's spans or marked Undecoded — checkable with

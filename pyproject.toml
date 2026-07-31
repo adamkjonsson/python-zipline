@@ -27,7 +27,7 @@ classifiers = [
 zpf = "zpf.cli:main"
 
 [project.urls]
-Specification = "https://github.com/adamkjonsson/zipline/blob/v0.9/docs/payload-format.md"
+Specification = "https://github.com/adamkjonsson/zipline/blob/v0.12/docs/zipline-payload-format.md"
 
 [tool.hatch.version]
 path = "src/zpf/__init__.py"

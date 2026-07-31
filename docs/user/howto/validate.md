@@ -1,6 +1,6 @@
 # Validate a file
 
-Validation reads a file and reports where it departs from the v0.9
+Validation reads a file and reports where it departs from the v0.12
 specification. It answers three separable questions: is the file
 *conformant*, is a SEQUENCED session's stored order *actually* a valid
 ordering, and does a decode stage *cover* its input. This is the recipe; the

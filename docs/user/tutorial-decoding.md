@@ -124,7 +124,7 @@ record's span or named by an **Undecoded** block — and never both.
 
 {func}`zpf.decode_stage` closes that loop for you. On a clean exit it marks
 every byte you left uncited as Undecoded — `skipped` for data the decoder
-passed over, `tcp-gap` for a reassembly hole — so the guarantee holds by
+passed over, `gap` for a reassembly hole — so the guarantee holds by
 construction. (`undecodable` is *not* used by auto-fill: it is the decoder's
 own claim that it *tried and could not parse* a region, so it is reserved
 for an explicit {meth}`~zpf.DecodeStage.undecoded` call.) Pass

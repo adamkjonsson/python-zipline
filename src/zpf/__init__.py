@@ -2,10 +2,11 @@
 
 The Zipline Payload Format stores the payload of network traffic — the bytes
 that flow between endpoints once packets have been reassembled into sessions,
-plus the metadata needed to consume them. This package implements v0.9 of the
-specification — the version published as "1.0" and later renumbered. The
-current specification, 0.10, is a breaking revision that this package does not
-implement.
+plus the metadata needed to consume them. This package implements v0.12 of the
+specification, and exactly that version: while the format is in ``0.x`` every
+minor is a separate format, so a file stamped with any other version is
+rejected rather than misread. :data:`zpf.SPEC_VERSION` is the single source
+of truth for which one.
 
 The flat, spec-mirroring layer lives here: typed blocks (:mod:`zpf.blocks`),
 the binary container reader/writer (:mod:`zpf.binary`), and the JSON-Lines

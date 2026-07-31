@@ -69,7 +69,7 @@ recoverable:
 - `undecodable` / `skipped` — the bytes **exist** at that range in the input
   (the decoder tried and failed, or simply passed over them); a consumer can
   follow the reference to fetch them.
-- `tcp-gap` / `truncated` — the range is a **hole** with no bytes anywhere
+- `gap` / `truncated` — the range is a **hole** with no bytes anywhere
   upstream.
 
 {func}`zpf.check_coverage` verifies the guarantee, returning the violations

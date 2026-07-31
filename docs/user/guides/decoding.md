@@ -120,7 +120,7 @@ never both, never neither (see
 `decode_stage` closes that loop: it marks every byte you left uncited as
 Undecoded, with a `reason`:
 
-- **`tcp-gap`** for a reassembly hole (a {class}`~zpf.Gap` — no bytes exist
+- **`gap`** for a reassembly hole (a {class}`~zpf.Gap` — no bytes exist
   anywhere upstream);
 - **`skipped`** for data the decoder simply passed over (the bytes *do* exist
   upstream, recoverable through the provenance chain).
