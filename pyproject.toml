@@ -12,7 +12,9 @@ requires-python = ">=3.11"
 authors = [{ name = "Adam Jonsson", email = "akj426@gmail.com" }]
 dynamic = ["version"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    # The format itself is 0.x and explicitly not production-ready, so the
+    # package page should not promise more than the README does.
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
@@ -27,7 +29,7 @@ classifiers = [
 zpf = "zpf.cli:main"
 
 [project.urls]
-Specification = "https://github.com/adamkjonsson/zipline/blob/v0.9/docs/payload-format.md"
+Specification = "https://github.com/adamkjonsson/zipline/blob/v0.12/docs/zipline-payload-format.md"
 
 [tool.hatch.version]
 path = "src/zpf/__init__.py"

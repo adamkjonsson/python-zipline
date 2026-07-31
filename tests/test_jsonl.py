@@ -20,19 +20,19 @@ if TYPE_CHECKING:
 # "A first example": a 3-party chat room, dave joins mid-stream. Blank lines
 # appear exactly as in the spec (they must be skipped).
 CHAT_EXAMPLE = """\
-{"type":"file","format":"zipline-payload/1","time_units":"us"}
+{"type":"file","format":"zipline-payload/0.12","tick_hz":1000000}
 {"type":"source","source_id":1,"kind":"capture","uri":"chat.pcap"}
 
 {"type":"session","session_id":8,"proto":"irc","key":"#zipline@irc.example.net"}
-{"type":"participant","session_id":8,"pid":0,"endpoint":"alice"}
-{"type":"participant","session_id":8,"pid":1,"endpoint":"bob"}
-{"type":"participant","session_id":8,"pid":2,"endpoint":"carol"}
+{"type":"participant","session_id":8,"pid":0,"endpoint":["alice"]}
+{"type":"participant","session_id":8,"pid":1,"endpoint":["bob"]}
+{"type":"participant","session_id":8,"pid":2,"endpoint":["carol"]}
 
 {"type":"record","session_id":8,"sender_pid":0,"source_id":1,"ts":2000,"payload":"aGksIGFsbCE="}
 {"type":"record","session_id":8,"sender_pid":2,"source_id":1,"ts":2100,"payload":"aGV5IGFsaWNl"}
 {"type":"record","session_id":8,"sender_pid":1,"source_id":1,"ts":2150,"payload":"bW9ybmluZw=="}
 
-{"type":"participant","session_id":8,"pid":3,"endpoint":"dave"}
+{"type":"participant","session_id":8,"pid":3,"endpoint":["dave"]}
 {"type":"record","session_id":8,"sender_pid":3,"source_id":1,"ts":2300,"payload":"YW0gSSBsYXRlPw=="}
 
 {"type":"session_end","session_id":8,"reason":"timeout"}
@@ -40,12 +40,12 @@ CHAT_EXAMPLE = """\
 
 # "Worked example: a skewed two-file capture".
 SKEWED_EXAMPLE = """\
-{"type":"file","format":"zipline-payload/1","time_units":"us"}
+{"type":"file","format":"zipline-payload/0.12","tick_hz":1000000}
 {"type":"source","source_id":1,"kind":"capture","uri":"sideA.pcap"}
 {"type":"source","source_id":2,"kind":"capture","uri":"sideB.pcap"}
 {"type":"session","session_id":7,"proto":"tcp","key":"10.0.0.1:51000 <-> 93.184.216.34:80"}
-{"type":"participant","session_id":7,"pid":0,"endpoint":"10.0.0.1:51000","isn":1000}
-{"type":"participant","session_id":7,"pid":1,"endpoint":"93.184.216.34:80","isn":5000}
+{"type":"participant","session_id":7,"pid":0,"endpoint":["10.0.0.1:51000"],"isn":1000}
+{"type":"participant","session_id":7,"pid":1,"endpoint":["93.184.216.34:80"],"isn":5000}
 {"type":"record","session_id":7,"sender_pid":0,"source_id":1,"ts":1000,"seq_start":1001,"ack":5001,"payload":"R0VUIC8gSFRUUC8xLjENCg0K"}
 {"type":"record","session_id":7,"sender_pid":1,"source_id":2,"ts":995,"seq_start":5001,"ack":1019,"payload":"SFRUUC8xLjEgMjAwIE9LDQouLi4="}
 """
@@ -53,15 +53,15 @@ SKEWED_EXAMPLE = """\
 # The merged pass-through file derived from the skewed capture.
 MERGED_EXAMPLE = "\n".join(
     [
-        '{"type":"file","format":"zipline-payload/1","time_units":"us",'
+        '{"type":"file","format":"zipline-payload/0.12","tick_hz":1000000,'
         '"produced_by":"zpf-merge 1.2","produced_at":1719510000}',
         '{"type":"source","source_id":1,"kind":"zpf-input","uri":"sideA.zpf","digest":"sha256:11aa…"}',
         '{"type":"source","source_id":2,"kind":"zpf-input","uri":"sideB.zpf","digest":"sha256:22bb…"}',
         '{"type":"session","session_id":1,"proto":"tcp",'
         '"key":"10.0.0.1:51000 <-> 93.184.216.34:80","sequenced":true}',
-        '{"type":"participant","session_id":1,"pid":0,"endpoint":"10.0.0.1:51000","isn":1000,'
+        '{"type":"participant","session_id":1,"pid":0,"endpoint":["10.0.0.1:51000"],"isn":1000,'
         '"origin":{"source_id":1,"session_id":7,"pid":0}}',
-        '{"type":"participant","session_id":1,"pid":1,"endpoint":"93.184.216.34:80","isn":5000,'
+        '{"type":"participant","session_id":1,"pid":1,"endpoint":["93.184.216.34:80"],"isn":5000,'
         '"origin":{"source_id":2,"session_id":3,"pid":0}}',
         '{"type":"record","session_id":1,"sender_pid":0,"source_id":1,"ts":1000,'
         '"seq_start":1001,"ack":5001,"payload":"R0VUIC8gSFRUUC8xLjENCg0K"}',
@@ -74,14 +74,14 @@ MERGED_EXAMPLE = "\n".join(
 # "A decoded file, end to end" (payload placeholders replaced with real base64).
 DECODED_EXAMPLE = "\n".join(
     [
-        '{"type":"file","format":"zipline-payload/1","time_units":"us",'
+        '{"type":"file","format":"zipline-payload/0.12","tick_hz":1000000,'
         '"produced_by":"zpf-decode 0.4","produced_at":1719500000}',
         '{"type":"source","source_id":1,"kind":"zpf-input","uri":"raw.zpf","digest":"sha256:9f2c…"}',
         '{"type":"decoder","decoder_id":1,"name":"http/1.1","version":"0.4",'
         '"params_digest":"sha256:00ab…"}',
         '{"type":"session","session_id":7,"proto":"http"}',
-        '{"type":"participant","session_id":7,"pid":0,"endpoint":"10.0.0.1:51000"}',
-        '{"type":"participant","session_id":7,"pid":1,"endpoint":"93.184.216.34:80"}',
+        '{"type":"participant","session_id":7,"pid":0,"endpoint":["10.0.0.1:51000"]}',
+        '{"type":"participant","session_id":7,"pid":1,"endpoint":["93.184.216.34:80"]}',
         '{"type":"record","session_id":7,"sender_pid":0,"ts":1000,"decoder_id":1,"source_id":1,'
         '"spans":[{"source_id":1,"session_id":7,"pid":0,"off_start":0,"off_end":18}],'
         '"content_type":"dec:request","payload":"cmVxdWVzdA=="}',
@@ -198,6 +198,7 @@ FULL_BLOCKS = [
         proto="tcp",
         flow_key="a <-> b",
         flags=zpf.SessionFlags.SEQUENCED,
+        sequenced_basis="clock",
         comment="s",
     ),
     zpf.Participant(
@@ -226,7 +227,13 @@ FULL_BLOCKS = [
         extra_options=(zpf.RawOption(0x0F00, b"zz"),),
     ),
     zpf.Undecoded(
-        source_id=1, session_id=7, participant_id=1, off_start=100, off_end=139, reason="tcp-gap"
+        source_id=1,
+        session_id=7,
+        participant_id=1,
+        off_start=100,
+        off_end=139,
+        reason="rtp-seq-gap",
+        reason_class="hole",
     ),
     zpf.NameResolution(session_id=7, participant_id=0, label="alice", kind="nick"),
     zpf.End(comment="done"),
@@ -273,27 +280,32 @@ def test_tcp_role_unknown_is_omitted_like_absent():
     assert obj_to_block(obj).tcp_role is None  # the spec-mandated normalization
 
 
-@pytest.mark.parametrize(
-    ("tick_hz", "expected"),
-    [(1, "s"), (10**3, "ms"), (10**6, "us"), (10**9, "ns"), (44_100, 44_100)],
-)
-def test_time_units_encoding(tick_hz: int, expected: int | str):
+@pytest.mark.parametrize("tick_hz", [1, 10**3, 10**6, 10**9, 44_100])
+def test_tick_hz_is_a_rate_never_a_unit_label(tick_hz: int):
+    """The key carries the binary field's number, not ``"us"``/``"ms"``."""
     obj = block_to_obj(zpf.FileHeader(tick_hz=tick_hz))
-    assert obj["time_units"] == expected
+    assert obj["tick_hz"] == tick_hz
+    assert "time_units" not in obj
     assert obj_to_block(obj).tick_hz == tick_hz
 
 
-def test_time_units_accepts_decimal_strings():
+def test_tick_hz_accepts_decimal_strings():
     header = obj_to_block(
-        {"type": "file", "format": "zipline-payload/1", "time_units": str(2**60)}
+        {"type": "file", "format": "zipline-payload/0.12", "tick_hz": str(2**60)}
     )
     assert header.tick_hz == 2**60
 
 
-def test_format_minor_version_round_trips():
-    header = zpf.FileHeader(tick_hz=1, version_minor=3)
+def test_time_units_is_no_longer_accepted():
+    """0.10 removed the key outright rather than deprecating it."""
+    with pytest.raises(ValueError, match="tick_hz"):
+        obj_to_block({"type": "file", "format": "zipline-payload/0.12", "time_units": "us"})
+
+
+def test_format_string_round_trips_the_supported_version():
+    header = zpf.FileHeader(tick_hz=1)
     obj = block_to_obj(header)
-    assert obj["format"] == "zipline-payload/1.3"
+    assert obj["format"] == "zipline-payload/0.12"
     assert obj_to_block(obj) == header
 
 
@@ -348,23 +360,25 @@ def test_unknown_jsonl_key_reader_policy():
         read_all(text, strict=True)
 
 
-def test_unrenderable_record_flag_bits():
+def test_reserved_record_flag_bits_escape_as_hex_tokens():
+    """A bit with no token is preserved, not dropped — one token per bit."""
     record = zpf.Record(
         session_id=1, sender_pid=0, source_id=0, timestamp=0, flags=zpf.RecordFlags(0x2001)
     )
     issues: list[str] = []
     obj = block_to_obj(record, on_issue=issues.append)
-    assert obj["flags"] == ["psh"]
-    assert issues and "0x2000" in issues[0]
-    sink = io.StringIO()
-    with zpf.JsonlWriter(sink) as writer:
-        writer.write(zpf.FileHeader(tick_hz=1))
-        writer.write(record)
-        assert writer.diagnostics[0].category == "jsonl-edge"
-    with zpf.JsonlWriter(io.StringIO(), strict=True) as writer:
-        writer.write(zpf.FileHeader(tick_hz=1))
-        with pytest.raises(zpf.SemanticError):
-            writer.write(record)
+    assert obj["flags"] == ["psh", "0x2000"]
+    assert issues == []  # Preserving is the conformant path, not an edge case.
+    assert obj_to_block(obj).flags == record.flags
+
+
+def test_several_reserved_flag_bits_each_get_their_own_token():
+    record = zpf.Record(
+        session_id=1, sender_pid=0, source_id=0, timestamp=0, flags=zpf.RecordFlags(0x0120)
+    )
+    obj = block_to_obj(record)
+    assert obj["flags"] == ["0x0020", "0x0100"]
+    assert obj_to_block(obj).flags == record.flags
 
 
 def test_unknown_flag_token_is_dropped_on_read():
@@ -392,10 +406,11 @@ def test_numeric_source_kind_round_trips():
     assert loads_block(dumps_block(source)) == source
 
 
-def test_unknown_binary_block_extension_line():
+def test_unknown_binary_block_escapes_as_a_hex_type():
+    """The type itself carries the number; the line has no other key."""
     unknown = zpf.UnknownBlock(block_type=0x77, content=b"\x01\x02\x03\x04")
     obj = block_to_obj(unknown)
-    assert obj == {"type": "unknown", "block_type": 0x77, "content": "AQIDBA=="}
+    assert obj == {"type": "0x0077", "content": "AQIDBA=="}
     assert obj_to_block(obj) == unknown
 
 
@@ -419,14 +434,26 @@ def test_reader_requires_a_file_line_first():
 
 
 def test_reader_rejects_second_file_line():
-    line = '{"type":"file","format":"zipline-payload/1","time_units":"us"}\n'
+    line = '{"type":"file","format":"zipline-payload/0.12","tick_hz":1000000}\n'
     with pytest.raises(zpf.StructuralError):
         read_all(line + line)
 
 
 def test_reader_rejects_unsupported_major_version():
     with pytest.raises(zpf.StructuralError):
-        read_all('{"type":"file","format":"zipline-payload/2","time_units":"us"}\n')
+        read_all('{"type":"file","format":"zipline-payload/2","tick_hz":1000000}\n')
+
+
+def test_reader_rejects_an_unimplemented_minor():
+    """While the major is 0, an unknown minor is structural corruption."""
+    with pytest.raises(zpf.StructuralError):
+        read_all('{"type":"file","format":"zipline-payload/0.11","tick_hz":1000000}\n')
+
+
+def test_format_components_are_compared_separately():
+    """0.9 is *older* than 0.12: a float parse would sort it as newer."""
+    with pytest.raises(zpf.StructuralError):
+        read_all('{"type":"file","format":"zipline-payload/0.9","tick_hz":1000000}\n')
 
 
 def test_truncated_final_line():
@@ -508,7 +535,7 @@ def test_converter_carries_unknown_blocks():
     text = io.StringIO()
     zpf.binary_to_jsonl(io.BytesIO(binary.getvalue()), text)
     lines = text.getvalue().splitlines()
-    assert json.loads(lines[1])["type"] == "unknown"
+    assert json.loads(lines[1])["type"] == "0x0F42"
     assert json.loads(lines[2])["type"] == "custom"
     binary_again = io.BytesIO()
     text.seek(0)

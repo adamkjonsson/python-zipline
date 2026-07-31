@@ -2,10 +2,11 @@
 
 The Zipline Payload Format stores the payload of network traffic — the bytes
 that flow between endpoints once packets have been reassembled into sessions,
-plus the metadata needed to consume them. This package implements v0.9 of the
-specification — the version published as "1.0" and later renumbered. The
-current specification, 0.10, is a breaking revision that this package does not
-implement.
+plus the metadata needed to consume them. This package implements v0.12 of the
+specification, and exactly that version: while the format is in ``0.x`` every
+minor is a separate format, so a file stamped with any other version is
+rejected rather than misread. :data:`zpf.SPEC_VERSION` is the single source
+of truth for which one.
 
 The flat, spec-mirroring layer lives here: typed blocks (:mod:`zpf.blocks`),
 the binary container reader/writer (:mod:`zpf.binary`), and the JSON-Lines
@@ -18,6 +19,10 @@ from __future__ import annotations
 from zpf._frame import RawOption
 from zpf.binary import BlockReader, BlockWriter
 from zpf.blocks import (
+    REASON_CLASSES,
+    SEQUENCED_BASES,
+    SPEC_VERSION,
+    UNDECODED_REASONS,
     Block,
     Custom,
     Decoder,
@@ -63,8 +68,16 @@ from zpf.jsonl import (
 )
 from zpf.order import causal_merge, record_end, seq_geq, seq_leq, seq_lt, verify_sequenced
 from zpf.reader import FileReader, SessionReader, detect_face, open
-from zpf.reassembly import Datagram, Gap, Segment, StreamView
-from zpf.transform import check_coverage, merge_files
+from zpf.reassembly import (
+    Datagram,
+    Gap,
+    Segment,
+    StreamView,
+    is_decoded_stream,
+    record_ranges,
+    stream_extent,
+)
+from zpf.transform import check_coverage, merge_files, resolve_spans, rewrite_decoded
 from zpf.writer import (
     DecoderHandle,
     DerivedInput,
@@ -121,6 +134,10 @@ __all__ = [
     "SessionWriter",
     "Source",
     "SourceHandle",
+    "REASON_CLASSES",
+    "SEQUENCED_BASES",
+    "SPEC_VERSION",
+    "UNDECODED_REASONS",
     "SourceKind",
     "Span",
     "StreamView",
@@ -138,15 +155,20 @@ __all__ = [
     "decode_stage",
     "detect_face",
     "dumps_block",
+    "is_decoded_stream",
     "jsonl_to_binary",
     "loads_block",
     "merge_files",
     "open",
     "parse_block",
     "record_end",
+    "record_ranges",
+    "resolve_spans",
+    "rewrite_decoded",
     "seq_geq",
     "seq_leq",
     "seq_lt",
+    "stream_extent",
     "unix_seconds",
     "verify_sequenced",
 ]

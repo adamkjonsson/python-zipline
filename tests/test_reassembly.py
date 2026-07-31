@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import io
 from typing import TYPE_CHECKING
 
@@ -335,3 +336,47 @@ def test_views_iterate_independently():
         server_segments = server_view.segments()
         assert next(server_segments).data == b"s1"
         assert next(client_segments).data == b"c1c2"
+
+
+# --- Offset spaces: which rule applies to which layer ------------------------
+
+
+def test_a_decoded_stream_is_positional_never_hole_inclusive():
+    # A decoded stream is the concatenation of that participant's record
+    # payloads in stored order. Undecoded regions name ranges in the input's
+    # space, so they contribute nothing here and there are no holes to count.
+    participant = zpf.Participant(session_id=7, participant_id=0)
+    records = [
+        zpf.Record(session_id=7, sender_pid=0, source_id=1, timestamp=0,
+                   payload=b"REQ", decoder_id=1),
+        zpf.Record(session_id=7, sender_pid=0, source_id=1, timestamp=1,
+                   payload=b"RESPONSE", decoder_id=1),
+    ]
+    assert zpf.reassembly.is_decoded_stream(records)
+    assert zpf.reassembly.record_ranges(participant, records) == ((0, 3), (3, 11))
+    assert zpf.reassembly.stream_extent(participant, records) == 11
+
+
+def test_the_layer_decides_the_space_not_the_presence_of_hints():
+    # A decoded record carrying transport hints must still be placed
+    # positionally: the space belongs to the layer, not to seq_start.
+    participant = zpf.Participant(session_id=7, participant_id=0, isn=1000)
+    hinted = zpf.Record(session_id=7, sender_pid=0, source_id=1, timestamp=0,
+                        payload=b"abcd", seq_start=1101)
+    assert zpf.reassembly.record_ranges(participant, [hinted]) == ((100, 104),)
+    decoded = dataclasses.replace(hinted, decoder_id=1)
+    assert zpf.reassembly.record_ranges(participant, [decoded]) == ((0, 4),)
+
+
+def test_a_transport_stream_counts_its_holes():
+    # The hole between the two records occupies offsets no payload covers,
+    # and the next delivered byte resumes past it.
+    participant = zpf.Participant(session_id=7, participant_id=0, isn=1000)
+    records = [
+        zpf.Record(session_id=7, sender_pid=0, source_id=1, timestamp=0,
+                   payload=b"0123456789", seq_start=1001),
+        zpf.Record(session_id=7, sender_pid=0, source_id=1, timestamp=1,
+                   payload=b"xyz", seq_start=1050),
+    ]
+    assert zpf.reassembly.record_ranges(participant, records) == ((0, 10), (49, 52))
+    assert zpf.reassembly.stream_extent(participant, records) == 52

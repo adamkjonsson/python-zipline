@@ -4,45 +4,23 @@ The spec's "Worked example: a minimal raw file" gives a complete, annotated
 hexdump of a conformant raw .zpf file. Writing the same five blocks must
 produce those exact bytes, and parsing those bytes must yield the exact
 field values.
+
+The bytes are no longer transcribed here. Upstream ships that same example as
+the ``raw-minimal`` conformance vector, built from the normative description
+rather than copied from any implementation, so the vector *is* the golden
+file — one fewer hand-maintained artifact to re-derive at each version bump.
 """
 
 from __future__ import annotations
 
 import io
+import pathlib
 
 import zpf
 
-GOLDEN = bytes.fromhex(
-    # File Header (0x01)
-    "01000000 10000000"
-    "4650495a 01000000"
-    "40420f00 00000000"
-    # Source Descriptor (0x02)
-    "02000000 14000000"
-    "01000000 20000a00"
-    "73696465 412e7063 61700000"
-    # Session Descriptor (0x10)
-    "10000000 10000000"
-    "07000000 00000000"
-    "50000300 74637000"
-    # Participant Descriptor (0x11)
-    "11000000 28000000"
-    "07000000 00000000"
-    "00000000"
-    "60000e00"
-    "31302e30 2e302e31 3a353130 30300000"
-    "61000400 e8030000"
-    # Record (0x20)
-    "20000000 40000000"
-    "07000000 00000000"
-    "00000100"
-    "e8030000 00000000"
-    "00000100"
-    "12000000"
-    "47455420 2f204854 54502f31 2e310d0a 0d0a0000"
-    "70000400 e9030000"
-    "72000400 89130000".replace(" ", "").replace("\n", "")
-)
+GOLDEN = (
+    pathlib.Path(__file__).parent / "vectors/raw-minimal/raw-minimal.zpf"
+).read_bytes()
 
 GOLDEN_BLOCKS = [
     zpf.FileHeader(tick_hz=1_000_000),
@@ -67,6 +45,12 @@ def test_golden_file_is_196_bytes():
 
 
 def test_writing_the_blocks_produces_the_golden_bytes():
+    """Our encoder reproduces the specification's own bytes exactly.
+
+    Now that ``GOLDEN`` is the upstream vector, this is the strong form of
+    the claim: the writer agrees byte-for-byte with a file built from the
+    normative text by someone else, padding and option order included.
+    """
     sink = io.BytesIO()
     with zpf.BlockWriter(sink) as writer:
         for block in GOLDEN_BLOCKS:
@@ -86,7 +70,7 @@ def test_parsing_the_golden_bytes_yields_the_blocks():
 
 def test_parsed_field_values_match_the_spec_annotations():
     header, source, session, participant, record = list(zpf.BlockReader(io.BytesIO(GOLDEN)))
-    assert (header.version_major, header.version_minor) == (1, 0)
+    assert (header.version_major, header.version_minor) == (0, 12)
     assert header.tick_hz == 1_000_000
     assert (source.source_id, source.kind, source.uri) == (1, zpf.SourceKind.CAPTURE, "sideA.pcap")
     assert (session.session_id, session.proto) == (7, "tcp")
@@ -109,3 +93,8 @@ def test_reparse_and_rewrite_is_byte_identical():
         for block in blocks:
             writer.write(block)
     assert sink.getvalue() == GOLDEN
+
+
+def test_the_worked_example_is_196_bytes():
+    """The size the specification states for it, as a cheap sanity check."""
+    assert len(GOLDEN) == 196

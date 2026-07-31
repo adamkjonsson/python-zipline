@@ -1,0 +1,8 @@
+{"type":"file","format":"zipline-payload/0.12","tick_hz":1000000}
+{"type":"source","source_id":1,"kind":"capture","uri":"chat.pcap"}
+{"type":"session","session_id":8,"proto":"irc","sequenced":true,"sequenced_basis":"protocol"}
+{"type":"participant","session_id":8,"pid":0,"endpoint":["alice"]}
+{"type":"participant","session_id":8,"pid":1,"endpoint":["bob"]}
+{"type":"record","session_id":8,"sender_pid":0,"source_id":1,"ts":2000,"payload":"aGk="}
+{"type":"record","session_id":8,"sender_pid":1,"source_id":1,"ts":2100,"payload":"eW8="}
+{"type":"end"}

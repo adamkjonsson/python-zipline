@@ -40,6 +40,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from zpf.blocks import (
+    REASON_CLASSES,
+    UNDECODED_REASONS,
     Block,
     Decoder,
     End,
@@ -62,9 +64,11 @@ if TYPE_CHECKING:
 
     from zpf.blocks import Span
 
-_RECORD_RESERVED_FLAGS = 0xFF20
-_FILE_RESERVED_FLAGS = 0xFFFE  # everything above SINGLE_CLOCK
-_SESSION_RESERVED_FLAGS = 0xFFFE  # everything above SEQUENCED
+# Reserved flag bits are deliberately *not* checked. The specification puts a
+# nonzero reserved field alongside an unknown block type and an unknown option
+# id as part of the extension mechanism — "not a violation ... the normal,
+# conformant path" — and requires the bit to survive a round-trip without
+# being interpreted. Diagnosing one would report conformant data as suspect.
 
 _RAW = "raw"
 _DECODE = "decode-stage"
@@ -76,6 +80,10 @@ class _SessionState:
     """Live per-session bookkeeping, freed at Session End."""
 
     last_seq: dict[int, int | None] = field(default_factory=dict)  # pid -> last seq_start
+    described: str = ""
+    sequenced: bool = False
+    sequenced_basis: str | None = None
+    has_hints: bool = False  # any record carried seq_start or ack
 
 
 class ConformanceChecker:
@@ -103,6 +111,7 @@ class ConformanceChecker:
         self._kind: str | None = None
         self._kind_reason = ""
         self._orphan_participants: list[str] = []  # declared without origin, kind still open
+        self._derived_only: list[str] = []  # blocks that forbid raw, kind still open
         self._file_ended = False
         self._advisory: list[str] = []  # findings for the block being observed
         self._dispatch: dict[type[Block], Callable[[Any], None]] = {
@@ -162,6 +171,9 @@ class ConformanceChecker:
     def check(self, blocks: Iterable[Block]) -> None:
         """Check a whole block sequence (convenience for standalone use).
 
+        Does not finalize: call :meth:`finish` when the stream is complete,
+        so a caller may feed a file in several calls.
+
         Raises:
             AdvisoryError: On the sequence's first advisory finding.
             SemanticError: On the sequence's first isolating violation.
@@ -170,13 +182,52 @@ class ConformanceChecker:
         for block in blocks:
             self.observe(block)
 
+    def finish(self) -> None:
+        """Run the checks that only the end of the stream can settle.
+
+        Some obligations cannot be judged when the block carrying them is
+        read. Whether a session is *hint-less* is a property of its records,
+        and declare-on-first-use puts the Session Descriptor before them — so
+        a reader concludes it only at Session End or end-of-stream. Reaching
+        the End block or end-of-stream implicitly closes every still-open
+        session, and this is that moment.
+
+        Idempotent: finalized sessions are not revisited.
+
+        Raises:
+            SemanticError: On the first violation found while finalizing.
+
+        """
+        pending = list(self._live.items())
+        for session_id, state in pending:
+            del self._live[session_id]
+            self._ended.add(session_id)
+            self._check_sequenced_basis(state)
+
+    def _check_sequenced_basis(self, state: _SessionState) -> None:
+        """Require a hint-less sequenced session to say what its order rests on.
+
+        A session carrying `seq`/`ack` derives its order from causal edges
+        and needs no basis. One without them has no causal edges at all, so
+        the order rests on something the file does not otherwise record —
+        which is exactly why the producer must name it. Recording is
+        unconditional: ``trivial`` covers the case where there was never a
+        cross-participant order to get wrong.
+        """
+        if not state.sequenced or state.has_hints or state.sequenced_basis is not None:
+            return
+        msg = (
+            f"{state.described} is SEQUENCED and carries no seq/ack on any record, "
+            "so it must record what its order rests on in sequenced_basis"
+        )
+        raise SemanticError(msg)
+
     # --- Per-block handlers ----------------------------------------------
 
     def _on_file_header(self, block: FileHeader) -> None:
         if self._header is not None:
             msg = "second File Header; a file has exactly one, as its first block"
             raise SemanticError(msg)
-        self._note_reserved_flags(int(block.flags), _FILE_RESERVED_FLAGS, "File Header")
         self._header = block
 
     def _on_source(self, block: Source) -> None:
@@ -195,8 +246,11 @@ class ConformanceChecker:
         if block.session_id in self._live or block.session_id in self._ended:
             msg = f"session id {block.session_id} declared twice"
             raise SemanticError(msg)
-        self._note_reserved_flags(int(block.flags), _SESSION_RESERVED_FLAGS, _describe(block))
-        self._live[block.session_id] = _SessionState()
+        self._live[block.session_id] = _SessionState(
+            described=_describe(block),
+            sequenced=block.sequenced,
+            sequenced_basis=block.sequenced_basis,
+        )
 
     def _on_participant(self, block: Participant) -> None:
         state = self._require_live_session(block.session_id, _describe(block))
@@ -225,9 +279,10 @@ class ConformanceChecker:
         state.last_seq[block.participant_id] = None
 
     def _on_session_end(self, block: SessionEnd) -> None:
-        self._require_live_session(block.session_id, _describe(block))
+        state = self._require_live_session(block.session_id, _describe(block))
         del self._live[block.session_id]
         self._ended.add(block.session_id)
+        self._check_sequenced_basis(state)
 
     def _on_record(self, block: Record) -> None:
         described = _describe(block)
@@ -237,10 +292,11 @@ class ConformanceChecker:
             raise SemanticError(msg)
         # Isolating checks before any state mutation or kind-locking, so a
         # raised violation leaves the checker consistent (block isolation).
-        self._note_reserved_flags(int(block.flags), _RECORD_RESERVED_FLAGS, described)
         self._note(_prim_finding(block, described))
         self._check_record_order(block, state, described)
         self._classify_record(block, described)
+        if block.seq_start is not None or block.ack is not None:
+            state.has_hints = True
         if block.seq_start is not None:
             state.last_seq[block.sender_pid] = block.seq_start
 
@@ -253,7 +309,43 @@ class ConformanceChecker:
         if block.decoder_id is not None and block.decoder_id not in self._decoders:
             msg = f"{described} names undeclared decoder {block.decoder_id}"
             raise SemanticError(msg)
-        self._lock_kind(_DECODE, described)
+        self._check_reason_class(block, described)
+        # Not a decode-stage marker any more: a pass-through preserving a
+        # decoded layer re-emits its input's Undecoded blocks unchanged,
+        # which is what carries the input's coverage guarantee forward. All
+        # that follows is that the file is derived.
+        self._require_derived(described)
+
+    def _check_reason_class(self, block: Undecoded, described: str) -> None:
+        """Check the reason names a recoverability class a consumer can act on.
+
+        The vocabulary is open so a producer can be specific about *how* a
+        region came to be undecoded, and ``reason_class`` is what stops that
+        freedom costing the consumer the one fact it must have: whether the
+        bytes exist upstream. A canonical reason implies its class; anything
+        else has to say.
+        """
+        canonical = UNDECODED_REASONS.get(block.reason or "")
+        if block.reason_class is None:
+            if block.reason is not None and canonical is None:
+                msg = (
+                    f"{described} reason {block.reason!r} is outside the canonical "
+                    f"vocabulary, so it must carry reason_class"
+                )
+                raise SemanticError(msg)
+            return
+        if block.reason_class not in REASON_CLASSES:
+            msg = (
+                f"{described} reason_class {block.reason_class!r} must be "
+                f"'bytes' or 'hole'"
+            )
+            raise SemanticError(msg)
+        if canonical is not None and block.reason_class != canonical:
+            msg = (
+                f"{described} reason {block.reason!r} is in the {canonical!r} class, "
+                f"but reason_class says {block.reason_class!r}"
+            )
+            raise SemanticError(msg)
 
     def _on_name(self, block: NameResolution) -> None:
         state = self._require_live_session(block.session_id, _describe(block))
@@ -268,7 +360,15 @@ class ConformanceChecker:
     # --- Record helpers ----------------------------------------------------
 
     def _classify_record(self, block: Record, described: str) -> None:
-        """Lock the file kind implied by this record and check its references."""
+        """Lock the file kind implied by this record and check its references.
+
+        The discriminator between the two derived kinds is **spans versus
+        origin**, not ``decoder_id``. A record carrying ``spans`` was built
+        by this file's stage; one without them was re-emitted from the input
+        unchanged. ``decoder_id`` answers a different question — which
+        decoder's *layer* the record belongs to — and a pass-through carries
+        inherited ones forward, so it says nothing about which stage ran.
+        """
         source_kind = self._require_source(block.source_id, described)
         if block.decoder_id is not None:
             if block.decoder_id not in self._decoders:
@@ -277,14 +377,13 @@ class ConformanceChecker:
             if source_kind != SourceKind.ZPF_INPUT:
                 msg = f"{described} is decoded, so it must reference a zpf-input source"
                 raise SemanticError(msg)
-            self._lock_kind(_DECODE, f"{described} (carries decoder_id)")
-        elif source_kind == SourceKind.CAPTURE:
+        if source_kind == SourceKind.CAPTURE:
             self._lock_kind(_RAW, f"{described} (byte run from a capture source)")
         elif source_kind == SourceKind.ZPF_INPUT:
             if block.spans:
-                msg = f"{described} is a pass-through record and must not carry spans"
-                raise SemanticError(msg)
-            self._lock_kind(_PASS_THROUGH, f"{described} (byte run from a zpf-input source)")
+                self._lock_kind(_DECODE, f"{described} (carries spans)")
+            else:
+                self._lock_kind(_PASS_THROUGH, f"{described} (carries no spans)")
         else:
             msg = f"{described} references source {block.source_id} of unknown kind {source_kind}"
             raise SemanticError(msg)
@@ -317,21 +416,6 @@ class ConformanceChecker:
         if finding is not None:
             self._advisory.append(finding)
 
-    def _note_reserved_flags(self, flags: int, reserved: int, described: str) -> None:
-        """Note reserved flag bits, which a reader ignores rather than isolates.
-
-        Every flags field works the same way: the format reserves the bits it
-        does not define and requires a writer to leave them 0, but it gives
-        them no meaning a reader could act on — so the only reading available
-        to a reader is to ignore them and use the block. Isolating it would
-        discard well-framed data over flags the reader was never going to
-        consult, and for a File Header or a Session Descriptor it would take
-        everything that depends on that block down with it.
-        """
-        unknown = flags & reserved
-        if unknown:
-            self._note(f"{described} flags 0x{unknown:04X} set reserved bits (must be 0)")
-
     def _require_live_session(self, session_id: int, described: str) -> _SessionState:
         state = self._live.get(session_id)
         if state is None:
@@ -349,9 +433,34 @@ class ConformanceChecker:
             raise SemanticError(msg)
         return kind
 
+    def _require_derived(self, reason: str) -> None:
+        """Record that a block rules the file out as raw, whatever kind it is.
+
+        Some blocks say "derived" without saying *which* derived kind, so
+        they cannot lock one. Deferring works because the constraint is
+        cheap to carry and is settled either way: if a later block locks raw
+        the conflict surfaces there, and if it locks a derived kind the
+        constraint is already satisfied.
+        """
+        if self._kind == _RAW:
+            msg = (
+                f"{reason} implies a derived file, but {self._kind_reason} "
+                f"already made it {_RAW} (a file is exactly one kind)"
+            )
+            raise SemanticError(msg)
+        if self._kind is None:
+            self._derived_only.append(reason)
+            self._require_derived_header(reason)
+
     def _lock_kind(self, kind: str, reason: str) -> None:
         """Lock the file kind, or verify it matches the already-locked one."""
         if self._kind is None:
+            if kind == _RAW and self._derived_only:
+                msg = (
+                    f"{reason} implies a {_RAW} file, but {self._derived_only[0]} "
+                    "already made it derived (a file is exactly one kind)"
+                )
+                raise SemanticError(msg)
             self._kind = kind
             self._kind_reason = reason
             if kind != _RAW:
@@ -363,6 +472,7 @@ class ConformanceChecker:
                 )
                 raise SemanticError(msg)
             self._orphan_participants.clear()
+            self._derived_only.clear()
         elif self._kind != kind:
             msg = (
                 f"{reason} implies a {kind} file, but {self._kind_reason} "

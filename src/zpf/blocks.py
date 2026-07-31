@@ -1,4 +1,4 @@
-"""Typed block model for the Zipline Payload Format v0.9.
+"""Typed block model for the Zipline Payload Format v0.12.
 
 One frozen dataclass per block type, mirroring the specification's normative
 binary encoding. Each class knows how to serialize itself (:meth:`Block.to_bytes`)
@@ -20,6 +20,7 @@ Round-trip guarantees:
 
 from __future__ import annotations
 
+import contextlib
 import struct
 from dataclasses import dataclass, field
 from enum import IntEnum, IntFlag
@@ -33,6 +34,70 @@ from zpf.errors import ContentError, EncodeError, SemanticError, StructuralError
 
 # A byte-swapped (big-endian, invalid) file's magic reads as this value.
 _SWAPPED_MAGIC = 0x4650495A
+
+#: The specification version this implementation reads and writes, as
+#: ``(version_major, version_minor)``. A writer stamps the version it
+#: implements; there is no obligation to compute the lowest version whose
+#: features a file happens to use.
+SPEC_VERSION: tuple[int, int] = (0, 12)
+
+
+#: The canonical :class:`Undecoded` ``reason`` values, mapped to their
+#: recoverability class. The vocabulary is open — a producer may be more
+#: specific — but every value belongs to one of these two classes, and a
+#: reason outside this table must name its class in ``reason_class``.
+#:
+#: ``bytes`` means the bytes exist at that span upstream and a consumer may
+#: follow the reference to fetch them; ``hole`` means the range has no bytes
+#: anywhere. ``undecodable`` and ``skipped`` differ in *intent*, not
+#: recoverability: the decoder tried and failed, versus declined on purpose.
+UNDECODED_REASONS: dict[str, str] = {
+    "undecodable": "bytes",
+    "skipped": "bytes",
+    "gap": "hole",
+    "truncated": "hole",
+}
+
+#: The two recoverability classes a ``reason_class`` may name.
+REASON_CLASSES: frozenset[str] = frozenset({"bytes", "hole"})
+
+#: The defined ``sequenced_basis`` values. The vocabulary is open and a reader
+#: MUST NOT reject a session for a value it does not recognise — an unknown
+#: value simply means an unknown basis.
+#:
+#: ``trivial`` covers a session with one participant, or only one that ever
+#: sends: there was never a cross-participant order to get wrong. Recording a
+#: basis is unconditional even then, because what a producer is *relying on*
+#: is the one thing it always knows when it sets the flag.
+SEQUENCED_BASES: frozenset[str] = frozenset({"clock", "protocol", "external", "trivial"})
+
+
+def unsupported_version(version_major: int, version_minor: int) -> str | None:
+    """Report why a file's stamped version cannot be read, if it cannot.
+
+    The specification has two compatibility regimes. While ``version_major``
+    is ``0`` the pair is the compatibility identity, so a reader MUST reject a
+    ``version_minor`` it does not implement exactly as it rejects an unknown
+    major. From ``1.0`` onward a minor bump only adds skippable surface, and a
+    reader MUST NOT gate on the minor at all.
+
+    Args:
+        version_major: The file's stamped major version.
+        version_minor: The file's stamped minor version.
+
+    Returns:
+        A diagnostic naming the offending field, or ``None`` if supported.
+
+    """
+    major, minor = SPEC_VERSION
+    if version_major != major:
+        return f"unsupported version_major {version_major}; this implementation reads {major}"
+    if major == 0 and version_minor != minor:
+        return (
+            f"unsupported version_minor {version_minor}; while version_major is 0 every "
+            f"minor is a separate format and this implementation reads {minor}"
+        )
+    return None
 
 
 class SourceKind(IntEnum):
@@ -221,8 +286,24 @@ def _pack_i64(value: int) -> bytes:
     return _frame.I64.pack(int(value))
 
 
-def _unpack_tcp_role(value: bytes) -> TcpRole:
-    return TcpRole(_unpack_u8(value))
+def _unpack_tcp_role(value: bytes) -> TcpRole | int:
+    """Read a ``tcp_role``, keeping a value the enum does not define.
+
+    The option is advisory, so an unrecognised value means "unknown" — a
+    reader carries it and moves on rather than treating it as an error.
+
+    Args:
+        value: The option's raw bytes.
+
+    Returns:
+        The enum member, or the raw number when none is defined.
+
+    """
+    raw = _unpack_u8(value)
+    try:
+        return TcpRole(raw)
+    except ValueError:
+        return raw
 
 
 def _unpack_file_flags(value: bytes) -> FileFlags:
@@ -437,11 +518,10 @@ class FileHeader(Block):
 
     Attributes:
         tick_hz: Time units per second for all timestamps; must be non-zero.
-        version_major: Format major version; this implementation writes 1.
-            Spec 0.9 stamps ``1``/``0`` on the wire — the version was published
-            as "1.0" and renumbered afterwards, so the field does not track the
-            spec's current name.
-        version_minor: Format minor version.
+        version_major: Format major version; see :data:`SPEC_VERSION`.
+        version_minor: Format minor version. While the major is ``0`` this
+            selects the format outright — ``0.12`` and ``0.11`` are different
+            formats, not compatible refinements.
         time_epoch: Origin for record timestamps, in ``tick_hz`` ticks since
             the Unix epoch; ``None`` means the default origin (0).
         creator: Tool + version that wrote the file.
@@ -456,8 +536,8 @@ class FileHeader(Block):
     block_type: ClassVar[int] = _frame.BT_FILE_HEADER
 
     tick_hz: int
-    version_major: int = 1
-    version_minor: int = 0
+    version_major: int = SPEC_VERSION[0]
+    version_minor: int = SPEC_VERSION[1]
     time_epoch: int | None = None
     creator: str | None = None
     produced_by: str | None = None
@@ -480,10 +560,10 @@ class FileHeader(Block):
         if self.tick_hz == 0:
             msg = "tick_hz must be non-zero"
             raise EncodeError(msg)
-        if self.version_major != 1:
-            msg = f"only version_major 1 is supported, got {self.version_major}"
-            raise EncodeError(msg)
         _check_uint(self.version_minor, 16, "version_minor")
+        unsupported = unsupported_version(self.version_major, self.version_minor)
+        if unsupported is not None:
+            raise EncodeError(unsupported)
         _check_i64_opt(self.time_epoch, "time_epoch")
         _check_i64_opt(self.produced_at, "produced_at")
         _check_uint(int(self.flags), 16, "flags")
@@ -510,9 +590,9 @@ class FileHeader(Block):
         if magic != _frame.MAGIC:
             msg = f"bad magic 0x{magic:08X}; not a ZPF file"
             raise StructuralError(msg)
-        if version_major != 1:
-            msg = f"unsupported version_major {version_major}"
-            raise StructuralError(msg)
+        unsupported = unsupported_version(version_major, version_minor)
+        if unsupported is not None:
+            raise StructuralError(unsupported)
         if tick_hz == 0:
             msg = "tick_hz must be non-zero"
             raise StructuralError(msg)
@@ -586,7 +666,13 @@ _DECODER_BODY = struct.Struct("<HH")
 
 @dataclass(frozen=True)
 class Decoder(Block):
-    """Decoder Descriptor block (``0x03``) — decode-stage files only.
+    """Decoder Descriptor block (``0x03``) — files carrying a decoded layer.
+
+    That is a decode stage's output, or a pass-through preserving one: such
+    a transform re-declares the descriptors that its inherited
+    ``decoder_id`` values reference, because a filtered or re-emitted HTTP
+    message is still an HTTP message.
+
 
     Attributes:
         decoder_id: Id referenced per-record.
@@ -640,6 +726,9 @@ class Session(Block):
         proto: Session protocol (lowercase; e.g. ``"tcp"``, ``"http"``).
         flow_key: Human-readable flow key, e.g. ``"a:port <-> b:port"``.
         flags: Session-level flags (:class:`SessionFlags`).
+        sequenced_basis: What a SEQUENCED hint-less session's order rests on;
+            see :data:`SEQUENCED_BASES`. Required on such a session, and
+            meaningless without the SEQUENCED flag.
         comment: Free-text note.
         extra_options: Preserved unrecognized/duplicate option occurrences.
 
@@ -651,6 +740,7 @@ class Session(Block):
     proto: str | None = None
     flow_key: str | None = None
     flags: SessionFlags = SessionFlags(0)
+    sequenced_basis: str | None = None
     comment: str | None = None
     extra_options: tuple[RawOption, ...] = ()
 
@@ -661,6 +751,7 @@ class Session(Block):
         _OptSpec(
             _frame.OPT_SESSION_FLAGS, "flags", _unpack_session_flags, _pack_u16, skip_zero=True
         ),
+        _OptSpec(_frame.OPT_SEQUENCED_BASIS, "sequenced_basis", _unpack_str, _pack_str),
     )
 
     def __post_init__(self) -> None:
@@ -700,7 +791,9 @@ class Participant(Block):
         isn: The SYN's TCP sequence number; must be present when the
             handshake was observed (fixes the stream's absolute origin).
         identity: Stable identity distinct from a transient endpoint.
-        tcp_role: Which side opened the connection, when known.
+        tcp_role: Which side opened the connection, when known. Advisory, so
+            a value the enum does not define is carried as a plain ``int``
+            and means "unknown" rather than being an error.
         origin: Input stream mapping (pass-through files only).
         comment: Free-text note.
         extra_options: Preserved unrecognized/duplicate option occurrences.
@@ -714,7 +807,7 @@ class Participant(Block):
     endpoints: tuple[str, ...] = ()
     isn: int | None = None
     identity: str | None = None
-    tcp_role: TcpRole | None = None
+    tcp_role: TcpRole | int | None = None
     origin: Origin | None = None
     comment: str | None = None
     extra_options: tuple[RawOption, ...] = ()
@@ -733,11 +826,11 @@ class Participant(Block):
         _check_uint(self.participant_id, 16, "participant_id")
         _check_uint_opt(self.isn, 32, "isn")
         if self.tcp_role is not None:
-            try:
-                object.__setattr__(self, "tcp_role", TcpRole(self.tcp_role))
-            except ValueError as exc:
-                msg = f"invalid tcp_role: {self.tcp_role!r}"
-                raise EncodeError(msg) from exc
+            _check_uint(int(self.tcp_role), 8, "tcp_role")
+            if not isinstance(self.tcp_role, TcpRole):
+                # Advisory: an undefined value is carried as-is, not rejected.
+                with contextlib.suppress(ValueError):
+                    object.__setattr__(self, "tcp_role", TcpRole(self.tcp_role))
         object.__setattr__(self, "endpoints", tuple(self.endpoints))
         object.__setattr__(self, "extra_options", tuple(self.extra_options))
 
@@ -993,8 +1086,13 @@ class Undecoded(Block):
         participant_id: Participant (stream) inside that input.
         off_start: Logical 0-based stream offset of the region's first byte.
         off_end: One past the region's last byte.
-        reason: Why the region is undecoded (``"undecodable"``, ``"tcp-gap"``,
-            ``"truncated"``, …).
+        reason: Why the region is undecoded. Open vocabulary; the canonical
+            values are :data:`UNDECODED_REASONS`. Appears in a decode
+            stage's output and in a pass-through preserving a decoded
+            layer, never in a raw file.
+        reason_class: ``"bytes"`` or ``"hole"`` — which recoverability class
+            ``reason`` belongs to. Required with a reason outside the
+            canonical four, and must agree with the table for one of them.
         decoder_id: Which decoder declined the region.
         comment: Free-text note.
         extra_options: Preserved unrecognized/duplicate option occurrences.
@@ -1009,6 +1107,7 @@ class Undecoded(Block):
     off_start: int
     off_end: int
     reason: str | None = None
+    reason_class: str | None = None
     decoder_id: int | None = None
     comment: str | None = None
     extra_options: tuple[RawOption, ...] = ()
@@ -1017,7 +1116,21 @@ class Undecoded(Block):
         _COMMENT_SPEC,
         _OptSpec(_frame.OPT_DECODER_ID, "decoder_id", _unpack_u16, _pack_u16),
         _OptSpec(_frame.OPT_UNDECODED_REASON, "reason", _unpack_str, _pack_str),
+        _OptSpec(_frame.OPT_REASON_CLASS, "reason_class", _unpack_str, _pack_str),
     )
+
+    @property
+    def recoverability(self) -> str | None:
+        """Which class the region falls in, or ``None`` if unknowable.
+
+        The class — not the word — is what a consumer must act on: whether
+        the bytes exist upstream and can be fetched, or the range is a hole
+        with no bytes anywhere. A non-canonical ``reason`` with no
+        ``reason_class`` is a writer error, and its class is genuinely
+        unknown; a consumer MUST NOT guess, least of all ``"hole"``, which
+        would silently discard bytes that may well exist.
+        """
+        return UNDECODED_REASONS.get(self.reason or "", self.reason_class)
 
     def __post_init__(self) -> None:
         _check_uint(self.source_id, 16, "source_id")

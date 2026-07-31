@@ -53,15 +53,34 @@ nitpick_ignore_regex = [("py:class", r"tuple\[.*")]
 
 
 def _reexport_aliases() -> dict[str, str]:
-    """Map each top-level re-export to the module that actually defines it."""
+    """Map each top-level re-export to the module that actually defines it.
+
+    Classes and functions carry ``__module__``, so they resolve directly.
+    Module-level **data** — a tuple, a frozenset, a dict — does not, so the
+    defining module is found by identity instead. Without that second pass a
+    re-exported constant is documented under its own module but unreachable
+    as ``zpf.NAME``, which is how the prose always cites it.
+    """
+    import sys
+
     import zpf
 
+    submodules = {
+        name: module
+        for name, module in sys.modules.items()
+        if name.startswith("zpf.") and module is not None
+    }
     aliases: dict[str, str] = {}
     for name in zpf.__all__:
         obj = getattr(zpf, name)
         module = getattr(obj, "__module__", None)
         if module is not None and module.startswith("zpf."):
             aliases[f"zpf.{name}"] = f"{module}.{name}"
+            continue
+        for module_name, submodule in submodules.items():
+            if getattr(submodule, name, None) is obj:
+                aliases[f"zpf.{name}"] = f"{module_name}.{name}"
+                break
     return aliases
 
 

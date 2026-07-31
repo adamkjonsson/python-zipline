@@ -72,11 +72,11 @@ it is exactly what `convert ... --to jsonl` writes.
 
 ```console
 $ zpf cat session.zpf
-{"type":"file","format":"zipline-payload/1","time_units":"us"}
+{"type":"file","format":"zipline-payload/0.12","tick_hz":1000000}
 {"type":"source","source_id":0,"kind":"capture","uri":"capture.pcap"}
 {"type":"session","session_id":0,"proto":"tcp","key":"10.0.0.1:51000 <-> 93.184.216.34:80"}
-{"type":"participant","session_id":0,"pid":0,"endpoint":"10.0.0.1:51000","isn":1000}
-{"type":"participant","session_id":0,"pid":1,"endpoint":"93.184.216.34:80","isn":5000}
+{"type":"participant","session_id":0,"pid":0,"endpoint":["10.0.0.1:51000"],"isn":1000}
+{"type":"participant","session_id":0,"pid":1,"endpoint":["93.184.216.34:80"],"isn":5000}
 {"type":"record","session_id":0,"sender_pid":0,"source_id":0,"ts":1000,"seq_start":1001,"ack":5001,"payload":"R0VUIC8gSFRUUC8xLjENCg0K"}
 {"type":"record","session_id":0,"sender_pid":1,"source_id":0,"ts":1005,"seq_start":5001,"ack":1019,"payload":"SFRUUC8xLjEgMjAwIE9LDQoNCmhp"}
 {"type":"session_end","session_id":0}

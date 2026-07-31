@@ -143,15 +143,19 @@ def test_order_is_per_participant():
 
 
 def test_raw_and_derived_records_never_mix():
+    decoded = raw_record(
+        source_id=2, decoder_id=3,
+        spans=(Span(source_id=2, session_id=9, participant_id=0, off_start=0, off_end=1),),
+    )
     reject(
         DERIVED_HEADER, CAP, INP, DEC, SESS, PART,
-        raw_record(),  # raw byte run
-        raw_record(source_id=2, decoder_id=3),  # decoded
+        raw_record(),  # raw byte run from a capture source
+        decoded,
         match="exactly one kind",
     )
     reject(
         DERIVED_HEADER, CAP, INP, DEC, SESS, PART,
-        raw_record(source_id=2, decoder_id=3),
+        decoded,
         raw_record(),
         match="exactly one kind",
     )
@@ -176,14 +180,130 @@ def test_undecoded_only_in_decode_stage_files():
     accept(DERIVED_HEADER, INP, DEC, undecoded)
 
 
+def undecoded(**kwargs: object) -> zpf.Undecoded:
+    args: dict = {
+        "source_id": 2, "session_id": 9, "participant_id": 0, "off_start": 0, "off_end": 4,
+    }
+    args.update(kwargs)
+    return zpf.Undecoded(**args)
+
+
+def hintless_session(**kwargs: object) -> list[zpf.Block]:
+    """Build a sequenced session whose records carry no seq/ack."""
+    args: dict = {"session_id": 5, "flags": zpf.SessionFlags.SEQUENCED}
+    args.update(kwargs)
+    return [HEADER, CAP, zpf.Session(**args), PART, raw_record()]
+
+
+def finished(*blocks: zpf.Block) -> zpf.ConformanceChecker:
+    """Check a whole file, including the end-of-stream pass."""
+    checker = accept(*blocks)
+    checker.finish()
+    return checker
+
+
+def test_a_hintless_sequenced_session_must_record_its_basis():
+    # The rule cannot fire when the Session Descriptor is read: whether the
+    # session is hint-less is a property of its *records*, and
+    # declare-on-first-use puts the descriptor before them.
+    checker = accept(*hintless_session())  # nothing raised yet
+    with pytest.raises(zpf.SemanticError, match="sequenced_basis"):
+        checker.finish()
+
+
+def test_the_basis_requirement_is_settled_at_session_end():
+    checker = accept(*hintless_session())
+    with pytest.raises(zpf.SemanticError, match="sequenced_basis"):
+        checker.observe(zpf.SessionEnd(session_id=5))
+
+
+def test_any_hint_anywhere_means_the_session_is_not_hintless():
+    # One hint yields causal edges, so the order rests on something the file
+    # already records and no basis is owed. An ack alone counts.
+    finished(HEADER, CAP, zpf.Session(session_id=5, flags=zpf.SessionFlags.SEQUENCED),
+             PART, raw_record(seq_start=1000))
+    finished(HEADER, CAP, zpf.Session(session_id=5, flags=zpf.SessionFlags.SEQUENCED),
+             PART, raw_record(ack=1000))
+
+
+def test_a_basis_satisfies_the_requirement():
+    for basis in sorted(zpf.SEQUENCED_BASES):
+        finished(*hintless_session(sequenced_basis=basis))
+
+
+def test_an_unsequenced_session_owes_no_basis():
+    finished(HEADER, CAP, zpf.Session(session_id=5), PART, raw_record())
+
+
+def test_a_canonical_reason_implies_its_class():
+    # The canonical four need no reason_class, and each sits in a fixed class.
+    for reason in ("undecodable", "skipped", "gap", "truncated"):
+        accept(DERIVED_HEADER, INP, DEC, undecoded(reason=reason))
+    assert zpf.UNDECODED_REASONS["skipped"] == "bytes"  # intent differs, class does not
+    assert zpf.UNDECODED_REASONS["undecodable"] == "bytes"
+    assert zpf.UNDECODED_REASONS["gap"] == "hole"
+
+
+def test_a_non_canonical_reason_must_name_its_class():
+    # The vocabulary is open so a producer can be specific about *how*; that
+    # freedom must not cost the consumer the one fact it acts on.
+    reject(
+        DERIVED_HEADER, INP, DEC, undecoded(reason="rtp-seq-gap"),
+        match="must carry reason_class",
+    )
+    accept(DERIVED_HEADER, INP, DEC, undecoded(reason="rtp-seq-gap", reason_class="hole"))
+
+
+def test_reason_class_must_be_one_of_the_two_classes():
+    reject(
+        DERIVED_HEADER, INP, DEC, undecoded(reason="rtp-seq-gap", reason_class="maybe"),
+        match="'bytes' or 'hole'",
+    )
+
+
+def test_reason_class_must_agree_with_a_canonical_reason():
+    # Redundant but permitted — so long as it does not contradict the table.
+    accept(DERIVED_HEADER, INP, DEC, undecoded(reason="gap", reason_class="hole"))
+    reject(
+        DERIVED_HEADER, INP, DEC, undecoded(reason="gap", reason_class="bytes"),
+        match="reason_class says",
+    )
+
+
+def test_recoverability_is_unknown_without_a_class():
+    # A consumer must not guess, least of all "hole", which would discard
+    # bytes that may well exist.
+    assert undecoded(reason="gap").recoverability == "hole"
+    assert undecoded(reason="skipped").recoverability == "bytes"
+    assert undecoded(reason="rtp-seq-gap", reason_class="hole").recoverability == "hole"
+    assert undecoded(reason="rtp-seq-gap").recoverability is None
+
+
 def test_pass_through_records_carry_no_spans():
+    # spans versus origin *is* the discriminator, so a record carrying spans
+    # in a file whose participants carry origin is a kind conflict rather
+    # than a rule of its own.
     span = Span(source_id=2, session_id=9, participant_id=0, off_start=0, off_end=1)
     reject(
         DERIVED_HEADER, INP, SESS,
         zpf.Participant(session_id=5, participant_id=0, origin=ORIGIN),
         raw_record(source_id=2, spans=(span,)),
-        match="must not carry spans",
+        match="exactly one kind",
     )
+
+
+def test_decoder_id_no_longer_decides_the_file_kind():
+    # A pass-through preserving a decoded layer: records keep decoder_id and
+    # content_type but carry no spans, provenance is the participants'
+    # origin, and inherited Undecoded blocks ride along. 0.9 could not
+    # express this, and a strict 0.9 reader refuses it.
+    checker = accept(
+        DERIVED_HEADER, INP, DEC, SESS,
+        zpf.Participant(session_id=5, participant_id=0, origin=ORIGIN),
+        raw_record(source_id=2, decoder_id=3, content_type="dec:request"),
+        zpf.Undecoded(source_id=2, session_id=9, participant_id=0, off_start=0, off_end=4),
+    )
+    assert checker.file_kind == "pass-through"
 
 
 def test_span_sources_match_the_record_kind():
@@ -243,44 +363,27 @@ def test_derived_files_must_declare_their_provenance():
     )
 
 
-def test_reserved_flag_bits_must_be_zero():
-    # A writer MUST leave them 0, so every flags field is checked — but the
-    # format gives the reserved bits no meaning a reader could act on, so
-    # ignoring them is the only reading available: advisory, never isolating.
-    advise(zpf.FileHeader(tick_hz=1, flags=zpf.FileFlags(0x0002)), match="reserved bits")
-    advise(HEADER, zpf.Session(session_id=5, flags=zpf.SessionFlags(0x0002)), match="reserved")
-    advise(*RAW_PRELUDE, raw_record(flags=zpf.RecordFlags(0x2000)), match="reserved bits")
-    # The finding names the offending bits, not the whole field.
-    advise(
-        *RAW_PRELUDE, raw_record(flags=zpf.RecordFlags(0x2000) | zpf.RecordFlags.PSH),
-        match=r"flags 0x2000 set reserved bits",
-    )
+def test_reserved_flag_bits_are_not_a_violation():
+    # The specification groups a nonzero reserved field with unknown block
+    # types and unknown option ids: part of the extension mechanism, "not a
+    # violation ... the normal, conformant path". Every flags field is
+    # therefore accepted in silence, and the bit survives uninterpreted.
+    accept(zpf.FileHeader(tick_hz=1, flags=zpf.FileFlags(0x0002)))
+    accept(HEADER, zpf.Session(session_id=5, flags=zpf.SessionFlags(0x0002)))
+    accept(*RAW_PRELUDE, raw_record(flags=zpf.RecordFlags(0x2000)))
+    accept(*RAW_PRELUDE, raw_record(flags=zpf.RecordFlags(0x2000) | zpf.RecordFlags.PSH))
 
 
 def test_a_block_with_reserved_bits_is_still_absorbed():
     # The cascade this prevents: a dropped File Header would make every later
     # block "first block must be a File Header", emptying the whole file, and
     # a dropped Session Descriptor would take its participants and records.
-    checker = advise(zpf.FileHeader(tick_hz=1, flags=zpf.FileFlags(0x0002)), match="reserved")
+    checker = accept(zpf.FileHeader(tick_hz=1, flags=zpf.FileFlags(0x0002)))
     checker.check([CAP, SESS, PART, raw_record()])  # the header counted; the file reads on
     assert checker.file_kind == "raw"
 
-    checker = advise(
-        HEADER, CAP, zpf.Session(session_id=5, flags=zpf.SessionFlags(0x0002)), match="reserved"
-    )
+    checker = accept(HEADER, CAP, zpf.Session(session_id=5, flags=zpf.SessionFlags(0x0002)))
     checker.check([PART, raw_record()])  # the session counted; its records belong to it
-
-
-def test_all_of_a_blocks_advisory_findings_are_reported_together():
-    # One block, one diagnostic — so it must name every rule it broke.
-    with pytest.raises(zpf.AdvisoryError, match="reserved bits.*payload_len 4") as caught:
-        accept(
-            *RAW_PRELUDE,
-            raw_record(
-                payload=b"abc", content_type="prim:u32", flags=zpf.RecordFlags(0x2000)
-            ),
-        )
-    assert str(caught.value).count("Record(session 5, sender 0)") == 2  # each is self-describing
 
 
 def test_prim_width_binds_payload_len():
@@ -368,20 +471,15 @@ def test_flat_writers_check_only_when_asked():
 
 def test_writers_still_refuse_an_advisory_violation():
     # The writer obligation is unchanged by the reader's leniency: a checking
-    # writer refuses a prim: label its payload cannot hold, and refuses to set
-    # a reserved flag bit the reader would only be able to ignore.
+    # writer refuses a prim: label its payload cannot hold. A reserved flag
+    # bit is *not* refused — it is conformant extension surface, not a
+    # violation the writer must be protected from.
     with zpf.BlockWriter(io.BytesIO(), check=True) as checked:
         for block in RAW_PRELUDE:
             checked.write(block)
         with pytest.raises(zpf.AdvisoryError, match="requires payload_len 4"):
             checked.write(raw_record(payload=b"abc", content_type="prim:u32"))
-        with pytest.raises(zpf.AdvisoryError, match="reserved bits"):
-            checked.write(raw_record(flags=zpf.RecordFlags(0x2000)))
-    with (
-        zpf.BlockWriter(io.BytesIO(), check=True) as checked,
-        pytest.raises(zpf.AdvisoryError, match="reserved bits"),
-    ):
-        checked.write(zpf.FileHeader(tick_hz=1, flags=zpf.FileFlags(0x0002)))
+        checked.write(raw_record(flags=zpf.RecordFlags(0x2000)))
     sink = io.BytesIO()
     with zpf.create(sink, tick_hz=1) as writer:  # the ergonomic writer always checks
         writer.add_source("capture")

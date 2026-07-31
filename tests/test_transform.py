@@ -4,14 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import io
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
 import zpf
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 KEY = "10.0.0.1:51000 <-> 93.184.216.34:80"
 
@@ -226,7 +223,7 @@ def test_hole_inclusive_extents(tmp_path: Path):
             spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
                             off_start=0, off_end=10),),
         )
-        w.undecoded(source, 7, 0, 10, 49, reason="tcp-gap")
+        w.undecoded(source, 7, 0, 10, 49, reason="gap")
         s.record(
             client, ts=2, payload=b"b", decoder=http,
             spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
@@ -234,3 +231,142 @@ def test_hole_inclusive_extents(tmp_path: Path):
         )
         w.undecoded(source, 7, 1, 0, 139, reason="undecodable")
     assert zpf.check_coverage(decoded, raw) == []
+
+
+# --- Two-hop provenance resolution -------------------------------------------
+
+CHAIN = Path(__file__).parent / "vectors/chain"
+
+
+def test_a_decode_stages_record_resolves_in_one_hop():
+    # It carries spans of its own: this file's stage built it.
+    (span,) = zpf.resolve_spans(CHAIN / "decoded.zpf", 7, 0, 0)
+    assert (span.off_start, span.off_end) == (0, 9)
+
+
+def test_a_pass_throughs_record_resolves_in_two_hops():
+    # annotated.zpf re-emits decoded.zpf's records unchanged, so they carry
+    # no spans. The walk takes the participant's origin into decoded.zpf,
+    # finds the record occupying the same offsets, and reads its spans —
+    # which name raw.zpf. This file alone cannot answer the question.
+    with zpf.open(CHAIN / "annotated.zpf") as f:
+        assert [r.spans for r in f.session(7).records()] == [(), ()]
+    (span,) = zpf.resolve_spans(CHAIN / "annotated.zpf", 7, 0, 0)
+    assert (span.session_id, span.participant_id) == (7, 0)
+    assert (span.off_start, span.off_end) == (0, 9)
+    (other,) = zpf.resolve_spans(CHAIN / "annotated.zpf", 7, 1, 0)
+    assert (other.off_start, other.off_end) == (0, 16)
+
+
+def test_a_raw_file_records_no_provenance_to_resolve():
+    assert zpf.resolve_spans(CHAIN / "raw.zpf", 7, 0, 0) == ()
+
+
+def test_resolving_a_stream_needs_an_explicit_opener():
+    with (
+        (CHAIN / "annotated.zpf").open("rb") as handle,
+        pytest.raises(zpf.ZpfError, match="open_input"),
+    ):
+        zpf.resolve_spans(handle, 7, 0, 0)
+
+
+def test_an_opener_may_redirect_where_inputs_are_found():
+    seen: list[str] = []
+
+    def opener(source: zpf.Source) -> Path:
+        seen.append(source.uri)
+        return CHAIN / source.uri
+
+    (span,) = zpf.resolve_spans(CHAIN / "annotated.zpf", 7, 0, 0, open_input=opener)
+    assert seen == ["decoded.zpf"]  # only the immediate input needs opening
+    assert (span.off_start, span.off_end) == (0, 9)
+
+
+# --- Filter / reorder stages (rewrite_decoded) -------------------------------
+
+
+def decoded_input(path: Path, payloads: tuple[bytes, ...] = (b"AAA", b"BB", b"CCCC")) -> None:
+    """Write a decode-stage file with one participant carrying ``payloads``."""
+    with zpf.create(path, tick_hz=1, produced_by="t", produced_at=1) as w:
+        source = w.add_source("zpf-input", uri="raw.zpf")
+        decoder = w.add_decoder("http/1.1", version="0.4")
+        with w.begin_session(session_id=7) as session:
+            sender = session.participant("client")
+            offset = 0
+            for index, body in enumerate(payloads):
+                session.record(
+                    sender, ts=index, payload=body, source=source, decoder=decoder,
+                    content_type="dec:request",
+                    spans=(zpf.Span(source_id=source.source_id, session_id=7,
+                                    participant_id=0, off_start=offset,
+                                    off_end=offset + len(body)),),
+                )
+                offset += len(body)
+
+
+def test_a_filter_stage_is_a_decode_stage_not_a_pass_through(tmp_path: Path):
+    # Dropping a record shifts every later offset in that participant's
+    # space, so the output cannot claim to have preserved it.
+    src, out = tmp_path / "decoded.zpf", tmp_path / "filtered.zpf"
+    decoded_input(src)
+    zpf.rewrite_decoded(src, out, keep=lambda r: r.payload != b"BB",
+                        produced_by="zpf-filter 1.0", produced_at=2)
+    with zpf.open(out) as f:
+        assert f.file_kind == "decode-stage"
+        assert f.diagnostics == []
+        session = f.session(7)
+        assert [r.payload for r in session.stream(0)] == [b"AAA", b"CCCC"]
+        # Every surviving record cites the input range it came from.
+        assert [[(s.off_start, s.off_end) for s in r.spans] for r in session.stream(0)] == [
+            [(0, 3)], [(5, 9)]
+        ]
+        # The dropped range is marked, not silently lost.
+        (marker,) = f.undecoded
+        assert (marker.off_start, marker.off_end, marker.reason) == (3, 5, "skipped")
+
+
+def test_the_coverage_guarantee_holds_over_a_filtered_stream(tmp_path: Path):
+    src, out = tmp_path / "decoded.zpf", tmp_path / "filtered.zpf"
+    decoded_input(src)
+    zpf.rewrite_decoded(src, out, keep=lambda r: False,  # drop everything
+                        produced_by="zpf-filter 1.0", produced_at=2)
+    assert zpf.check_coverage(out, src) == []
+
+
+def test_a_reordering_stages_spans_need_not_ascend(tmp_path: Path):
+    # Stored order defines the output's offsets, so reordering creates a new
+    # space; the cited input ranges then run backwards, which is expected.
+    src, out = tmp_path / "decoded.zpf", tmp_path / "reversed.zpf"
+    decoded_input(src)
+    zpf.rewrite_decoded(src, out, reorder=lambda rs: list(reversed(rs)),
+                        produced_by="zpf-reorder 1.0", produced_at=2)
+    with zpf.open(out) as f:
+        session = f.session(7)
+        assert list(session.ranges(0)) == [(0, 4), (4, 6), (6, 9)]  # recomputed
+        cited = [r.spans[0].off_start for r in session.stream(0)]
+        assert cited == [5, 3, 0]  # descending: not stored order
+    assert zpf.check_coverage(out, src) == []
+
+
+def test_a_rewrite_inherits_decoders_rather_than_declaring_its_own(tmp_path: Path):
+    # decoder_id names a layer, not a stage: a filtered HTTP message is
+    # still an HTTP message, so the descriptors are re-declared as they were.
+    src, out = tmp_path / "decoded.zpf", tmp_path / "filtered.zpf"
+    decoded_input(src)
+    zpf.rewrite_decoded(src, out, produced_by="zpf-filter 1.0", produced_at=2)
+    with zpf.open(src) as original, zpf.open(out) as f:
+        assert [d.name for d in f.decoders.values()] == [
+            d.name for d in original.decoders.values()
+        ]
+        assert [d.version for d in f.decoders.values()] == ["0.4"]
+        for record in f.session(7).stream(0):
+            assert record.decoder_id is not None
+            assert record.content_type == "dec:request"
+
+
+def test_a_rewrite_needs_an_input_with_a_decoded_layer(tmp_path: Path):
+    raw = tmp_path / "raw.zpf"
+    write_raw(raw)
+    with pytest.raises(zpf.ZpfError, match="decoded layer"):
+        zpf.rewrite_decoded(raw, tmp_path / "out.zpf",
+                            produced_by="zpf-filter 1.0", produced_at=2)

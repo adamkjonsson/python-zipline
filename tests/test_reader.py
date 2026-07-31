@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import io
 import json
+import pathlib
 from typing import TYPE_CHECKING
 
 import pytest
@@ -323,10 +324,8 @@ def reserved_flag_bits_file() -> bytes:
 
 
 def test_reserved_flag_bits_cost_the_reader_nothing():
-    # A reader has no meaning to attach to a reserved bit, so it ignores the
-    # bits and uses the block. Isolating instead would empty the file: without
-    # its header every later block is "first block must be a File Header", and
-    # without its Session Descriptor a session's records have nowhere to go.
+    # A reserved bit is extension surface, not a violation: the reader ignores
+    # it semantically, keeps it byte-faithfully, and says nothing about it.
     with open_bytes(reserved_flag_bits_file()) as f:
         assert f.header is not None
         assert f.file_kind == "raw"
@@ -338,14 +337,16 @@ def test_reserved_flag_bits_cost_the_reader_nothing():
         # The bits are kept as read, not scrubbed — the payload face is faithful.
         assert int(records[1].flags) == 0x2001
         assert zpf.RecordFlags.PSH in records[1].flags
-        # Reported, though: three blocks, three findings, and nothing else.
-        assert [d.category for d in f.diagnostics] == ["nonconformant"] * 3
-        assert all("reserved bits" in d.message for d in f.diagnostics)
+        assert f.diagnostics == []
 
 
-def test_strict_mode_still_raises_on_reserved_flag_bits():
-    with pytest.raises(zpf.AdvisoryError, match="File Header flags 0x0002"):
-        open_bytes(reserved_flag_bits_file(), strict=True)
+def test_strict_mode_still_accepts_reserved_flag_bits():
+    # Strictness escalates violations; a reserved bit is not one, so the
+    # strictest reader available must still read the file without complaint.
+    with open_bytes(reserved_flag_bits_file(), strict=True) as f:
+        assert f.diagnostics == []
+        (session,) = f.sessions()
+        assert [r.payload for r in session.records()] == [b"one", b"two"]
 
 
 def test_strict_mode_still_raises_on_an_unusable_prim_label():
@@ -365,6 +366,7 @@ def labelled_file() -> bytes:
         smtp = w.add_decoder("smtp")
         with w.begin_session(session_id=7) as s:
             sender = s.participant("client")
+            offset = 0
             for decoder, label, payload in (
                 (http, "prim:u32", (1234).to_bytes(4, "little")),
                 (http, "mime:application/json", b'{"ok": true}'),
@@ -374,8 +376,16 @@ def labelled_file() -> bytes:
                 (http, "dec:unregistered", b"?"),
                 (http, "x-private:thing", b"opaque"),
             ):
+                # A decode stage's records must cite the input ranges they
+                # were built from; spans are what make this file a decode
+                # stage rather than a pass-through.
+                span = zpf.Span(
+                    source_id=source.source_id, session_id=7, participant_id=0,
+                    off_start=offset, off_end=offset + len(payload),
+                )
+                offset += len(payload)
                 s.record(sender, ts=0, payload=payload, source=source,
-                         decoder=decoder, content_type=label)
+                         decoder=decoder, content_type=label, spans=(span,))
     return sink.getvalue()
 
 
@@ -536,3 +546,48 @@ def test_index_offsets_are_exact():
         got = [r.payload for r in tcp.records()] + [r.payload for r in udp.records()]
         assert got == [b"t1", b"t2", b"t3", b"u1", b"u2"]
         assert len(offsets) == 5
+
+
+# --- Decoded offset spaces ---------------------------------------------------
+
+VECTORS = pathlib.Path(__file__).parent / "vectors"
+
+
+def test_ranges_place_a_decoded_record_positionally():
+    # A Record block carries no offset field, so a decoded record's place in
+    # its own stream is implied by the concatenation of the preceding
+    # payloads. ranges() is the only way to recover it.
+    with zpf.open(VECTORS / "chain/decoded.zpf") as f:
+        session = f.session(7)
+        assert session.is_decoded_stream(0)
+        for pid in (0, 1):
+            records = list(session.stream(pid))
+            ranges = session.ranges(pid)
+            assert len(ranges) == len(records)
+            cursor = 0
+            for record, (start, end) in zip(records, ranges, strict=True):
+                assert (start, end) == (cursor, cursor + len(record.payload))
+                cursor = end
+
+
+def test_ranges_are_cached_across_session_views():
+    # SessionReader is rebuilt per call, so the table has to live on the
+    # index or the first pass would be paid again on every lookup.
+    with zpf.open(VECTORS / "chain/decoded.zpf") as f:
+        first = f.session(7).ranges(0)
+        assert f.session(7).ranges(0) is first
+
+
+def test_ranges_agree_with_a_naive_datagram_walk():
+    with zpf.open(VECTORS / "chain/decoded.zpf") as f:
+        session = f.session(7)
+        for view in session.reassemble():
+            pid = view.participant.participant_id
+            walked = [(d.off_start, d.off_end) for d in view.datagrams()]
+            assert list(session.ranges(pid)) == walked
+
+
+def test_a_raw_stream_is_not_a_decoded_one():
+    with zpf.open(VECTORS / "chain/raw.zpf") as f:
+        session = f.session(7)
+        assert not session.is_decoded_stream(0)

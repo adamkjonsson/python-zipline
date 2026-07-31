@@ -344,6 +344,7 @@ class FileWriter:
         proto: str | None = None,
         key: str | None = None,
         sequenced: bool = False,
+        sequenced_basis: str | None = None,
         comment: str | None = None,
         session_id: int | None = None,
     ) -> SessionWriter:
@@ -354,6 +355,13 @@ class FileWriter:
             key: Human-readable flow key.
             sequenced: Set the SEQUENCED flag — the caller asserts it will
                 emit this session's records in a valid causal order.
+            sequenced_basis: What that order rests on — ``"clock"``,
+                ``"protocol"``, ``"external"`` or ``"trivial"``. Required
+                when a sequenced session's records carry no ``seq``/``ack``,
+                since then the order rests on nothing the file records. Safe
+                to set here even though hint-lessness is not settled until
+                the records are written: a producer names what it is
+                *relying on*, which it knows the moment it sets the flag.
             comment: Free-text note.
             session_id: Explicit id (e.g. from a global monotonic
                 sequence); allocated automatically when omitted.
@@ -366,7 +374,14 @@ class FileWriter:
         chosen, self._next_session = _allocate(self._session_ids, session_id, self._next_session)
         flags = SessionFlags.SEQUENCED if sequenced else SessionFlags(0)
         self._emit(
-            Session(session_id=chosen, proto=proto, flow_key=key, flags=flags, comment=comment)
+            Session(
+                session_id=chosen,
+                proto=proto,
+                flow_key=key,
+                flags=flags,
+                sequenced_basis=sequenced_basis,
+                comment=comment,
+            )
         )
         self._session_ids.add(chosen)
         return SessionWriter(self._emit, self._default_source, chosen)
@@ -472,6 +487,7 @@ class FileWriter:
         off_end: int,
         *,
         reason: str | None = None,
+        reason_class: str | None = None,
         decoder: DecoderHandle | None = None,
         comment: str | None = None,
     ) -> None:
@@ -487,7 +503,11 @@ class FileWriter:
             pid: Participant (stream) inside that input.
             off_start: First logical offset of the region.
             off_end: One past the region's last offset.
-            reason: ``"undecodable"``, ``"tcp-gap"``, ``"truncated"``, …
+            reason: ``"undecodable"``, ``"skipped"``, ``"gap"``,
+                ``"truncated"``, or a more specific value of your own.
+            reason_class: ``"bytes"`` or ``"hole"``. Required with a reason
+                outside the canonical four — it is the one fact a consumer
+                must act on, and an open vocabulary would otherwise cost it.
             decoder: Which decoder declined the region.
             comment: Free-text note.
 
@@ -500,6 +520,7 @@ class FileWriter:
                 off_start=off_start,
                 off_end=off_end,
                 reason=reason,
+                reason_class=reason_class,
                 decoder_id=None if decoder is None else decoder.decoder_id,
                 comment=comment,
             )

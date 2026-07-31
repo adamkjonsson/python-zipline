@@ -120,7 +120,7 @@ never both, never neither (see
 `decode_stage` closes that loop: it marks every byte you left uncited as
 Undecoded, with a `reason`:
 
-- **`tcp-gap`** for a reassembly hole (a {class}`~zpf.Gap` — no bytes exist
+- **`gap`** for a reassembly hole (a {class}`~zpf.Gap` — no bytes exist
   anywhere upstream);
 - **`skipped`** for data the decoder simply passed over (the bytes *do* exist
   upstream, recoverable through the provenance chain).
@@ -258,6 +258,39 @@ from, provenance recurses: a consumer walking back from an HTTP record reaches
 the TLS-record stream, then the raw capture. Each stage is an ordinary
 `decode_stage` run; nothing special is needed to chain them.
 
+### Filtering or reordering a decoded file
+
+Keeping only some decoded records — or changing their order — is **not** a
+pass-through, however byte-preserving it looks. Stored order is what *defines* a
+decoded stream's offsets, so dropping or moving a record rewrites them, and the
+output cannot claim to have preserved what it just moved. Both are therefore
+decode stages, and {func}`zpf.rewrite_decoded` writes either:
+
+```python
+zpf.rewrite_decoded(
+    "decoded.zpf", "requests.zpf",
+    keep=lambda record: record.content_type == "dec:request",
+    produced_by="zpf-filter 1.0", produced_at=datetime.now(tz=UTC),
+)
+```
+
+It carries the obligations that follow: every survivor cites the input range it
+came from, every dropped range is marked `skipped` so the coverage guarantee
+still holds over the whole input, and the input's decoders are **inherited**
+rather than re-invented — `decoder_id` names a layer, not a stage, and a
+filtered HTTP message is still an HTTP message. The stage identifies itself
+through `produced_by`.
+
+Pass `reorder=` to rearrange a participant's surviving records. Expect the
+result to look wrong and not be: a reordering stage's `spans` will **not**
+ascend with stored order, because the output's own offsets are recomputed from
+the new order while the citations still point at where the bytes came from.
+Coverage depends on which ranges are covered, not the order they appear in.
+
+One gap is inherited from the format: such a transform has no `params_digest`
+to record its own configuration in, so the output states *what* it came from
+but not *how*. A merge has the same gap.
+
 ## See also
 
 - [Decoder tutorial](../tutorial-decoding.md) — the same ideas as a runnable,
@@ -272,4 +305,5 @@ the TLS-record stream, then the raw capture. Each stage is an ordinary
 - API reference: [`zpf.reassembly`](../../api/reassembly.md) (stream views),
   [`zpf.decode`](../../api/decode.md) (the orchestrator),
   [`zpf.content`](../../api/content.md) (labels and the registry), and
-  [`zpf.transform`](../../api/transform.md) ({func}`~zpf.check_coverage`).
+  [`zpf.transform`](../../api/transform.md) ({func}`~zpf.check_coverage`,
+  {func}`~zpf.rewrite_decoded`).

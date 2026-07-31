@@ -102,6 +102,36 @@ wrote, because this library always emits the format's canonical encoding. A
 does not pin down padding, option order, or how `spans` are chunked. Digests are
 defined over the binary form, so compute them there.
 
+### The four escapes
+
+The binary face has one rule for anything a reader does not recognise: skip it
+by its stated length, keep it, and do not error. The projection mirrors that
+rule exactly, so **every** unrecognised element has a defined syntactic form —
+never invented, never silently dropped:
+
+| Unrecognised | JSONL form |
+|---|---|
+| option id | an entry in the block's `options` array, under its real id |
+| block type | `{"type": "0x0042", "content": "<base64 of the whole content>"}` |
+| enum value | the raw number in place of the string label |
+| flag bit | a hex token, e.g. `"flags": ["psh", "0x0020"]` |
+
+A hex token is `0x` plus exactly four hex digits, which is unambiguous against
+every defined `type` string and flag token because those are all words. None of
+this is an error path — it is the normal behaviour that lets a file written
+against a later version survive a round-trip through an older converter. The
+unknown-block escape is the one case that is *byte*-exact rather than merely
+semantically lossless, precisely because a converter cannot take apart a layout
+it does not know.
+
+Preserving is not interpreting: a reserved flag bit round-trips as a hex token
+while still being ignored semantically, exactly as an unknown option id is
+retained but not acted on.
+
+Unknown **keys** on a known block are the one case with no escape, by design.
+There is no option id to write, and guessing one would manufacture data — so
+such a key is dropped with a diagnostic, or raises under `strict=True`.
+
 ## Dropping to the block layer
 
 {func}`zpf.open` and {class}`~zpf.FileWriter` are the session-first API: they do

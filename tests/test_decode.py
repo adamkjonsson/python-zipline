@@ -244,7 +244,7 @@ def test_decode_stage_undecoded_marks_a_gap(tmp_path: Path):
         for stream in dec.streams():
             for chunk in stream.chunks():
                 if isinstance(chunk, zpf.Gap):
-                    dec.undecoded(stream, chunk.off_start, chunk.off_end, reason="tcp-gap")
+                    dec.undecoded(stream, chunk.off_start, chunk.off_end, reason="gap")
                 else:
                     dec.record(
                         stream,
@@ -256,7 +256,7 @@ def test_decode_stage_undecoded_marks_a_gap(tmp_path: Path):
 
     with zpf.open(io.BytesIO(sink.getvalue())) as out:
         (undecoded,) = out.undecoded
-        assert undecoded.reason == "tcp-gap"
+        assert undecoded.reason == "gap"
         assert (undecoded.session_id, undecoded.participant_id) == (7, 0)
         assert (undecoded.off_start, undecoded.off_end) == (len(REQUEST), len(REQUEST) + 4)
 
@@ -307,7 +307,7 @@ def test_autofill_marks_uncited_data_as_skipped():
     assert zpf.check_coverage(io.BytesIO(sink.getvalue()), io.BytesIO(raw)) == []
 
 
-def test_autofill_marks_a_reassembly_gap_as_tcp_gap():
+def test_autofill_marks_a_reassembly_gap_as_gap():
     raw = raw_file(gap=True)
     sink = io.BytesIO()
     with zpf.decode_stage(
@@ -318,7 +318,7 @@ def test_autofill_marks_a_reassembly_gap_as_tcp_gap():
                 dec.record(stream, seg.data, ts=seg.ts, cites=(seg.off_start, seg.off_end))
 
     marks = undecoded_by_stream(sink.getvalue())
-    (gap_key,) = [k for k, u in marks.items() if u.reason == "tcp-gap"]
+    (gap_key,) = [k for k, u in marks.items() if u.reason == "gap"]
     assert gap_key == (7, 0, len(REQUEST), len(REQUEST) + 4)
     assert zpf.check_coverage(io.BytesIO(sink.getvalue()), io.BytesIO(raw)) == []
 
@@ -337,7 +337,7 @@ def test_autofill_splits_an_uncovered_range_around_a_gap():
         )
     assert [(u.off_start, u.off_end, u.reason) for u in client] == [
         (0, len(REQUEST), "skipped"),
-        (len(REQUEST), len(REQUEST) + 4, "tcp-gap"),
+        (len(REQUEST), len(REQUEST) + 4, "gap"),
         (len(REQUEST) + 4, len(REQUEST) + 4 + len(MORE), "skipped"),
     ]
     assert zpf.check_coverage(io.BytesIO(sink.getvalue()), io.BytesIO(raw)) == []
@@ -432,13 +432,22 @@ def test_cites_accepts_a_pair_a_span_and_a_sequence():
         dec.record(stream, b"a", ts=1, cites=(0, 4))
         dec.record(stream, b"b", ts=2, cites=stream.cite(4, 8))
         dec.record(stream, b"c", ts=3, cites=[(0, 4), stream.cite(8, 12)])
-        dec.record(stream, b"d", ts=4)  # no citation at all
     with zpf.open(io.BytesIO(sink.getvalue())) as out:
-        first, second, third, fourth = out.session(7).records()
+        first, second, third = out.session(7).records()
         assert [(s.off_start, s.off_end) for s in first.spans] == [(0, 4)]
         assert [(s.off_start, s.off_end) for s in second.spans] == [(4, 8)]
         assert [(s.off_start, s.off_end) for s in third.spans] == [(0, 4), (8, 12)]
-        assert fourth.spans == ()
+
+
+def test_a_decode_stage_record_must_cite_its_input():
+    # spans are what identify a record as built by *this* stage, and what
+    # the coverage guarantee is checked against. An uncited record claims to
+    # have been re-emitted unchanged, which a decode stage cannot mean.
+    sink = io.BytesIO()
+    with pytest.raises(zpf.SemanticError, match="exactly one kind"), stage_for(sink) as dec:
+        stream = dec.streams()[0]
+        dec.record(stream, b"a", ts=1, cites=(0, 4))
+        dec.record(stream, b"b", ts=2)  # no citation at all
 
 
 def test_cites_rejects_a_malformed_entry():

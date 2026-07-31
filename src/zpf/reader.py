@@ -58,7 +58,7 @@ from zpf.content import ContentRegistry, ContentType
 from zpf.errors import AdvisoryError, Diagnostic, SemanticError, StructuralError, ZpfError
 from zpf.jsonl import JsonlReader
 from zpf.order import causal_merge, verify_sequenced
-from zpf.reassembly import StreamView
+from zpf.reassembly import StreamView, is_decoded_stream, record_ranges
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -80,6 +80,10 @@ class _SessionIndex:
     end: SessionEnd | None = None
     locators: list[int | Record] = field(default_factory=list)
     by_pid: dict[int, list[int | Record]] = field(default_factory=dict)
+    # Per-participant offset ranges, built on first request and kept. The
+    # index outlives the SessionReaders handed out for it, so the cost of a
+    # first pass is paid once per file rather than once per view.
+    ranges: dict[int, tuple[tuple[int, int], ...]] = field(default_factory=dict)
 
 
 class SessionReader:
@@ -172,6 +176,58 @@ class SessionReader:
         self.participant(pid)  # raises KeyError for an unknown pid
         for locator in self._index.by_pid.get(pid, ()):
             yield self._resolve(locator)
+
+    def is_decoded_stream(self, pid: int) -> bool:
+        """Return whether a participant's stream is a decoded layer.
+
+        Args:
+            pid: The participant to ask about.
+
+        Returns:
+            True when its records carry a ``decoder_id``.
+
+        Raises:
+            KeyError: If the session has no such participant.
+
+        """
+        return is_decoded_stream(list(self.stream(pid)))
+
+    def ranges(self, pid: int) -> tuple[tuple[int, int], ...]:
+        """Return the offset range each of a participant's records occupies.
+
+        One ``(off_start, off_end)`` per record, positionally matching
+        :meth:`stream`, in that participant's own offset space — positional
+        for a decoded stream, hole-inclusive for a hinted transport one
+        (see :func:`zpf.reassembly.record_ranges`).
+
+        A **decoded** record carries no offset field, so this is the only
+        way to know where it sits: record *k* occupies
+        ``[Σ payload_len of the preceding records, + its own)``. Resolving
+        one record therefore costs O(k) on its face, which is why the whole
+        participant's table is built on the first call and kept — forward
+        reading pays nothing extra, and random access becomes O(1).
+
+        Args:
+            pid: The participant whose stream to measure.
+
+        Returns:
+            The ranges, in stored order.
+
+        Raises:
+            KeyError: If the session has no such participant.
+
+        Example:
+            >>> for record, (start, end) in zip(
+            ...     session.stream(0), session.ranges(0), strict=True
+            ... ):
+            ...     print(start, end, record.content_type)
+
+        """
+        cached = self._index.ranges.get(pid)
+        if cached is None:
+            cached = record_ranges(self.participant(pid), list(self.stream(pid)))
+            self._index.ranges[pid] = cached
+        return cached
 
     def reassemble(self) -> tuple[StreamView, ...]:
         """Return a reassembly view of each participant's stream.
@@ -368,7 +424,13 @@ class FileReader:
 
     @property
     def undecoded(self) -> tuple[Undecoded, ...]:
-        """The file's Undecoded markers (decode-stage files)."""
+        """The file's Undecoded markers.
+
+        A decode stage emits them for the input regions it did not decode; a
+        pass-through preserving a decoded layer re-emits its input's
+        unchanged, which is what carries the input's coverage guarantee
+        forward without the output carrying any ``spans`` of its own.
+        """
         return tuple(self._undecoded)
 
     def sessions(self) -> tuple[SessionReader, ...]:
@@ -492,9 +554,21 @@ class FileReader:
                 offset += _frame.FRAME_SIZE + len(block.to_bytes())
             if self._admit(block, position):
                 self._file_into_index(block, position)
+        # End-of-stream closes every still-open session, which is where the
+        # checks that only the whole stream can settle finally run.
+        self._finish_checks(offset)
         self.header = flat.header
         self.complete = flat.complete
         self.truncated = flat.truncated
+
+    def _finish_checks(self, offset: int) -> None:
+        """Run the checker's end-of-stream pass, isolating in lenient mode."""
+        try:
+            self._checker.finish()
+        except SemanticError as exc:
+            if self.strict:
+                raise
+            self.diagnostics.append(Diagnostic(offset, "nonconformant", str(exc)))
 
     def _admit(self, block: Block, offset: int) -> bool:
         """Run the semantic checker; in lenient mode isolate violations.

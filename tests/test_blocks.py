@@ -121,6 +121,29 @@ def test_zero_flags_options_are_omitted():
     assert _frame.OPT_SESSION_FLAGS not in _option_ids(zpf.Session(session_id=1))
 
 
+def test_sequenced_basis_round_trips():
+    session = zpf.Session(
+        session_id=1, flags=zpf.SessionFlags.SEQUENCED, sequenced_basis="trivial"
+    )
+    assert _frame.OPT_SEQUENCED_BASIS in _option_ids(session)
+    assert zpf.Session.from_content(session.to_bytes()).sequenced_basis == "trivial"
+    # Open vocabulary: an unrecognised basis means an unknown one, not an
+    # invalid one, so it survives unchanged.
+    exotic = zpf.Session(session_id=1, sequenced_basis="ask-the-operator")
+    assert zpf.Session.from_content(exotic.to_bytes()).sequenced_basis == "ask-the-operator"
+    assert "trivial" in zpf.SEQUENCED_BASES
+
+
+def test_reason_class_round_trips():
+    block = zpf.Undecoded(
+        source_id=1, session_id=7, participant_id=0, off_start=0, off_end=4,
+        reason="rtp-seq-gap", reason_class="hole",
+    )
+    reparsed = zpf.Undecoded.from_content(block.to_bytes())
+    assert (reparsed.reason, reparsed.reason_class) == ("rtp-seq-gap", "hole")
+    assert reparsed.recoverability == "hole"
+
+
 def _option_ids(block: zpf.Block) -> list[int]:
     body_size = 16 if isinstance(block, zpf.FileHeader) else 8
     region = block.to_bytes()[body_size:]
@@ -218,12 +241,15 @@ def test_reserved_record_flag_bits_survive_the_binary_face():
     assert reparsed.to_bytes() == record.to_bytes()
 
 
-def test_unknown_tcp_role_value_is_preserved_raw():
+def test_unknown_tcp_role_value_is_carried_as_a_number():
+    """The option is advisory: an undefined value means "unknown", not an error."""
     body = zpf.Participant(session_id=1, participant_id=0).to_bytes()
     content = body + _frame.encode_option(_frame.OPT_TCP_ROLE, b"\x09")
     reparsed = zpf.Participant.from_content(content)
-    assert reparsed.tcp_role is None
-    assert reparsed.extra_options == (zpf.RawOption(_frame.OPT_TCP_ROLE, b"\x09"),)
+    assert reparsed.tcp_role == 9
+    assert not isinstance(reparsed.tcp_role, zpf.TcpRole)
+    assert reparsed.extra_options == ()
+    assert reparsed.to_bytes() == content  # and it survives a round-trip
 
 
 def test_replace_drops_the_byte_cache():
@@ -243,7 +269,7 @@ def test_replace_drops_the_byte_cache():
         lambda: zpf.Session(session_id=2**64),
         lambda: zpf.Session(session_id=-1),
         lambda: zpf.Participant(session_id=1, participant_id=0, isn=2**32),
-        lambda: zpf.Participant(session_id=1, participant_id=0, tcp_role=9),
+        lambda: zpf.Participant(session_id=1, participant_id=0, tcp_role=2**8),
         lambda: zpf.Record(session_id=1, sender_pid=0, source_id=0, timestamp=2**63),
         lambda: zpf.Record(session_id=1, sender_pid=0, source_id=0, timestamp=0, ack=-1),
         lambda: zpf.Span(source_id=1, session_id=1, participant_id=0, off_start=5, off_end=4),

@@ -88,12 +88,28 @@ subject, from the reader's side.
 ## Going beyond the standard
 
 Per `CLAUDE.md`, support must stay complete *and* must not silently exceed the
-v0.9 spec: any behavior beyond the standard has to be flagged to the user with
+v0.12 spec: any behavior beyond the standard has to be flagged to the user with
 an explicit callout. As of this version nothing does — the checker's rules are
 the spec's, and the two out-of-band checks (sequenced order, coverage) are
 spec requirements enforced elsewhere, not extensions. A new rule that isn't in
-v0.9 does not belong in the `ConformanceChecker` — including a rule from 0.10,
-which this library does not implement.
+v0.12 does not belong in the `ConformanceChecker`.
+
+## Conformance vectors
+
+The specification ships 26 hand-built vectors, vendored verbatim into
+[`tests/vectors/`](https://github.com/adamkjonsson/python-zipline/tree/main/tests/vectors)
+and run by `tests/test_vectors.py` across the three tiers — `accept` (a
+conformant file, with its expected JSONL projection), `reject` (structural
+corruption), and `isolate` (a semantic violation the reader must not pass
+silently).
+
+Two habits keep them honest. The harness asserts what each negative vector is
+refused or diagnosed *for*, not merely that something was raised — at one point
+three `reject` vectors were passing because the version gate fired before the
+check each was testing. And a vector is never edited to make a test pass: they
+are subordinate to the normative text, so a vector that looks wrong is a
+question for the spec repository. Three are known-defective upstream and are
+marked as such in the harness.
 
 ## Where to go next
 
