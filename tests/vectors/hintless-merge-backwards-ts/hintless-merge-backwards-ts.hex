@@ -1,0 +1,97 @@
+# hintless-merge-backwards-ts
+#
+# Generated from the same description as the .zpf -- never edited
+# by hand, so the annotation cannot drift from the bytes.
+
+0000  01 00                    type   = 0x0001  File Header
+0002  00 00                    reserved
+0004  10 00 00 00              length = 16
+0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
+000C  00 00                    version_major = 0
+000E  0C 00                    version_minor = 12
+0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
+
+0018  02 00                    type   = 0x0002  Source Descriptor
+001A  00 00                    reserved
+001C  14 00 00 00              length = 20
+0020  01 00                    source_id = 1
+0022  00                       kind = 0  (capture)
+0023  00                       _reserved
+0024  20 00 09 00              option 0x0020 uri, len = 9
+0028  63 68 61 74 2E 70 63 61  "chat.pcap"
+0030  70
+0031  00 00 00                 value padding
+
+0034  10 00                    type   = 0x0010  Session Descriptor
+0036  00 00                    reserved
+0038  10 00 00 00              length = 16
+003C  08 00 00 00 00 00 00 00  session_id = 8  (u64)
+0044  50 00 03 00              option 0x0050 proto, len = 3
+0048  69 72 63                 "irc"
+004B  00                       value padding
+
+004C  11 00                    type   = 0x0011  Participant Descriptor
+004E  00 00                    reserved
+0050  18 00 00 00              length = 24
+0054  08 00 00 00 00 00 00 00  session_id = 8  (u64)
+005C  00 00                    participant_id = 0
+005E  00 00                    _reserved
+0060  60 00 05 00              option 0x0060 endpoint, len = 5
+0064  61 6C 69 63 65           "alice"
+0069  00 00 00                 value padding
+
+006C  11 00                    type   = 0x0011  Participant Descriptor
+006E  00 00                    reserved
+0070  14 00 00 00              length = 20
+0074  08 00 00 00 00 00 00 00  session_id = 8  (u64)
+007C  01 00                    participant_id = 1
+007E  00 00                    _reserved
+0080  60 00 03 00              option 0x0060 endpoint, len = 3
+0084  62 6F 62                 "bob"
+0087  00                       value padding
+
+0088  20 00                    type   = 0x0020  Record
+008A  00 00                    reserved
+008C  20 00 00 00              length = 32
+0090  08 00 00 00 00 00 00 00  session_id = 8  (u64)
+0098  00 00                    sender_pid = 0
+009A  01 00                    source_id  = 1
+009C  D0 07 00 00 00 00 00 00  timestamp  = 2000
+00A4  00 00                    _reserved  (u16 = 0)
+00A6  00 00                    flags      = 0x0000
+00A8  02 00 00 00              payload_len = 2
+00AC  61 31                    "a1"
+00AE  00 00                    payload padding
+
+00B0  20 00                    type   = 0x0020  Record
+00B2  00 00                    reserved
+00B4  20 00 00 00              length = 32
+00B8  08 00 00 00 00 00 00 00  session_id = 8  (u64)
+00C0  01 00                    sender_pid = 1
+00C2  01 00                    source_id  = 1
+00C4  6C 07 00 00 00 00 00 00  timestamp  = 1900
+00CC  00 00                    _reserved  (u16 = 0)
+00CE  00 00                    flags      = 0x0000
+00D0  02 00 00 00              payload_len = 2
+00D4  62 31                    "b1"
+00D6  00 00                    payload padding
+
+00D8  20 00                    type   = 0x0020  Record
+00DA  00 00                    reserved
+00DC  20 00 00 00              length = 32
+00E0  08 00 00 00 00 00 00 00  session_id = 8  (u64)
+00E8  00 00                    sender_pid = 0
+00EA  01 00                    source_id  = 1
+00EC  34 08 00 00 00 00 00 00  timestamp  = 2100
+00F4  00 00                    _reserved  (u16 = 0)
+00F6  00 00                    flags      = 0x0000
+00F8  02 00 00 00              payload_len = 2
+00FC  61 32                    "a2"
+00FE  00 00                    payload padding
+
+0100  41 00                    type   = 0x0041  End of file
+0102  00 00                    reserved
+0104  04 00 00 00              length = 4
+0108  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
+
+010C                           (end of file, 268 bytes)

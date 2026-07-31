@@ -1,0 +1,250 @@
+{
+  "format": "zipline-payload/0.12",
+  "vectors": [
+    {
+      "name": "raw-minimal",
+      "tier": "accept",
+      "bytes": 196,
+      "summary": "The minimal conformant raw file: one TCP session, one participant, one record. Byte-for-byte the worked example in the specification.",
+      "spec_section": "Worked example: a minimal raw file",
+      "expect": "Accept. The .jsonl file is the expected projection.",
+      "has_jsonl": true
+    },
+    {
+      "name": "decoded-basic",
+      "tier": "accept",
+      "bytes": 496,
+      "summary": "A decode stage's output: decoded records citing spans in the input, plus an Undecoded block covering the tail the decoder could not parse.",
+      "spec_section": "A decoded file, end to end",
+      "expect": "Accept. The .jsonl file is the expected projection.",
+      "has_jsonl": true
+    },
+    {
+      "name": "passthrough-transport",
+      "tier": "accept",
+      "bytes": 280,
+      "summary": "A pass-through preserving a transport layer: byte-run records with no decoder_id, provenance carried by origin on each participant.",
+      "spec_section": "Conformance -- pass-through transform",
+      "expect": "Accept. The .jsonl file is the expected projection.",
+      "has_jsonl": true
+    },
+    {
+      "name": "escape-unknown-block",
+      "tier": "accept",
+      "bytes": 100,
+      "summary": "A block of an undefined type. A reader MUST skip it by length and carry on; a converter projects it as a hex type plus its whole content in base64.",
+      "spec_section": "Unrecognised data: the four escapes",
+      "expect": "Accept. The .jsonl file is the expected projection.",
+      "has_jsonl": true
+    },
+    {
+      "name": "escape-unknown-option",
+      "tier": "accept",
+      "bytes": 172,
+      "summary": "A record carrying an unregistered option id. A reader MUST skip it by len and retain it; a converter projects it into the generic options array.",
+      "spec_section": "Unrecognised data: the four escapes",
+      "expect": "Accept. The .jsonl file is the expected projection.",
+      "has_jsonl": true
+    },
+    {
+      "name": "escape-unknown-enum",
+      "tier": "accept",
+      "bytes": 132,
+      "summary": "A participant whose tcp_role holds an undefined value. tcp_role is advisory, so this is not a violation: it renders as the raw number.",
+      "spec_section": "Unrecognised enum values",
+      "expect": "Accept. The .jsonl file is the expected projection.",
+      "has_jsonl": true
+    },
+    {
+      "name": "escape-reserved-flag-bit",
+      "tier": "accept",
+      "bytes": 164,
+      "summary": "A record with a reserved flags bit set. A reader MUST ignore it semantically but preserve it; a converter renders it as a hex token.",
+      "spec_section": "Unrecognised data: the four escapes",
+      "expect": "Accept. The .jsonl file is the expected projection.",
+      "has_jsonl": true
+    },
+    {
+      "name": "annotator-decoded",
+      "tier": "accept",
+      "bytes": 556,
+      "summary": "A pass-through preserving a DECODED layer -- the 0.10 construct 0.9 could not express. Records keep decoder_id and carry no spans; the Undecoded block is inherited, so the grandparent source is declared too.",
+      "spec_section": "Annotating a decoded file",
+      "expect": "Accept. The .jsonl file is the expected projection.",
+      "has_jsonl": true
+    },
+    {
+      "name": "undecoded-skipped",
+      "tier": "accept",
+      "bytes": 328,
+      "summary": "A decode stage that deliberately declines a region -- a byte-order mark -- and says so with reason = skipped rather than claiming a parse failure.",
+      "spec_section": "Undecoded (0x21)",
+      "expect": "Accept. The .jsonl file is the expected projection.",
+      "has_jsonl": true
+    },
+    {
+      "name": "undecoded-reason-class",
+      "tier": "accept",
+      "bytes": 232,
+      "summary": "A non-canonical reason, which MUST carry reason_class so a consumer can still tell whether the bytes exist upstream.",
+      "spec_section": "Undecoded (0x21)",
+      "expect": "Accept. The .jsonl file is the expected projection.",
+      "has_jsonl": true
+    },
+    {
+      "name": "sequenced-basis",
+      "tier": "accept",
+      "bytes": 248,
+      "summary": "A hint-less UDP session marked SEQUENCED. Because it carries no seq/ack, sequenced_basis is mandatory and states what the order rests on.",
+      "spec_section": "Sequenced files (precomputed order)",
+      "expect": "Accept. The .jsonl file is the expected projection.",
+      "has_jsonl": true
+    },
+    {
+      "name": "reordered-decoded",
+      "tier": "accept",
+      "bytes": 544,
+      "summary": "A stage that reorders a participant's decoded records without decoding them. It is a decode stage -- stored order defines the offsets, so reordering changes them -- and its spans run DOWNWARD against stored order. A reader that assumes spans ascend fails here.",
+      "spec_section": "Layers -- filtering and reordering a decoded stream",
+      "expect": "Accept. The .jsonl file is the expected projection.",
+      "has_jsonl": true
+    },
+    {
+      "name": "hintless-merge-backwards-ts",
+      "tier": "accept",
+      "bytes": 268,
+      "summary": "A hint-less session with no seq/ack, whose timestamps run backwards ACROSS participants. Every record is concurrent, so the whole order is the merge's timestamp tie-break -- but each participant's own records keep their stored order. A reader that rejects on the inversion, or that re-sorts one participant's records, fails.",
+      "spec_section": "Merge algorithm -- stability",
+      "expect": "Accept. The .jsonl file is the expected projection.",
+      "has_jsonl": true
+    },
+    {
+      "name": "merge-timestamp-tie",
+      "tier": "accept",
+      "bytes": 240,
+      "summary": "Two concurrent records from DIFFERENT participants bearing the SAME timestamp. Before 0.12 this was a genuine tie the format did not resolve, so two conformant readers could order the file differently. The merge now breaks it by ascending participant_id, so pid 0's record precedes pid 1's.",
+      "spec_section": "Merge algorithm -- step 4",
+      "expect": "Accept. The .jsonl file is the expected projection.",
+      "has_jsonl": true
+    },
+    {
+      "name": "partially-hinted-sequenced",
+      "tier": "accept",
+      "bytes": 316,
+      "summary": "A SEQUENCED session where ONE record carries seq_start and the rest carry no hints at all. Under 0.12's definition a single hint anywhere means the session is not hint-less, so no sequenced_basis is required -- even though most of the order rests on timestamps. This vector pins that answer.",
+      "spec_section": "Merge algorithm -- hint-less",
+      "expect": "Accept. The .jsonl file is the expected projection.",
+      "has_jsonl": true
+    },
+    {
+      "name": "isolate-sequenced-no-basis",
+      "tier": "isolate",
+      "bytes": 168,
+      "summary": "A hint-less session marked SEQUENCED with no sequenced_basis. Recording the basis is unconditional -- the trivially-sound cases write `trivial` rather than omitting it -- so this file is semantically invalid.",
+      "spec_section": "Sequenced files (precomputed order)",
+      "expect": "MAY reject the file, or isolate the session. Note WHEN: no record carries seq_start or ack, so the session is hint-less -- but a reader cannot know that until Session End or end-of-stream, since hint-lessness is a property of the records and the Session Descriptor precedes them. A checker that raises this at the descriptor is guessing; one that never raises it has not deferred the check.",
+      "has_jsonl": false
+    },
+    {
+      "name": "reject-bad-magic",
+      "tier": "reject",
+      "bytes": 48,
+      "summary": "The File Header magic is the byte-swapped pattern 5A 49 50 46, which marks a byte-swapped file. The container is little-endian by definition.",
+      "spec_section": "Conformance -- structural corruption",
+      "expect": "Reject the file. A reader SHOULD report that the magic looks byte-swapped, which is a more useful diagnostic than 'not a zpf'.",
+      "has_jsonl": false
+    },
+    {
+      "name": "reject-unknown-major",
+      "tier": "reject",
+      "bytes": 48,
+      "summary": "version_major is 1, which this document does not define. A reader MUST reject a major it does not implement.",
+      "spec_section": "File Header -- version numbering",
+      "expect": "Reject the file.",
+      "has_jsonl": false
+    },
+    {
+      "name": "reject-unknown-minor",
+      "tier": "reject",
+      "bytes": 48,
+      "summary": "version_minor is 13 while major is 0. In the 0.x regime the pair (0, minor) is the compatibility identity, so a 0.12 reader MUST reject it.",
+      "spec_section": "File Header -- version numbering",
+      "expect": "Reject the file. This is the vector that distinguishes a 0.x-aware reader from one that assumes minors are always skippable.",
+      "has_jsonl": false
+    },
+    {
+      "name": "reject-length-misaligned",
+      "tier": "reject",
+      "bytes": 38,
+      "summary": "A block length that is not a multiple of 4, which breaks the alignment invariant the whole container rests on.",
+      "spec_section": "Conformance -- structural corruption",
+      "expect": "Reject the file.",
+      "has_jsonl": false
+    },
+    {
+      "name": "reject-payload-len-overrun",
+      "tier": "reject",
+      "bytes": 152,
+      "summary": "A record whose payload_len runs past the end of its own block.",
+      "spec_section": "Conformance -- structural corruption",
+      "expect": "Reject the file. payload_len exceeds the bytes the block's own length makes available.",
+      "has_jsonl": false
+    },
+    {
+      "name": "isolate-undeclared-session",
+      "tier": "isolate",
+      "bytes": 204,
+      "summary": "A record referencing a session_id that was never declared. Well-framed, so the byte stream is trustworthy: this is a semantic violation.",
+      "spec_section": "Conformance -- semantic violations",
+      "expect": "MAY reject the file, or isolate the offending record or session. MUST NOT silently drop it without a diagnostic, and MUST NOT invent the missing declaration. A reader that discards only the second record and keeps the first is behaving correctly.",
+      "has_jsonl": false
+    },
+    {
+      "name": "isolate-duplicate-id",
+      "tier": "isolate",
+      "bytes": 116,
+      "summary": "A source_id declared twice.",
+      "spec_section": "Conformance -- semantic violations",
+      "expect": "MAY reject the file, or isolate. MUST NOT silently pick one.",
+      "has_jsonl": false
+    },
+    {
+      "name": "isolate-coverage-gap",
+      "tier": "isolate",
+      "bytes": 304,
+      "summary": "A decode stage whose output leaves part of the input stream neither covered by a decoded record's spans nor marked Undecoded.",
+      "spec_section": "Coverage honesty: Undecoded blocks",
+      "expect": "MAY reject the file, or isolate the session. The range [10,20) of input stream (session 7, pid 0) is covered by neither a record's spans nor an Undecoded block, so the coverage guarantee fails.",
+      "has_jsonl": false
+    },
+    {
+      "name": "isolate-unknown-source-kind",
+      "tier": "isolate",
+      "bytes": 164,
+      "summary": "A Source whose kind is undefined. Unlike tcp_role this is load-bearing: kind decides how a span's offsets are read, so anything referencing this Source is uninterpretable.",
+      "spec_section": "Unrecognised enum values",
+      "expect": "MAY reject the file, or discard the Source together with everything referencing it. MUST NOT guess a kind. Note this is the enum case that is NOT a free extension point.",
+      "has_jsonl": false
+    },
+    {
+      "name": "chain",
+      "tier": "accept",
+      "bytes": 1648,
+      "summary": "A three-file provenance chain whose digests and offsets genuinely agree: raw.zpf -> decoded.zpf -> annotated.zpf. The only fixture where the recovery walk, two-hop resolution and digest verification can be exercised.",
+      "spec_section": "Layers; Coverage honesty; Annotating a decoded file",
+      "expect": "Accept all three. Each .jsonl is the expected projection. Each declared digest is the real SHA-256 of the sibling file it names, so a reader can verify the chain.",
+      "has_jsonl": true,
+      "files": [
+        "annotated.hex",
+        "annotated.jsonl",
+        "annotated.zpf",
+        "decoded.hex",
+        "decoded.jsonl",
+        "decoded.zpf",
+        "raw.hex",
+        "raw.jsonl",
+        "raw.zpf"
+      ]
+    }
+  ]
+}

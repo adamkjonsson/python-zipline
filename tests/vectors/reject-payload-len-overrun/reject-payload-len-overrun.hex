@@ -1,0 +1,56 @@
+# reject-payload-len-overrun
+#
+# Generated from the same description as the .zpf -- never edited
+# by hand, so the annotation cannot drift from the bytes.
+
+0000  01 00                    type   = 0x0001  File Header
+0002  00 00                    reserved
+0004  10 00 00 00              length = 16
+0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
+000C  00 00                    version_major = 0
+000E  0C 00                    version_minor = 12
+0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
+
+0018  02 00                    type   = 0x0002  Source Descriptor
+001A  00 00                    reserved
+001C  10 00 00 00              length = 16
+0020  01 00                    source_id = 1
+0022  00                       kind = 0  (capture)
+0023  00                       _reserved
+0024  20 00 06 00              option 0x0020 uri, len = 6
+0028  63 2E 70 63 61 70        "c.pcap"
+002E  00 00                    value padding
+
+0030  10 00                    type   = 0x0010  Session Descriptor
+0032  00 00                    reserved
+0034  10 00 00 00              length = 16
+0038  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+0040  50 00 03 00              option 0x0050 proto, len = 3
+0044  74 63 70                 "tcp"
+0047  00                       value padding
+
+0048  11 00                    type   = 0x0011  Participant Descriptor
+004A  00 00                    reserved
+004C  20 00 00 00              length = 32
+0050  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+0058  00 00                    participant_id = 0
+005A  00 00                    _reserved
+005C  60 00 0E 00              option 0x0060 endpoint, len = 14
+0060  31 30 2E 30 2E 30 2E 31  "10.0.0.1:51000"
+0068  3A 35 31 30 30 30
+006E  00 00                    value padding
+
+0070  20 00                    type   = 0x0020  Record
+0072  00 00                    reserved
+0074  20 00 00 00              length = 32
+0078  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+0080  00 00                    sender_pid = 0
+0082  01 00                    source_id  = 1
+0084  E8 03 00 00 00 00 00 00  timestamp  = 1000
+008C  00 00                    _reserved  (u16 = 0)
+008E  00 00                    flags      = 0x0000
+0090  0F 27 00 00              payload_len = 9999
+0094  68 69                    "hi"
+0096  00 00                    payload padding
+
+0098                           (end of file, 152 bytes)

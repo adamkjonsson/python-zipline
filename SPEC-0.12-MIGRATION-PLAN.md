@@ -106,15 +106,41 @@ Two vectors deserve specific mention:
 
 Ordered by dependency. Each phase should land green before the next starts.
 
-### Phase 0 — Vector harness *(no `src/` changes)*
+### Phase 0 — Vector harness *(no `src/` changes)* — **DONE**
 
-Vendor `vectors/` from `v0.12` into `tests/vectors/`, add a loader driven by
-`manifest.json`, and parametrise three test functions over the tiers. Record the
-baseline pass count — it will be near zero for `accept` (we reject the `0`/`12`
-stamp), and the `reject` tier may pass *for the wrong reason*, so the harness
-must assert on the failure mode, not merely that an exception occurred.
+Vendored `vectors/` from `v0.12` into `tests/vectors/` (26 directories, 76
+files, provenance in `tests/vectors/VENDORED.md`), with a manifest-driven
+harness in `tests/test_vectors.py` parametrised over the three tiers. Multi-file
+vectors expand to one case per `.zpf`, so `chain` yields three: **28 cases** in
+total.
 
-*Verification:* harness runs, baseline recorded, no `src/` change.
+**Baseline: 1 of 28 passing.** The suite stays green throughout the migration
+via a ratchet — a case is a hard requirement only once its name is in
+`KNOWN_PASSING`; everything else is `xfail(strict=False)`, so newly-working
+vectors surface as `XPASS` and are then promoted. `KNOWN_PASSING` only grows.
+
+Three findings, all of which justified the phase:
+
+- **Four vectors appeared to pass; only one did.** `reject-length-misaligned`,
+  `reject-payload-len-overrun` and `reject-unknown-minor` were all being refused
+  with *"unsupported version_major 0"* — the version gate firing long before the
+  check each vector actually exercises. The harness now asserts what each
+  `reject` vector is refused **for** (`_REJECT_REASONS`), which demoted them to
+  honest failures. Only `reject-bad-magic` passes for its own reason.
+- **`reject-unknown-major` is a 0.9 file** — it stamps `version_major = 1`,
+  `version_minor = 0`. Our reader accepts it, correctly, because that is our
+  version. It is [D1](#d1--drop-09-support-entirely--decided-yes) made concrete:
+  the files this library writes today are precisely what 0.12 requires a reader
+  to reject, and after Phase 1 this vector passes because we have stopped being
+  a 0.9 reader.
+- **The upstream vectors README contradicts the spec on the `isolate` tier** —
+  its tier table says a reader MAY reject *or* isolate (matching the spec's
+  semantic-violation tier), but its prose says rejecting is "as wrong as"
+  accepting silently. Our harness follows the specification and accepts either,
+  asserting only that the violation is not passed **silently**. Worth reporting
+  upstream.
+
+*Verification:* `429 passed, 27 xfailed`; `ruff check` clean; no `src/` change.
 
 ### Phase 1 — Version and header
 

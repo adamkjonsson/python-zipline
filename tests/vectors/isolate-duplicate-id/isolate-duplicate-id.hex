@@ -1,0 +1,49 @@
+# isolate-duplicate-id
+#
+# Generated from the same description as the .zpf -- never edited
+# by hand, so the annotation cannot drift from the bytes.
+
+0000  01 00                    type   = 0x0001  File Header
+0002  00 00                    reserved
+0004  10 00 00 00              length = 16
+0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
+000C  00 00                    version_major = 0
+000E  0C 00                    version_minor = 12
+0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
+
+0018  02 00                    type   = 0x0002  Source Descriptor
+001A  00 00                    reserved
+001C  14 00 00 00              length = 20
+0020  01 00                    source_id = 1
+0022  00                       kind = 0  (capture)
+0023  00                       _reserved
+0024  20 00 0A 00              option 0x0020 uri, len = 10
+0028  66 69 72 73 74 2E 70 63  "first.pcap"
+0030  61 70
+0032  00 00                    value padding
+
+0034  02 00                    type   = 0x0002  Source Descriptor
+0036  00 00                    reserved
+0038  14 00 00 00              length = 20
+003C  01 00                    source_id = 1
+003E  00                       kind = 0  (capture)
+003F  00                       _reserved
+0040  20 00 0B 00              option 0x0020 uri, len = 11
+0044  73 65 63 6F 6E 64 2E 70  "second.pcap"
+004C  63 61 70
+004F  00                       value padding
+
+0050  10 00                    type   = 0x0010  Session Descriptor
+0052  00 00                    reserved
+0054  10 00 00 00              length = 16
+0058  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+0060  50 00 03 00              option 0x0050 proto, len = 3
+0064  74 63 70                 "tcp"
+0067  00                       value padding
+
+0068  41 00                    type   = 0x0041  End of file
+006A  00 00                    reserved
+006C  04 00 00 00              length = 4
+0070  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
+
+0074                           (end of file, 116 bytes)

@@ -1,0 +1,64 @@
+# isolate-sequenced-no-basis
+#
+# Generated from the same description as the .zpf -- never edited
+# by hand, so the annotation cannot drift from the bytes.
+
+0000  01 00                    type   = 0x0001  File Header
+0002  00 00                    reserved
+0004  10 00 00 00              length = 16
+0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
+000C  00 00                    version_major = 0
+000E  0C 00                    version_minor = 12
+0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
+
+0018  02 00                    type   = 0x0002  Source Descriptor
+001A  00 00                    reserved
+001C  14 00 00 00              length = 20
+0020  01 00                    source_id = 1
+0022  00                       kind = 0  (capture)
+0023  00                       _reserved
+0024  20 00 09 00              option 0x0020 uri, len = 9
+0028  63 68 61 74 2E 70 63 61  "chat.pcap"
+0030  70
+0031  00 00 00                 value padding
+
+0034  10 00                    type   = 0x0010  Session Descriptor
+0036  00 00                    reserved
+0038  18 00 00 00              length = 24
+003C  08 00 00 00 00 00 00 00  session_id = 8  (u64)
+0044  50 00 03 00              option 0x0050 proto, len = 3
+0048  69 72 63                 "irc"
+004B  00                       value padding
+004C  52 00 02 00              option 0x0052 flags, len = 2  (0x0001)
+0050  01 00
+0052  00 00                    value padding
+
+0054  11 00                    type   = 0x0011  Participant Descriptor
+0056  00 00                    reserved
+0058  18 00 00 00              length = 24
+005C  08 00 00 00 00 00 00 00  session_id = 8  (u64)
+0064  00 00                    participant_id = 0
+0066  00 00                    _reserved
+0068  60 00 05 00              option 0x0060 endpoint, len = 5
+006C  61 6C 69 63 65           "alice"
+0071  00 00 00                 value padding
+
+0074  20 00                    type   = 0x0020  Record
+0076  00 00                    reserved
+0078  20 00 00 00              length = 32
+007C  08 00 00 00 00 00 00 00  session_id = 8  (u64)
+0084  00 00                    sender_pid = 0
+0086  01 00                    source_id  = 1
+0088  D0 07 00 00 00 00 00 00  timestamp  = 2000
+0090  00 00                    _reserved  (u16 = 0)
+0092  00 00                    flags      = 0x0000
+0094  02 00 00 00              payload_len = 2
+0098  68 69                    "hi"
+009A  00 00                    payload padding
+
+009C  41 00                    type   = 0x0041  End of file
+009E  00 00                    reserved
+00A0  04 00 00 00              length = 4
+00A4  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
+
+00A8                           (end of file, 168 bytes)
