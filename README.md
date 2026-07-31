@@ -9,12 +9,21 @@ sessions, plus the metadata needed to consume them. This library implements
 of the format, specified in the
 [zipline repository](https://github.com/adamkjonsson/zipline).
 
-> **The format is in `0.x`, and every minor is a separate format.** A reader
+> ⚠️ **Not ready for production — neither the format nor this library.**
+>
+> The specification is at `0.12` and says so itself: it is *a design in
+> progress*, `1.0` is reserved for a version that has survived implementation,
+> and any minor release may change anything, including in ways that break
+> existing readers. Several already have. This library is pre-1.0 in its own
+> right and tracks that moving target, so treat both as subject to change.
+>
+> The concrete consequence: **every `0.x` minor is a separate format.** A reader
 > must reject a `version_minor` it does not implement, and no upgrade path
-> between `0.x` versions is guaranteed. `zpf` therefore implements exactly one
-> version — `zpf.SPEC_VERSION` tells you which — and a file written against an
-> earlier one is rejected at the version gate rather than misread. Regenerate
-> such a file from its capture rather than transcoding it.
+> between them is guaranteed — so `zpf` implements exactly one version
+> (`zpf.SPEC_VERSION` tells you which) and rejects a file written against any
+> other rather than misreading it. **Do not treat `.zpf` files as durable
+> storage yet**: keep the captures they were derived from, and regenerate
+> rather than transcode when the format moves.
 
 The package is named `zpf` (not `zipline`) because the `zipline` name on PyPI
 belongs to an unrelated project.
