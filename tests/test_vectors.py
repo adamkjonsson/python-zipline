@@ -33,21 +33,35 @@ VECTORS = Path(__file__).parent / "vectors"
 #: Vector cases that MUST pass. Grow it as phases land; never remove a name,
 #: because that is the regression guard.
 #:
-#: Phase 1: the whole ``reject`` tier, plus the ``isolate`` cases whose
-#: violation the indexing pass already detects. The remaining two need work
-#: this library has not done yet — ``isolate-coverage-gap`` the coverage
-#: check (Phase 5), ``isolate-sequenced-no-basis`` the ``sequenced_basis``
-#: option (Phase 3) and hint-less detection (Phase 4).
+#: Phase 2: the whole ``reject`` tier, three of five ``isolate``, and every
+#: ``accept`` case that does not need a later phase. Still outstanding —
+#: ``annotator-decoded`` and ``chain/annotated`` need the decoded-layer
+#: pass-through (Phase 5); ``sequenced-basis`` and
+#: ``isolate-sequenced-no-basis`` need the ``sequenced_basis`` option
+#: (Phase 3); three more are blocked upstream, see :data:`DEFECTIVE`.
 KNOWN_PASSING: frozenset[str] = frozenset(
     {
+        "chain/decoded",
+        "chain/raw",
+        "decoded-basic",
+        "escape-reserved-flag-bit",
+        "escape-unknown-block",
+        "escape-unknown-enum",
+        "escape-unknown-option",
+        "hintless-merge-backwards-ts",
         "isolate-duplicate-id",
         "isolate-undeclared-session",
         "isolate-unknown-source-kind",
+        "merge-timestamp-tie",
+        "partially-hinted-sequenced",
+        "passthrough-transport",
+        "raw-minimal",
         "reject-bad-magic",
         "reject-length-misaligned",
         "reject-payload-len-overrun",
         "reject-unknown-major",
         "reject-unknown-minor",
+        "reordered-decoded",
     }
 )
 

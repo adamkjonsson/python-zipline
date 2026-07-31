@@ -62,9 +62,11 @@ if TYPE_CHECKING:
 
     from zpf.blocks import Span
 
-_RECORD_RESERVED_FLAGS = 0xFF20
-_FILE_RESERVED_FLAGS = 0xFFFE  # everything above SINGLE_CLOCK
-_SESSION_RESERVED_FLAGS = 0xFFFE  # everything above SEQUENCED
+# Reserved flag bits are deliberately *not* checked. The specification puts a
+# nonzero reserved field alongside an unknown block type and an unknown option
+# id as part of the extension mechanism — "not a violation ... the normal,
+# conformant path" — and requires the bit to survive a round-trip without
+# being interpreted. Diagnosing one would report conformant data as suspect.
 
 _RAW = "raw"
 _DECODE = "decode-stage"
@@ -176,7 +178,6 @@ class ConformanceChecker:
         if self._header is not None:
             msg = "second File Header; a file has exactly one, as its first block"
             raise SemanticError(msg)
-        self._note_reserved_flags(int(block.flags), _FILE_RESERVED_FLAGS, "File Header")
         self._header = block
 
     def _on_source(self, block: Source) -> None:
@@ -195,7 +196,6 @@ class ConformanceChecker:
         if block.session_id in self._live or block.session_id in self._ended:
             msg = f"session id {block.session_id} declared twice"
             raise SemanticError(msg)
-        self._note_reserved_flags(int(block.flags), _SESSION_RESERVED_FLAGS, _describe(block))
         self._live[block.session_id] = _SessionState()
 
     def _on_participant(self, block: Participant) -> None:
@@ -237,7 +237,6 @@ class ConformanceChecker:
             raise SemanticError(msg)
         # Isolating checks before any state mutation or kind-locking, so a
         # raised violation leaves the checker consistent (block isolation).
-        self._note_reserved_flags(int(block.flags), _RECORD_RESERVED_FLAGS, described)
         self._note(_prim_finding(block, described))
         self._check_record_order(block, state, described)
         self._classify_record(block, described)
@@ -316,21 +315,6 @@ class ConformanceChecker:
         """Record an advisory finding for the block being observed."""
         if finding is not None:
             self._advisory.append(finding)
-
-    def _note_reserved_flags(self, flags: int, reserved: int, described: str) -> None:
-        """Note reserved flag bits, which a reader ignores rather than isolates.
-
-        Every flags field works the same way: the format reserves the bits it
-        does not define and requires a writer to leave them 0, but it gives
-        them no meaning a reader could act on — so the only reading available
-        to a reader is to ignore them and use the block. Isolating it would
-        discard well-framed data over flags the reader was never going to
-        consult, and for a File Header or a Session Descriptor it would take
-        everything that depends on that block down with it.
-        """
-        unknown = flags & reserved
-        if unknown:
-            self._note(f"{described} flags 0x{unknown:04X} set reserved bits (must be 0)")
 
     def _require_live_session(self, session_id: int, described: str) -> _SessionState:
         state = self._live.get(session_id)

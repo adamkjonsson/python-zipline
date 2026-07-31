@@ -20,6 +20,7 @@ Round-trip guarantees:
 
 from __future__ import annotations
 
+import contextlib
 import struct
 from dataclasses import dataclass, field
 from enum import IntEnum, IntFlag
@@ -255,8 +256,24 @@ def _pack_i64(value: int) -> bytes:
     return _frame.I64.pack(int(value))
 
 
-def _unpack_tcp_role(value: bytes) -> TcpRole:
-    return TcpRole(_unpack_u8(value))
+def _unpack_tcp_role(value: bytes) -> TcpRole | int:
+    """Read a ``tcp_role``, keeping a value the enum does not define.
+
+    The option is advisory, so an unrecognised value means "unknown" — a
+    reader carries it and moves on rather than treating it as an error.
+
+    Args:
+        value: The option's raw bytes.
+
+    Returns:
+        The enum member, or the raw number when none is defined.
+
+    """
+    raw = _unpack_u8(value)
+    try:
+        return TcpRole(raw)
+    except ValueError:
+        return raw
 
 
 def _unpack_file_flags(value: bytes) -> FileFlags:
@@ -733,7 +750,9 @@ class Participant(Block):
         isn: The SYN's TCP sequence number; must be present when the
             handshake was observed (fixes the stream's absolute origin).
         identity: Stable identity distinct from a transient endpoint.
-        tcp_role: Which side opened the connection, when known.
+        tcp_role: Which side opened the connection, when known. Advisory, so
+            a value the enum does not define is carried as a plain ``int``
+            and means "unknown" rather than being an error.
         origin: Input stream mapping (pass-through files only).
         comment: Free-text note.
         extra_options: Preserved unrecognized/duplicate option occurrences.
@@ -747,7 +766,7 @@ class Participant(Block):
     endpoints: tuple[str, ...] = ()
     isn: int | None = None
     identity: str | None = None
-    tcp_role: TcpRole | None = None
+    tcp_role: TcpRole | int | None = None
     origin: Origin | None = None
     comment: str | None = None
     extra_options: tuple[RawOption, ...] = ()
@@ -766,11 +785,11 @@ class Participant(Block):
         _check_uint(self.participant_id, 16, "participant_id")
         _check_uint_opt(self.isn, 32, "isn")
         if self.tcp_role is not None:
-            try:
-                object.__setattr__(self, "tcp_role", TcpRole(self.tcp_role))
-            except ValueError as exc:
-                msg = f"invalid tcp_role: {self.tcp_role!r}"
-                raise EncodeError(msg) from exc
+            _check_uint(int(self.tcp_role), 8, "tcp_role")
+            if not isinstance(self.tcp_role, TcpRole):
+                # Advisory: an undefined value is carried as-is, not rejected.
+                with contextlib.suppress(ValueError):
+                    object.__setattr__(self, "tcp_role", TcpRole(self.tcp_role))
         object.__setattr__(self, "endpoints", tuple(self.endpoints))
         object.__setattr__(self, "extra_options", tuple(self.extra_options))
 

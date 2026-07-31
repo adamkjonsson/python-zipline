@@ -181,24 +181,44 @@ Two things worth recording:
 *Verification:* `439 passed, 20 xfailed`; `ruff check` clean; docs build clean
 under `-W`. Test updates landed with the change, per the phase rule.
 
-### Phase 2 — JSONL projection
+### Phase 2 — JSONL projection — **DONE**
 
-The broad mechanical sweep, and the one that fixes live data loss.
+- `time_units` → **`tick_hz`**, carrying the binary field's number. The
+  `_HZ_TO_TIME_UNIT` label mapping is gone; writing `"us"` was non-conformant
+  against 0.9 too.
+- `endpoint` always an array. Written as one unconditionally; a scalar is still
+  *accepted* on read, since tolerating it costs nothing and the point of the
+  rule is that a reader never has to branch.
+- **The four escapes**, now complete: unknown block type as
+  `{"type":"0x0042","content":…}` (replacing our invented
+  `{"type":"unknown","block_type":…}` line), unknown enum value as its raw
+  number, unknown flag bit as a per-bit hex token. Unknown option ids already
+  worked. Hex tokens are parsed and spelled in one place (`_hex_token` /
+  `_parse_hex_token`), so the block-type and flag-bit escapes cannot drift apart.
 
-- `time_units` → **`tick_hz`**, carrying a number. Delete the
-  `_HZ_TO_TIME_UNIT` label mapping — writing `"us"` was non-conformant against
-  0.9 too.
-- `endpoint` always an array, including single occurrences.
-- **The four escapes:** unknown block type as `{"type":"0x0042","content":…}`
-  (replacing our `{"type":"unknown","block_type":…}`); unknown enum value as its
-  raw number (we currently *raise* on unknown `kind`/`tcp_role`); unknown flag
-  bit as a hex token (we currently *drop* it). Unknown option ids already
-  round-trip correctly.
+**Vectors: 21 of 28**, up from 8 — the whole `accept` tier except the two
+needing Phase 5 and the two blocked upstream.
 
-*Files:* [jsonl.py](src/zpf/jsonl.py) — 146-176, 311, 361-364, 388-390, 462-470,
-492, 517, 573, 606.
-*Unlocks:* all four `escape-*` vectors, `raw-minimal`, `passthrough-transport`.
-*Note:* our handling of unknown JSON keys (drop + report) is already conformant.
+Two fixes turned out to sit **outside** `jsonl.py`, which is worth recording
+because the phase looked purely cosmetic on paper:
+
+- **`tcp_role` rejected values the enum did not define**, so the binary parser
+  dropped the option into `extra_options` and the projection lost it. The option
+  is advisory — an unrecognised value means "unknown" — so it is now carried as
+  a plain `int` and round-trips, mirroring how `Source.kind` already worked.
+- **Reserved `flags` bits were being diagnosed as nonconformant.** 0.12 groups a
+  nonzero reserved field with unknown block types and unknown option ids as part
+  of the *extension mechanism* — explicitly "not a violation" — and requires the
+  bit to survive uninterpreted. The check is removed at all three call sites,
+  which also leaves `AdvisoryError` with exactly one remaining case (`prim:`
+  width), so its docstring was corrected.
+
+The escapes were indeed live data loss rather than a projection mismatch: the
+converter had been dropping unnamed flag bits and refusing unknown enum values
+outright.
+
+*Verification:* `453 passed, 7 xfailed`; `ruff check` clean; docs build clean
+under `-W`.
 
 ### Phase 3 — Vocabulary and new options
 

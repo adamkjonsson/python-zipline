@@ -218,12 +218,15 @@ def test_reserved_record_flag_bits_survive_the_binary_face():
     assert reparsed.to_bytes() == record.to_bytes()
 
 
-def test_unknown_tcp_role_value_is_preserved_raw():
+def test_unknown_tcp_role_value_is_carried_as_a_number():
+    """The option is advisory: an undefined value means "unknown", not an error."""
     body = zpf.Participant(session_id=1, participant_id=0).to_bytes()
     content = body + _frame.encode_option(_frame.OPT_TCP_ROLE, b"\x09")
     reparsed = zpf.Participant.from_content(content)
-    assert reparsed.tcp_role is None
-    assert reparsed.extra_options == (zpf.RawOption(_frame.OPT_TCP_ROLE, b"\x09"),)
+    assert reparsed.tcp_role == 9
+    assert not isinstance(reparsed.tcp_role, zpf.TcpRole)
+    assert reparsed.extra_options == ()
+    assert reparsed.to_bytes() == content  # and it survives a round-trip
 
 
 def test_replace_drops_the_byte_cache():
@@ -243,7 +246,7 @@ def test_replace_drops_the_byte_cache():
         lambda: zpf.Session(session_id=2**64),
         lambda: zpf.Session(session_id=-1),
         lambda: zpf.Participant(session_id=1, participant_id=0, isn=2**32),
-        lambda: zpf.Participant(session_id=1, participant_id=0, tcp_role=9),
+        lambda: zpf.Participant(session_id=1, participant_id=0, tcp_role=2**8),
         lambda: zpf.Record(session_id=1, sender_pid=0, source_id=0, timestamp=2**63),
         lambda: zpf.Record(session_id=1, sender_pid=0, source_id=0, timestamp=0, ack=-1),
         lambda: zpf.Span(source_id=1, session_id=1, participant_id=0, off_start=5, off_end=4),

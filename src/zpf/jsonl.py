@@ -10,20 +10,24 @@ faces. :class:`JsonlReader` and :class:`JsonlWriter` mirror
 :class:`~zpf.binary.BlockReader` / :class:`~zpf.binary.BlockWriter`, and
 :func:`binary_to_jsonl` / :func:`jsonl_to_binary` convert whole files.
 
-Deviations chosen where the specification is silent, all reported through
-the lenient/strict issue machinery:
+Anything the converter does not recognise has a defined syntactic escape, so
+it is never invented and never silently dropped — the projection mirrors the
+binary face's skip-what-you-don't-know rule:
 
-* An unknown *binary* block type projects as the documented extension line
-  ``{"type": "unknown", "block_type": 119, "content": "<base64>"}`` and is
-  accepted back — the converter stays total and lossless.
-* An unknown JSONL key on a known block, and a Record ``flags`` bit with no
-  JSON token, cannot be represented on the other face: by default they are
-  dropped with a diagnostic; under ``strict=True`` they raise.
-* A Source ``kind`` byte outside capture/zpf-input is written as a plain
-  number and accepted back.
-* A participant with exactly one ``endpoint`` is written as a plain string,
-  matching the specification's examples; a list is written for tunnelled
-  (multi-endpoint) participants, and both forms are accepted on read.
+* an unregistered **option id** becomes an entry in the block's ``options``
+  array, keyed by its real id;
+* an unrecognised **block type** becomes ``{"type": "0x0042", "content":
+  "<base64 of the whole content>"}``, which round-trips byte-exactly;
+* an **enum value** with no defined label becomes the raw number;
+* a **flag bit** with no token becomes a hex token, e.g.
+  ``"flags": ["psh", "0x0020"]``.
+
+A hex token is ``0x`` followed by exactly four hex digits, unambiguous against
+every defined ``type`` string and flag token because those are all words.
+
+An unknown JSONL *key* on a known block is the one case with no escape, by
+design: there is no option id to write, and guessing one would manufacture
+data. It is dropped with a diagnostic, or raises under ``strict=True``.
 """
 
 from __future__ import annotations
@@ -73,9 +77,6 @@ if TYPE_CHECKING:
 
 _FORMAT_PREFIX = "zipline-payload/"
 _SAFE_INT = 2**53  # beyond this, 64-bit values are written as decimal strings
-
-_TIME_UNIT_TO_HZ = {"s": 1, "ms": 10**3, "us": 10**6, "ns": 10**9}
-_HZ_TO_TIME_UNIT = {hz: unit for unit, hz in _TIME_UNIT_TO_HZ.items()}
 
 _RECORD_FLAG_TOKENS: tuple[tuple[str, RecordFlags], ...] = (
     ("psh", RecordFlags.PSH),
@@ -167,14 +168,32 @@ def _parse_format(value: Any) -> tuple[int, int]:
         raise ValueError(msg) from exc
 
 
-def _time_units(tick_hz: int) -> int | str:
-    return _HZ_TO_TIME_UNIT.get(tick_hz) or _num64(tick_hz)
+_HEX_TOKEN_DIGITS = 4
 
 
-def _parse_time_units(value: Any) -> int:
-    if isinstance(value, str) and value in _TIME_UNIT_TO_HZ:
-        return _TIME_UNIT_TO_HZ[value]
-    return _dec_int(value, "time_units")
+def _hex_token(value: int) -> str:
+    """Spell a number as the escape's hex token, as in the option registry."""
+    return f"0x{value:0{_HEX_TOKEN_DIGITS}X}"
+
+
+def _parse_hex_token(text: str) -> int | None:
+    """Read a hex token, or return ``None`` if this is not one.
+
+    Args:
+        text: A ``type`` string or flag token from a JSONL line.
+
+    Returns:
+        The number it spells, or ``None`` if it is a word rather than a
+        hex token.
+
+    """
+    body = text[2:]
+    if not text.startswith("0x") or len(body) != _HEX_TOKEN_DIGITS:
+        return None
+    try:
+        return int(body, 16)
+    except ValueError:
+        return None
 
 
 # --- Option-list ("options") codec -------------------------------------------
@@ -309,7 +328,7 @@ def _put(obj: dict[str, Any], key: str, value: Any) -> None:
 def _enc_file(block: FileHeader, on_issue: Callable[[str], None]) -> dict[str, Any]:
     del on_issue
     obj: dict[str, Any] = {"type": "file", "format": _format_string(block)}
-    obj["time_units"] = _time_units(block.tick_hz)
+    obj["tick_hz"] = _num64(block.tick_hz)
     _put(obj, "time_epoch", None if block.time_epoch is None else _num64(block.time_epoch))
     _put(obj, "creator", block.creator)
     _put(obj, "produced_by", block.produced_by)
@@ -359,14 +378,18 @@ def _enc_participant(block: Participant, on_issue: Callable[[str], None]) -> dic
         "session_id": _num64(block.session_id),
         "pid": block.participant_id,
     }
-    if len(block.endpoints) == 1:
-        obj["endpoint"] = block.endpoints[0]  # scalar form, as in the spec's examples
-    elif block.endpoints:
+    if block.endpoints:
+        # Always an array, even for one occurrence, so a reader never has to
+        # branch on the JSON type of the key.
         obj["endpoint"] = list(block.endpoints)
     _put(obj, "isn", block.isn)
     _put(obj, "identity", block.identity)
-    if block.tcp_role in _TCP_ROLE_LABELS:  # UNKNOWN and absent both omit, per spec
+    if block.tcp_role in _TCP_ROLE_LABELS:
         obj["tcp_role"] = _TCP_ROLE_LABELS[block.tcp_role]
+    elif block.tcp_role is not None and block.tcp_role != TcpRole.UNKNOWN:
+        # No defined label: the escape is the raw number. UNKNOWN and absent
+        # both project as an omitted key, per the enum table.
+        obj["tcp_role"] = int(block.tcp_role)
     if block.origin is not None:
         obj["origin"] = _origin_to_json(block.origin)
     _put(obj, "comment", block.comment)
@@ -382,13 +405,27 @@ def _enc_session_end(block: SessionEnd, on_issue: Callable[[str], None]) -> dict
 
 
 def _record_flag_tokens(flags: RecordFlags, on_issue: Callable[[str], None]) -> list[str]:
+    """Render set bits as tokens, escaping any bit that has no name.
+
+    A reserved bit is preserved rather than interpreted: it round-trips as a
+    hex token so a bit that gains a name in a later version survives passing
+    through this converter.
+
+    Args:
+        flags: The record's flag bitfield.
+        on_issue: Unused; kept so every encoder has one signature.
+
+    Returns:
+        One token per set bit, named bits first, in registry order.
+
+    """
+    del on_issue
     tokens = [token for token, flag in _RECORD_FLAG_TOKENS if flags & flag]
     known = RecordFlags(0)
     for _token, flag in _RECORD_FLAG_TOKENS:
         known |= flag
-    unknown = int(flags) & ~int(known)
-    if unknown:
-        on_issue(f"record flags bits 0x{unknown:04X} have no JSON token and were dropped")
+    unnamed = int(flags) & ~int(known)
+    tokens.extend(_hex_token(1 << bit) for bit in range(16) if unnamed & (1 << bit))
     return tokens
 
 
@@ -461,12 +498,23 @@ def _enc_custom(block: Custom, on_issue: Callable[[str], None]) -> dict[str, Any
 
 
 def _enc_unknown(block: UnknownBlock, on_issue: Callable[[str], None]) -> dict[str, Any]:
+    """Escape a block whose type has no name.
+
+    The converter cannot split a layout it does not know into body and
+    options, so it does not try: ``content`` is the whole content field and
+    the line carries no other key. That makes this the one escape that is
+    byte-exact rather than merely semantically lossless.
+
+    Args:
+        block: The unrecognised block.
+        on_issue: Unused; kept so every encoder has one signature.
+
+    Returns:
+        The escaped line.
+
+    """
     del on_issue
-    return {
-        "type": "unknown",
-        "block_type": block.block_type,
-        "content": _b64e(block.content),
-    }
+    return {"type": _hex_token(block.block_type), "content": _b64e(block.content)}
 
 
 _ENCODERS: dict[type[Block], Callable[[Any, Callable[[str], None]], dict[str, Any]]] = {
@@ -490,7 +538,7 @@ _ENCODERS: dict[type[Block], Callable[[Any, Callable[[str], None]], dict[str, An
 
 def _dec_file(reader: _ObjReader) -> FileHeader:
     version_major, version_minor = _parse_format(reader.require("format"))
-    tick_hz = _parse_time_units(reader.require("time_units"))
+    tick_hz = reader.require_int("tick_hz")
     flags = FileFlags.SINGLE_CLOCK if _take_flag(reader, "single_clock") else FileFlags(0)
     return FileHeader(
         tick_hz=tick_hz,
@@ -566,13 +614,17 @@ def _dec_participant(reader: _ObjReader) -> Participant:
         msg = f"endpoint must be a string or array, got {raw_endpoint!r}"
         raise ValueError(msg)
     raw_role = reader.take("tcp_role")
+    tcp_role: TcpRole | int | None
     if raw_role is None:
         tcp_role = None
-    elif raw_role in _LABEL_TO_TCP_ROLE:
+    elif isinstance(raw_role, str):
+        if raw_role not in _LABEL_TO_TCP_ROLE:
+            msg = f"unknown tcp_role {raw_role!r}"
+            raise ValueError(msg)
         tcp_role = _LABEL_TO_TCP_ROLE[raw_role]
     else:
-        msg = f"unknown tcp_role {raw_role!r}"
-        raise ValueError(msg)
+        # The escape for an enum value with no label is the raw number.
+        tcp_role = _dec_int(raw_role, "tcp_role")
     raw_origin = reader.take("origin")
     return Participant(
         session_id=reader.require_int("session_id"),
@@ -603,10 +655,14 @@ def _dec_record_flags(value: Any, on_issue: Callable[[str], None]) -> RecordFlag
     flags = RecordFlags(0)
     for token in value:
         flag = _TOKEN_TO_RECORD_FLAG.get(token)
-        if flag is None:
+        if flag is not None:
+            flags |= flag
+            continue
+        bit = _parse_hex_token(token) if isinstance(token, str) else None
+        if bit is None:
             on_issue(f"unknown record flag token {token!r} was dropped")
         else:
-            flags |= flag
+            flags |= RecordFlags(bit)
     return flags
 
 
@@ -671,9 +727,9 @@ def _dec_custom(reader: _ObjReader) -> Custom:
     )
 
 
-def _dec_unknown(reader: _ObjReader) -> UnknownBlock:
+def _dec_unknown(reader: _ObjReader, block_type: int) -> UnknownBlock:
     return UnknownBlock(
-        block_type=reader.require_int("block_type"),
+        block_type=block_type,
         content=_b64d(reader.require("content"), "content"),
     )
 
@@ -689,7 +745,6 @@ _DECODERS: dict[str, Callable[[_ObjReader], Block]] = {
     "name": _dec_name,
     "end": _dec_end,
     "custom": _dec_custom,
-    "unknown": _dec_unknown,
 }
 
 
@@ -746,9 +801,13 @@ def obj_to_block(obj: Mapping[str, Any], *, on_issue: Callable[[str], None] | No
     else:
         decoder = _DECODERS.get(type_string)
         if decoder is None:
-            msg = f"unknown block type string {type_string!r}"
-            raise ValueError(msg)
-        block = decoder(reader)
+            block_type = _parse_hex_token(type_string)
+            if block_type is None:
+                msg = f"unknown block type string {type_string!r}"
+                raise ValueError(msg)
+            block = _dec_unknown(reader, block_type)
+        else:
+            block = decoder(reader)
     reader.finish(handler)
     return block
 

@@ -323,10 +323,8 @@ def reserved_flag_bits_file() -> bytes:
 
 
 def test_reserved_flag_bits_cost_the_reader_nothing():
-    # A reader has no meaning to attach to a reserved bit, so it ignores the
-    # bits and uses the block. Isolating instead would empty the file: without
-    # its header every later block is "first block must be a File Header", and
-    # without its Session Descriptor a session's records have nowhere to go.
+    # A reserved bit is extension surface, not a violation: the reader ignores
+    # it semantically, keeps it byte-faithfully, and says nothing about it.
     with open_bytes(reserved_flag_bits_file()) as f:
         assert f.header is not None
         assert f.file_kind == "raw"
@@ -338,14 +336,16 @@ def test_reserved_flag_bits_cost_the_reader_nothing():
         # The bits are kept as read, not scrubbed — the payload face is faithful.
         assert int(records[1].flags) == 0x2001
         assert zpf.RecordFlags.PSH in records[1].flags
-        # Reported, though: three blocks, three findings, and nothing else.
-        assert [d.category for d in f.diagnostics] == ["nonconformant"] * 3
-        assert all("reserved bits" in d.message for d in f.diagnostics)
+        assert f.diagnostics == []
 
 
-def test_strict_mode_still_raises_on_reserved_flag_bits():
-    with pytest.raises(zpf.AdvisoryError, match="File Header flags 0x0002"):
-        open_bytes(reserved_flag_bits_file(), strict=True)
+def test_strict_mode_still_accepts_reserved_flag_bits():
+    # Strictness escalates violations; a reserved bit is not one, so the
+    # strictest reader available must still read the file without complaint.
+    with open_bytes(reserved_flag_bits_file(), strict=True) as f:
+        assert f.diagnostics == []
+        (session,) = f.sessions()
+        assert [r.payload for r in session.records()] == [b"one", b"two"]
 
 
 def test_strict_mode_still_raises_on_an_unusable_prim_label():
