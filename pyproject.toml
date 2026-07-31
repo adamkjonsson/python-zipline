@@ -12,7 +12,9 @@ requires-python = ">=3.11"
 authors = [{ name = "Adam Jonsson", email = "akj426@gmail.com" }]
 dynamic = ["version"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    # The format itself is 0.x and explicitly not production-ready, so the
+    # package page should not promise more than the README does.
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
