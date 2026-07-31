@@ -72,6 +72,22 @@ recoverable:
 - `gap` / `truncated` — the range is a **hole** with no bytes anywhere
   upstream.
 
+The **class**, not the word, is what a consumer acts on — whether the bytes are
+fetchable at all. The vocabulary is open so a producer can be more specific
+about *how* a region came to be undecoded, and `reason_class` (`"bytes"` or
+`"hole"`) is what stops that freedom costing the consumer its one actionable
+fact. It is **required** with any reason outside the canonical four:
+
+```python
+writer.undecoded(source, 7, 0, 100, 139,
+                 reason="rtp-seq-gap", reason_class="hole")
+```
+
+{attr}`Undecoded.recoverability <zpf.Undecoded.recoverability>` resolves the two
+into that single fact, and returns `None` when a writer left it genuinely
+unknowable. Do not guess there — least of all `"hole"`, which would silently
+discard bytes that may well exist.
+
 {func}`zpf.check_coverage` verifies the guarantee, returning the violations
 (empty when it holds). The [validate how-to](../howto/validate.md#reading-the-diagnostics)
 lists the `coverage-gap` / `coverage-overlap` / `coverage-excess` categories and
@@ -92,6 +108,47 @@ bytes are not in the decoded file, but the chain says exactly where they are. A
 missing intermediate file is the only thing that stops recovery, and the digest
 mismatch tells you which one.
 
+{func}`zpf.resolve_spans` walks it for you. The walk is one hop or two,
+depending on whether the file's own stage built the record:
+
+```python
+# A decode stage's record carries spans of its own: one hop.
+spans = zpf.resolve_spans("decoded.zpf", session_id=7, pid=0, index=0)
+
+# A pass-through's record carries none, so the walk goes through the
+# participant's origin into the input and reads the spans it finds there.
+spans = zpf.resolve_spans("annotated.zpf", session_id=7, pid=0, index=0)
+```
+
+The second case is the asymmetry worth knowing about: **an annotated file alone
+cannot say which raw bytes a record came from.** Its records carry no `spans` —
+that is exactly what marks them as re-emitted rather than built — so the answer
+lives one file further down. Chained pass-throughs recurse. Inputs are resolved
+beside the file by default; pass `open_input` when they live elsewhere.
+
+## Each layer has its own offset space
+
+One subtlety catches people resolving a *decoded* stream. A **transport**
+stream's offsets are true positions, so a hole counts as if its bytes were
+present. A **decoded** stream is a different object: its space is the
+concatenation of that participant's record payloads in stored order, and
+Undecoded regions name ranges in the *input's* space, so they contribute
+nothing. It is not hole-inclusive.
+
+A decoded record therefore carries no offset field at all — its place is
+implied by the records before it. {meth}`SessionReader.ranges
+<zpf.reader.SessionReader.ranges>` recovers it, one range per record, matching
+{meth}`~zpf.reader.SessionReader.stream` positionally:
+
+```python
+for record, (start, end) in zip(session.stream(0), session.ranges(0), strict=True):
+    print(start, end, record.content_type)
+```
+
+Resolving a single record costs O(k) on its face, so the whole participant's
+table is built on first use and kept — forward reading pays nothing, and random
+access is O(1) after.
+
 ## See also
 
 - [Concepts: provenance](../concepts.md#provenance-spans-coverage-origins) — the
@@ -100,5 +157,6 @@ mismatch tells you which one.
   coverage diagnostics.
 - [Decoding](decoding.md) — authoring spans and letting coverage auto-fill.
 - API reference: [`zpf.transform`](../../api/transform.md)
-  ({func}`~zpf.check_coverage`, {func}`~zpf.merge_files`) and the
+  ({func}`~zpf.check_coverage`, {func}`~zpf.resolve_spans`,
+  {func}`~zpf.merge_files`) and the
   {class}`~zpf.Span` / {class}`~zpf.Undecoded` / {class}`~zpf.Origin` blocks.

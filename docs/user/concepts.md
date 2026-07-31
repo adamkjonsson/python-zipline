@@ -125,10 +125,17 @@ still verify the stored order ({meth}`~zpf.reader.SessionReader.verify`,
 or `zpf validate --verify` on the command line).
 
 A session with no seq/ack hints (chat, one-way UDP) has no causal edges, so
-its sequenced order rests purely on timestamps — which is only sound under
-one trustworthy clock. That is the link to `SINGLE_CLOCK` above: a producer
-must not mark a hint-less session `SEQUENCED` without it (or an equivalent
-per-session clock guarantee).
+its sequenced order rests on something the file does not otherwise record.
+A producer must not mark such a session `SEQUENCED` without a sound basis,
+and must name that basis in **`sequenced_basis`** — `clock` (the
+`SINGLE_CLOCK` case), `protocol`, `external`, or `trivial` when there was
+never a cross-participant order to get wrong. See the
+[ordering guide](guides/ordering.md#what-a-hint-less-sequenced-session-rests-on).
+
+Timestamps themselves are **not** an ordering invariant: stored stamps may
+run backwards in any session, and a reader must not reject a file or
+re-sort a sequenced session because they do. They order records in exactly
+one place — the tie-break between concurrent records during a merge.
 
 ## File kinds: raw, decode stage, pass-through
 
@@ -138,33 +145,50 @@ reference:
 ```
 tap.pcap ──[ sessionizer ]──▶ raw.zpf ──[ http decoder ]──▶ decoded.zpf
                                                              (decode stage)
-sideA.zpf ─┐
-           ├─[ merge ]──▶ merged.zpf
-sideB.zpf ─┘              (pass-through)
+sideA.zpf ─┐                              decoded.zpf
+           ├─[ merge ]──▶ merged.zpf          │
+sideB.zpf ─┘              (pass-through)      ├─[ annotate ]──▶ annotated.zpf
+                                              │                 (pass-through,
+                                              │                  decoded layer)
+                                              └─[ filter ]────▶ requests.zpf
+                                                                (decode stage)
 ```
 
 - A **raw** file is capture-sourced: its records are *byte runs* — chunks of
   the reassembled stream, with boundaries wherever reassembly happened to
   produce them — referencing a *capture* source (a pcap file, an
   interface).
-- A **decode stage** is derived from another `.zpf` by a decoder. Its
-  records are *decoder-imposed units* (an HTTP message, a TLS record) whose
-  boundaries follow application semantics, not transport chunking.
-  {func}`zpf.decode_stage <zpf.decode.decode_stage>` writes one end to end:
-  it consumes the input through reassembly views and fills in the provenance
-  and coverage bookkeeping for you.
-- A **pass-through** file is derived from other `.zpf` files by a
-  byte-preserving transform — the spec defines one, the **merge**, which
-  combines separately-captured directions into one file with sequenced
-  sessions ({func}`zpf.merge_files <zpf.transform.merge_files>`, or
-  `zpf merge`). Payload bytes, offsets, and ordering hints pass through
-  unchanged.
+- A **decode stage** *creates* a layer. Its records are decoder-imposed
+  units (an HTTP message, a TLS record) whose boundaries follow application
+  semantics, and each cites the input ranges it was built from in `spans`.
+  {func}`zpf.decode_stage <zpf.decode.decode_stage>` writes one end to end.
+- A **pass-through** *preserves* the layer its input had. The merge is the
+  obvious case ({func}`zpf.merge_files <zpf.transform.merge_files>`), but so
+  is anything that only *adds* metadata — an annotator. Applied to a decoded
+  file it re-emits the decoded records unchanged, `decoder_id` values and
+  Undecoded blocks included.
 
-Two facts classify any record: whether it carries a `decoder_id` (present ⇔
-decoded), and the `kind` of the source it references (`capture` ⇔ raw,
-`zpf-input` ⇔ derived). A derived file is never a mix of decoded and
-pass-through records. {attr}`FileReader.file_kind
-<zpf.reader.FileReader.file_kind>` reports the kind.
+Two shapes are easier to misplace than they look, and both are decode
+stages:
+
+- **Filtering or reordering a decoded file** is not a pass-through, however
+  byte-preserving it appears. Stored order is what *defines* a decoded
+  stream's offsets, so dropping or moving a record rewrites them, and the
+  output cannot claim to have preserved what it just moved.
+  {func}`zpf.rewrite_decoded <zpf.transform.rewrite_decoded>` writes one:
+  survivors cite their input ranges, dropped ranges are marked `skipped`,
+  and the input's decoders are inherited rather than re-invented.
+- **A second decode over a decoded file** (`raw → tls-records → http`) is
+  just the same mechanism applied again.
+
+**The discriminator is `spans` versus `origin`, not `decoder_id`.** A record
+carrying `spans` was built by this file's stage; a record without them,
+whose participant carries `origin`, was re-emitted from the input.
+`decoder_id` answers a different question — *which decoder's layer* a record
+belongs to — and a pass-through carries inherited ones forward, so it says
+nothing about which stage ran. Whether a record is *decoded* is still told
+solely by whether it carries a `decoder_id`. {attr}`FileReader.file_kind
+<zpf.reader.FileReader.file_kind>` reports the file's kind.
 
 Raw and decoded views live in **separate files** because their boundaries
 rarely align — one HTTP message can start and end mid-way through raw

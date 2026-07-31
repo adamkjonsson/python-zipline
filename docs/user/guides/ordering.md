@@ -60,17 +60,58 @@ with zpf.open("merged.zpf") as reader:
             session.verify()   # raises on an order that isn't causal
 ```
 
-## When timestamps are the only order
+## Timestamps are not an ordering invariant
+
+Worth stating plainly, because it is the rule most readers get wrong: stored
+timestamps **may run backwards**, in any session, sequenced or not. That is an
+expected consequence of skewed capture clocks and of causal sequencing — the
+[worked skew](../tutorial.md#3-causal-order) stores a record stamped `995` after
+the one at `1000` that caused it — not a corruption signal. So a reader must not
+reject a file, discard a session, or re-sort a sequenced session because of it.
+
+Timestamps order records in exactly one place: as the tie-break between causally
+*concurrent* records during a merge. Ties there are broken by
+`(timestamp, participant_id)`, and `participant_id` is unique within its session,
+so the merge is fully deterministic — every reader of the same file computes the
+same interleaving. The merge is also **stable**: one participant's own records
+keep their stored order whatever their stamps do.
+
+## What a hint-less sequenced session rests on
 
 A session with no `seq/ack` hints — a chat room, a one-way UDP feed — has no
-causal edges at all, so its order rests purely on timestamps. That is sound only
-when every record was stamped against **one trustworthy clock** (a single
-observer saw the whole session). A producer must therefore not mark a hint-less
-session `SEQUENCED` without that guarantee; the file-wide form is the
-`SINGLE_CLOCK` flag (`zpf.create(..., single_clock=True)`), asserting every
-record in the file shares one clock. See
-[Concepts](../concepts.md#ordering-why-timestamps-are-not-enough) for the full
-rule.
+causal edges at all, so its order rests on something the file does not otherwise
+record. A producer must therefore not mark such a session `SEQUENCED` without a
+sound basis, and **must say what that basis is** in `sequenced_basis`:
+
+| Value | The order rests on |
+|-------|--------------------|
+| `clock` | one trustworthy clock shared by every record — the `SINGLE_CLOCK` case |
+| `protocol` | ordering carried by the protocol itself, e.g. a server-assigned sequence |
+| `external` | an order the producer knows out of band |
+| `trivial` | nothing to get wrong — one participant, or only one that ever sends |
+
+```python
+with zpf.create("chat.zpf", tick_hz=1_000_000) as w:
+    w.add_source("capture", uri="chat.pcap")
+    with w.begin_session(proto="irc", sequenced=True,
+                         sequenced_basis="clock") as session:
+        ...
+```
+
+Recording it is unconditional — `trivial` exists so a producer with nothing to
+get wrong still names what it relied on. Omitting it on a hint-less sequenced
+session is a semantic violation, and the writer refuses it.
+
+Note *when* that can be judged: whether a session is hint-less is a property of
+its **records**, and declare-on-first-use puts the Session Descriptor before
+them. A reader therefore concludes it only at Session End or end-of-stream,
+which is where {class}`~zpf.ConformanceChecker` defers the check. The producer
+needs no such deferral — it decides by what it is relying on, which it knows the
+moment it sets the flag.
+
+The file-wide `SINGLE_CLOCK` flag (`zpf.create(..., single_clock=True)`) asserts
+every record in the file shares one clock, and supplies the `clock` basis for
+every hint-less session in it.
 
 ## Merging separately-captured directions
 
