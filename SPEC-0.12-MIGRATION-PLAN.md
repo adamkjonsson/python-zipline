@@ -283,27 +283,57 @@ and `chain/annotated`, both waiting on Phase 5.
 *Verification:* `468 passed, 5 xfailed`; `ruff check` clean; docs build clean
 under `-W`.
 
-### Phase 5 — The file-kind model *(the hard one)*
+### Phase 5 — The file-kind model — **DONE**
 
-The only phase requiring design rather than translation.
+The blast radius turned out far smaller than feared. Everything outside
+`conformance.py` that touches file kind only *forwards* it — `reader.file_kind`,
+`cli.py`'s display, and `transform.py`'s check that a merge's **inputs** are raw.
+The `decoder_id`-shaped assumptions the plan worried about were concentrated in
+three `_lock_kind` call sites, not spread through the reader.
 
-- Re-seat file-kind inference on **`spans` versus `origin`**, not `decoder_id`.
-  Today [conformance.py:280](src/zpf/conformance.py#L280) locks the file to
-  "decode stage" the moment a record carries a `decoder_id`, which now rejects
-  exactly the decoded-layer pass-through the spec added an example for.
-- Permit Decoder Descriptors and Undecoded blocks in a **pass-through preserving
-  a decoded layer**.
-- Implement the **grandparent-Source rule**: such a pass-through declares the
-  file its inherited Undecoded blocks name, and those blocks' `source_id` must
-  resolve to it. Our `_require_source` model has no concept of this.
-- Distinguish **immediate inputs** (Sources named by `origin`/`spans`) from
-  Sources declared only so an inherited reference resolves.
-- Unknown Source `kind` becomes an **isolatable** semantic condition — discard
-  that Source and its dependents and report, rather than raising.
+- **The discriminator is now `spans` versus `origin`.** A record citing `spans`
+  was built by this stage; one without them was re-emitted unchanged.
+  `decoder_id` locks nothing — it answers which decoder's *layer* a record
+  belongs to, and a pass-through carries inherited ones forward. It keeps two
+  obligations that were never about file kind: naming a declared decoder, and
+  referencing a `zpf-input` Source.
+- **Undecoded blocks assert "derived", not "decode stage",** since a
+  pass-through preserving a decoded layer re-emits its input's unchanged. That
+  needed a *deferred* constraint (`_require_derived`), because such a block says
+  derived without saying which derived kind. It mirrors the existing
+  `_orphan_participants` pattern rather than adding a new concept, and settles
+  either way: a later raw lock conflicts, a later derived lock satisfies it.
+- **The grandparent-Source rule came for free** — the existing "Undecoded must
+  reference a declared `zpf-input` Source" check already accepts a pass-through
+  declaring the file its inherited blocks name.
 
-*Files:* [conformance.py](src/zpf/conformance.py) (substantial),
-[reader.py](src/zpf/reader.py), [transform.py](src/zpf/transform.py).
-*Unlocks:* `annotator-decoded`, `isolate-unknown-source-kind`, `chain`.
+**Vectors: 25 of 28 — every one this library can pass.** The remaining three are
+the upstream defects.
+
+Verified as a re-seating rather than a patch, by exercising `chain/` end to end:
+
+| File | Inferred kind | Undecoded | Digests |
+|------|---------------|-----------|---------|
+| `raw.zpf` | raw | 0 | — |
+| `decoded.zpf` | decode-stage | 1 | `raw.zpf` verified |
+| `annotated.zpf` | **pass-through** | 1 (inherited) | `raw.zpf` *and* `decoded.zpf` verified |
+
+Zero diagnostics on all three. The annotated file is a pass-through *carrying a
+decoded layer*, declaring its grandparent so the inherited Undecoded block still
+resolves — the construct 0.9 could not express at all.
+
+Two behaviour changes fell out, both correct and both caught by existing tests
+rather than by the vectors:
+
+- A **decode-stage record with no `spans`** is now non-conformant. It was silently
+  allowed before, because `decoder_id` marked the stage; now such a record claims
+  to have been re-emitted unchanged, which a decode stage cannot mean. One
+  `DecodeStage` test and one reader fixture were relying on it.
+- A **pass-through record carrying `spans`** is still refused, but as a kind
+  conflict rather than a bespoke rule — which is the point of the discriminator.
+
+*Verification:* `472 passed, 3 xfailed`; `ruff check` clean; docs build clean
+under `-W`.
 
 ### Phase 6 — Decoded offset spaces
 

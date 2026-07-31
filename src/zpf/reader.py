@@ -368,7 +368,13 @@ class FileReader:
 
     @property
     def undecoded(self) -> tuple[Undecoded, ...]:
-        """The file's Undecoded markers (decode-stage files)."""
+        """The file's Undecoded markers.
+
+        A decode stage emits them for the input regions it did not decode; a
+        pass-through preserving a decoded layer re-emits its input's
+        unchanged, which is what carries the input's coverage guarantee
+        forward without the output carrying any ``spans`` of its own.
+        """
         return tuple(self._undecoded)
 
     def sessions(self) -> tuple[SessionReader, ...]:

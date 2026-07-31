@@ -432,13 +432,22 @@ def test_cites_accepts_a_pair_a_span_and_a_sequence():
         dec.record(stream, b"a", ts=1, cites=(0, 4))
         dec.record(stream, b"b", ts=2, cites=stream.cite(4, 8))
         dec.record(stream, b"c", ts=3, cites=[(0, 4), stream.cite(8, 12)])
-        dec.record(stream, b"d", ts=4)  # no citation at all
     with zpf.open(io.BytesIO(sink.getvalue())) as out:
-        first, second, third, fourth = out.session(7).records()
+        first, second, third = out.session(7).records()
         assert [(s.off_start, s.off_end) for s in first.spans] == [(0, 4)]
         assert [(s.off_start, s.off_end) for s in second.spans] == [(4, 8)]
         assert [(s.off_start, s.off_end) for s in third.spans] == [(0, 4), (8, 12)]
-        assert fourth.spans == ()
+
+
+def test_a_decode_stage_record_must_cite_its_input():
+    # spans are what identify a record as built by *this* stage, and what
+    # the coverage guarantee is checked against. An uncited record claims to
+    # have been re-emitted unchanged, which a decode stage cannot mean.
+    sink = io.BytesIO()
+    with pytest.raises(zpf.SemanticError, match="exactly one kind"), stage_for(sink) as dec:
+        stream = dec.streams()[0]
+        dec.record(stream, b"a", ts=1, cites=(0, 4))
+        dec.record(stream, b"b", ts=2)  # no citation at all
 
 
 def test_cites_rejects_a_malformed_entry():

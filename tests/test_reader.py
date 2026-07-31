@@ -365,6 +365,7 @@ def labelled_file() -> bytes:
         smtp = w.add_decoder("smtp")
         with w.begin_session(session_id=7) as s:
             sender = s.participant("client")
+            offset = 0
             for decoder, label, payload in (
                 (http, "prim:u32", (1234).to_bytes(4, "little")),
                 (http, "mime:application/json", b'{"ok": true}'),
@@ -374,8 +375,16 @@ def labelled_file() -> bytes:
                 (http, "dec:unregistered", b"?"),
                 (http, "x-private:thing", b"opaque"),
             ):
+                # A decode stage's records must cite the input ranges they
+                # were built from; spans are what make this file a decode
+                # stage rather than a pass-through.
+                span = zpf.Span(
+                    source_id=source.source_id, session_id=7, participant_id=0,
+                    off_start=offset, off_end=offset + len(payload),
+                )
+                offset += len(payload)
                 s.record(sender, ts=0, payload=payload, source=source,
-                         decoder=decoder, content_type=label)
+                         decoder=decoder, content_type=label, spans=(span,))
     return sink.getvalue()
 
 

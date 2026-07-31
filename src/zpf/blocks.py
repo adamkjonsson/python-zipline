@@ -666,7 +666,13 @@ _DECODER_BODY = struct.Struct("<HH")
 
 @dataclass(frozen=True)
 class Decoder(Block):
-    """Decoder Descriptor block (``0x03``) — decode-stage files only.
+    """Decoder Descriptor block (``0x03``) — files carrying a decoded layer.
+
+    That is a decode stage's output, or a pass-through preserving one: such
+    a transform re-declares the descriptors that its inherited
+    ``decoder_id`` values reference, because a filtered or re-emitted HTTP
+    message is still an HTTP message.
+
 
     Attributes:
         decoder_id: Id referenced per-record.
@@ -1081,7 +1087,9 @@ class Undecoded(Block):
         off_start: Logical 0-based stream offset of the region's first byte.
         off_end: One past the region's last byte.
         reason: Why the region is undecoded. Open vocabulary; the canonical
-            values are :data:`UNDECODED_REASONS`.
+            values are :data:`UNDECODED_REASONS`. Appears in a decode
+            stage's output and in a pass-through preserving a decoded
+            layer, never in a raw file.
         reason_class: ``"bytes"`` or ``"hole"`` — which recoverability class
             ``reason`` belongs to. Required with a reason outside the
             canonical four, and must agree with the table for one of them.

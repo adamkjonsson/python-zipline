@@ -111,6 +111,7 @@ class ConformanceChecker:
         self._kind: str | None = None
         self._kind_reason = ""
         self._orphan_participants: list[str] = []  # declared without origin, kind still open
+        self._derived_only: list[str] = []  # blocks that forbid raw, kind still open
         self._file_ended = False
         self._advisory: list[str] = []  # findings for the block being observed
         self._dispatch: dict[type[Block], Callable[[Any], None]] = {
@@ -309,7 +310,11 @@ class ConformanceChecker:
             msg = f"{described} names undeclared decoder {block.decoder_id}"
             raise SemanticError(msg)
         self._check_reason_class(block, described)
-        self._lock_kind(_DECODE, described)
+        # Not a decode-stage marker any more: a pass-through preserving a
+        # decoded layer re-emits its input's Undecoded blocks unchanged,
+        # which is what carries the input's coverage guarantee forward. All
+        # that follows is that the file is derived.
+        self._require_derived(described)
 
     def _check_reason_class(self, block: Undecoded, described: str) -> None:
         """Check the reason names a recoverability class a consumer can act on.
@@ -355,7 +360,15 @@ class ConformanceChecker:
     # --- Record helpers ----------------------------------------------------
 
     def _classify_record(self, block: Record, described: str) -> None:
-        """Lock the file kind implied by this record and check its references."""
+        """Lock the file kind implied by this record and check its references.
+
+        The discriminator between the two derived kinds is **spans versus
+        origin**, not ``decoder_id``. A record carrying ``spans`` was built
+        by this file's stage; one without them was re-emitted from the input
+        unchanged. ``decoder_id`` answers a different question — which
+        decoder's *layer* the record belongs to — and a pass-through carries
+        inherited ones forward, so it says nothing about which stage ran.
+        """
         source_kind = self._require_source(block.source_id, described)
         if block.decoder_id is not None:
             if block.decoder_id not in self._decoders:
@@ -364,14 +377,13 @@ class ConformanceChecker:
             if source_kind != SourceKind.ZPF_INPUT:
                 msg = f"{described} is decoded, so it must reference a zpf-input source"
                 raise SemanticError(msg)
-            self._lock_kind(_DECODE, f"{described} (carries decoder_id)")
-        elif source_kind == SourceKind.CAPTURE:
+        if source_kind == SourceKind.CAPTURE:
             self._lock_kind(_RAW, f"{described} (byte run from a capture source)")
         elif source_kind == SourceKind.ZPF_INPUT:
             if block.spans:
-                msg = f"{described} is a pass-through record and must not carry spans"
-                raise SemanticError(msg)
-            self._lock_kind(_PASS_THROUGH, f"{described} (byte run from a zpf-input source)")
+                self._lock_kind(_DECODE, f"{described} (carries spans)")
+            else:
+                self._lock_kind(_PASS_THROUGH, f"{described} (carries no spans)")
         else:
             msg = f"{described} references source {block.source_id} of unknown kind {source_kind}"
             raise SemanticError(msg)
@@ -421,9 +433,34 @@ class ConformanceChecker:
             raise SemanticError(msg)
         return kind
 
+    def _require_derived(self, reason: str) -> None:
+        """Record that a block rules the file out as raw, whatever kind it is.
+
+        Some blocks say "derived" without saying *which* derived kind, so
+        they cannot lock one. Deferring works because the constraint is
+        cheap to carry and is settled either way: if a later block locks raw
+        the conflict surfaces there, and if it locks a derived kind the
+        constraint is already satisfied.
+        """
+        if self._kind == _RAW:
+            msg = (
+                f"{reason} implies a derived file, but {self._kind_reason} "
+                f"already made it {_RAW} (a file is exactly one kind)"
+            )
+            raise SemanticError(msg)
+        if self._kind is None:
+            self._derived_only.append(reason)
+            self._require_derived_header(reason)
+
     def _lock_kind(self, kind: str, reason: str) -> None:
         """Lock the file kind, or verify it matches the already-locked one."""
         if self._kind is None:
+            if kind == _RAW and self._derived_only:
+                msg = (
+                    f"{reason} implies a {_RAW} file, but {self._derived_only[0]} "
+                    "already made it derived (a file is exactly one kind)"
+                )
+                raise SemanticError(msg)
             self._kind = kind
             self._kind_reason = reason
             if kind != _RAW:
@@ -435,6 +472,7 @@ class ConformanceChecker:
                 )
                 raise SemanticError(msg)
             self._orphan_participants.clear()
+            self._derived_only.clear()
         elif self._kind != kind:
             msg = (
                 f"{reason} implies a {kind} file, but {self._kind_reason} "

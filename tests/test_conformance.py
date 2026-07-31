@@ -143,15 +143,19 @@ def test_order_is_per_participant():
 
 
 def test_raw_and_derived_records_never_mix():
+    decoded = raw_record(
+        source_id=2, decoder_id=3,
+        spans=(Span(source_id=2, session_id=9, participant_id=0, off_start=0, off_end=1),),
+    )
     reject(
         DERIVED_HEADER, CAP, INP, DEC, SESS, PART,
-        raw_record(),  # raw byte run
-        raw_record(source_id=2, decoder_id=3),  # decoded
+        raw_record(),  # raw byte run from a capture source
+        decoded,
         match="exactly one kind",
     )
     reject(
         DERIVED_HEADER, CAP, INP, DEC, SESS, PART,
-        raw_record(source_id=2, decoder_id=3),
+        decoded,
         raw_record(),
         match="exactly one kind",
     )
@@ -276,13 +280,30 @@ def test_recoverability_is_unknown_without_a_class():
 
 
 def test_pass_through_records_carry_no_spans():
+    # spans versus origin *is* the discriminator, so a record carrying spans
+    # in a file whose participants carry origin is a kind conflict rather
+    # than a rule of its own.
     span = Span(source_id=2, session_id=9, participant_id=0, off_start=0, off_end=1)
     reject(
         DERIVED_HEADER, INP, SESS,
         zpf.Participant(session_id=5, participant_id=0, origin=ORIGIN),
         raw_record(source_id=2, spans=(span,)),
-        match="must not carry spans",
+        match="exactly one kind",
     )
+
+
+def test_decoder_id_no_longer_decides_the_file_kind():
+    # A pass-through preserving a decoded layer: records keep decoder_id and
+    # content_type but carry no spans, provenance is the participants'
+    # origin, and inherited Undecoded blocks ride along. 0.9 could not
+    # express this, and a strict 0.9 reader refuses it.
+    checker = accept(
+        DERIVED_HEADER, INP, DEC, SESS,
+        zpf.Participant(session_id=5, participant_id=0, origin=ORIGIN),
+        raw_record(source_id=2, decoder_id=3, content_type="dec:request"),
+        zpf.Undecoded(source_id=2, session_id=9, participant_id=0, off_start=0, off_end=4),
+    )
+    assert checker.file_kind == "pass-through"
 
 
 def test_span_sources_match_the_record_kind():
