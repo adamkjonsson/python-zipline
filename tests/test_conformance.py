@@ -184,6 +184,53 @@ def undecoded(**kwargs: object) -> zpf.Undecoded:
     return zpf.Undecoded(**args)
 
 
+def hintless_session(**kwargs: object) -> list[zpf.Block]:
+    """Build a sequenced session whose records carry no seq/ack."""
+    args: dict = {"session_id": 5, "flags": zpf.SessionFlags.SEQUENCED}
+    args.update(kwargs)
+    return [HEADER, CAP, zpf.Session(**args), PART, raw_record()]
+
+
+def finished(*blocks: zpf.Block) -> zpf.ConformanceChecker:
+    """Check a whole file, including the end-of-stream pass."""
+    checker = accept(*blocks)
+    checker.finish()
+    return checker
+
+
+def test_a_hintless_sequenced_session_must_record_its_basis():
+    # The rule cannot fire when the Session Descriptor is read: whether the
+    # session is hint-less is a property of its *records*, and
+    # declare-on-first-use puts the descriptor before them.
+    checker = accept(*hintless_session())  # nothing raised yet
+    with pytest.raises(zpf.SemanticError, match="sequenced_basis"):
+        checker.finish()
+
+
+def test_the_basis_requirement_is_settled_at_session_end():
+    checker = accept(*hintless_session())
+    with pytest.raises(zpf.SemanticError, match="sequenced_basis"):
+        checker.observe(zpf.SessionEnd(session_id=5))
+
+
+def test_any_hint_anywhere_means_the_session_is_not_hintless():
+    # One hint yields causal edges, so the order rests on something the file
+    # already records and no basis is owed. An ack alone counts.
+    finished(HEADER, CAP, zpf.Session(session_id=5, flags=zpf.SessionFlags.SEQUENCED),
+             PART, raw_record(seq_start=1000))
+    finished(HEADER, CAP, zpf.Session(session_id=5, flags=zpf.SessionFlags.SEQUENCED),
+             PART, raw_record(ack=1000))
+
+
+def test_a_basis_satisfies_the_requirement():
+    for basis in sorted(zpf.SEQUENCED_BASES):
+        finished(*hintless_session(sequenced_basis=basis))
+
+
+def test_an_unsequenced_session_owes_no_basis():
+    finished(HEADER, CAP, zpf.Session(session_id=5), PART, raw_record())
+
+
 def test_a_canonical_reason_implies_its_class():
     # The canonical four need no reason_class, and each sits in a fixed class.
     for reason in ("undecodable", "skipped", "gap", "truncated"):

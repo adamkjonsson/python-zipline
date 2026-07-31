@@ -1076,13 +1076,21 @@ class JsonlWriter:
         return self._line_no
 
     def close(self) -> None:
-        """Flush and close the underlying stream if this writer opened it."""
+        """Flush and close the underlying stream if this writer opened it.
+
+        A checking writer also runs the checker's end-of-stream pass here,
+        so an obligation that only the whole file can settle still binds.
+        """
         if self._closed:
             return
         self._closed = True
-        self._stream.flush()
-        if self._owns_stream:
-            self._stream.close()
+        try:
+            if self._checker is not None:
+                self._checker.finish()
+        finally:
+            self._stream.flush()
+            if self._owns_stream:
+                self._stream.close()
 
     def _issue(self, message: str) -> None:
         if self.strict:

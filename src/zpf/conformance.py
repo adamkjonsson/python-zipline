@@ -80,6 +80,10 @@ class _SessionState:
     """Live per-session bookkeeping, freed at Session End."""
 
     last_seq: dict[int, int | None] = field(default_factory=dict)  # pid -> last seq_start
+    described: str = ""
+    sequenced: bool = False
+    sequenced_basis: str | None = None
+    has_hints: bool = False  # any record carried seq_start or ack
 
 
 class ConformanceChecker:
@@ -166,6 +170,9 @@ class ConformanceChecker:
     def check(self, blocks: Iterable[Block]) -> None:
         """Check a whole block sequence (convenience for standalone use).
 
+        Does not finalize: call :meth:`finish` when the stream is complete,
+        so a caller may feed a file in several calls.
+
         Raises:
             AdvisoryError: On the sequence's first advisory finding.
             SemanticError: On the sequence's first isolating violation.
@@ -173,6 +180,46 @@ class ConformanceChecker:
         """
         for block in blocks:
             self.observe(block)
+
+    def finish(self) -> None:
+        """Run the checks that only the end of the stream can settle.
+
+        Some obligations cannot be judged when the block carrying them is
+        read. Whether a session is *hint-less* is a property of its records,
+        and declare-on-first-use puts the Session Descriptor before them — so
+        a reader concludes it only at Session End or end-of-stream. Reaching
+        the End block or end-of-stream implicitly closes every still-open
+        session, and this is that moment.
+
+        Idempotent: finalized sessions are not revisited.
+
+        Raises:
+            SemanticError: On the first violation found while finalizing.
+
+        """
+        pending = list(self._live.items())
+        for session_id, state in pending:
+            del self._live[session_id]
+            self._ended.add(session_id)
+            self._check_sequenced_basis(state)
+
+    def _check_sequenced_basis(self, state: _SessionState) -> None:
+        """Require a hint-less sequenced session to say what its order rests on.
+
+        A session carrying `seq`/`ack` derives its order from causal edges
+        and needs no basis. One without them has no causal edges at all, so
+        the order rests on something the file does not otherwise record —
+        which is exactly why the producer must name it. Recording is
+        unconditional: ``trivial`` covers the case where there was never a
+        cross-participant order to get wrong.
+        """
+        if not state.sequenced or state.has_hints or state.sequenced_basis is not None:
+            return
+        msg = (
+            f"{state.described} is SEQUENCED and carries no seq/ack on any record, "
+            "so it must record what its order rests on in sequenced_basis"
+        )
+        raise SemanticError(msg)
 
     # --- Per-block handlers ----------------------------------------------
 
@@ -198,7 +245,11 @@ class ConformanceChecker:
         if block.session_id in self._live or block.session_id in self._ended:
             msg = f"session id {block.session_id} declared twice"
             raise SemanticError(msg)
-        self._live[block.session_id] = _SessionState()
+        self._live[block.session_id] = _SessionState(
+            described=_describe(block),
+            sequenced=block.sequenced,
+            sequenced_basis=block.sequenced_basis,
+        )
 
     def _on_participant(self, block: Participant) -> None:
         state = self._require_live_session(block.session_id, _describe(block))
@@ -227,9 +278,10 @@ class ConformanceChecker:
         state.last_seq[block.participant_id] = None
 
     def _on_session_end(self, block: SessionEnd) -> None:
-        self._require_live_session(block.session_id, _describe(block))
+        state = self._require_live_session(block.session_id, _describe(block))
         del self._live[block.session_id]
         self._ended.add(block.session_id)
+        self._check_sequenced_basis(state)
 
     def _on_record(self, block: Record) -> None:
         described = _describe(block)
@@ -242,6 +294,8 @@ class ConformanceChecker:
         self._note(_prim_finding(block, described))
         self._check_record_order(block, state, described)
         self._classify_record(block, described)
+        if block.seq_start is not None or block.ack is not None:
+            state.has_hints = True
         if block.seq_start is not None:
             state.last_seq[block.sender_pid] = block.seq_start
 

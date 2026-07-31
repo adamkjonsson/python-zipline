@@ -23,6 +23,13 @@ they are applied only to two-participant sessions; a session with any other
 participant count merges by ``(timestamp, pid)`` alone, which is sound
 exactly when its records share one trustworthy clock (the SINGLE_CLOCK
 discussion in the spec).
+
+Timestamps order records in exactly one place — the tie-break between
+causally concurrent records during a merge. They are **not** an ordering
+invariant: a reader must not reject a file, discard a session, or re-sort a
+sequenced session because stored timestamps run backwards. That is an
+expected consequence of skewed capture clocks and of causal sequencing, not
+a corruption signal.
 """
 
 from __future__ import annotations
@@ -96,10 +103,14 @@ class _Frontier:
     stream: Iterator[Record]
     head: Record | None = None
     last_seq: int | None = None
-    last_hintless_ts: int | None = None
 
     def advance(self) -> None:
-        """Load the next record, validating the stream's own ordering."""
+        """Load the next record, validating the stream's own ordering.
+
+        Only the ``seq_start`` order is checked. Timestamps are **not** an
+        ordering invariant: a stream's stamps may run backwards, and doing so
+        is neither a corruption signal nor grounds to refuse the merge.
+        """
         record = next(self.stream, None)
         self.head = record
         if record is None:
@@ -113,16 +124,6 @@ class _Frontier:
                 )
                 raise SemanticError(msg)
             self.last_seq = record.seq_start
-        else:
-            if self.last_hintless_ts is not None and record.timestamp < self.last_hintless_ts:
-                msg = (
-                    f"participant {self.pid}: {_describe(record)} steps backwards in time "
-                    f"(previous timestamp {self.last_hintless_ts}); hint-less streams can "
-                    "only be merged when their timestamps are non-decreasing — sort the "
-                    "session's records() by timestamp yourself if the data is small"
-                )
-                raise SemanticError(msg)
-            self.last_hintless_ts = record.timestamp
 
 
 def _pair_ready(frontier: _Frontier, peer: _Frontier) -> bool:
@@ -165,11 +166,18 @@ def causal_merge(streams: Mapping[int, Iterable[Record]]) -> Iterator[Record]:
         The session's records, every record after all records that causally
         precede it.
 
+    The merge is **stable** with respect to stored order: step 1 takes each
+    participant's records in file order and nothing later disturbs it, so the
+    tie-break only ever chooses *between* participants. A timestamp that runs
+    backwards within one participant therefore changes nothing. Because
+    ``participant_id`` is unique within its session, ``(timestamp, pid)`` is a
+    total order over the frontiers, so every reader of the same file computes
+    the same interleaving.
+
     Raises:
         SemanticError: If the merge stalls (two frontier records each
-            acknowledging bytes the other has not sent — a broken file), if
-            a stream violates its stored-order guarantee, or if a hint-less
-            stream's timestamps step backwards.
+            acknowledging bytes the other has not sent — a broken file), or
+            if a stream violates its stored-order guarantee.
 
     """
     frontiers = [_Frontier(pid, iter(stream)) for pid, stream in sorted(streams.items())]
@@ -216,9 +224,15 @@ def verify_sequenced(
 
     * each participant's ``seq_start`` values must be non-decreasing;
     * (two-participant sessions) a record must not appear after a peer
-      record that already acknowledged its bytes;
-    * hint-less records must not step backwards in time (their sequenced
-      order *is* the timestamp order).
+      record that already acknowledged its bytes.
+
+    Timestamps are deliberately not checked. They are not an ordering
+    invariant in any session, sequenced or not: a stored order may run
+    backwards in time, and a hint-less session's order rests on whatever
+    its ``sequenced_basis`` names — which may be a protocol sequence or an
+    out-of-band record, neither of which the clock reflects. The only
+    stored-order guarantee a reader may act on is the per-participant
+    ``seq_start`` rule above, which is a sequence rule, not a time rule.
 
     Args:
         records: The session's records, in stored order.
@@ -235,7 +249,6 @@ def verify_sequenced(
     last_seq: dict[int, int] = {}
     max_ack: dict[int, int] = {}
     senders: set[int] = set()
-    last_hintless_ts: int | None = None
     ack_checks = participant_count == 2 or participant_count is None
     for record in records:
         pid = record.sender_pid
@@ -255,15 +268,6 @@ def verify_sequenced(
             if ack_checks:
                 end = record_end(record.seq_start, len(record.payload))
                 _check_not_already_acked(record, end, max_ack)
-        elif last_hintless_ts is not None and record.timestamp < last_hintless_ts:
-            msg = (
-                f"{_describe(record)} steps backwards in time (previous hint-less "
-                f"timestamp {last_hintless_ts}); a hint-less sequenced order is "
-                "the timestamp order"
-            )
-            raise SemanticError(msg)
-        else:
-            last_hintless_ts = record.timestamp
         if ack_checks and record.ack is not None:
             current = max_ack.get(pid)
             if current is None or seq_lt(current, record.ack):

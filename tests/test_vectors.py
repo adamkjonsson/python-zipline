@@ -50,6 +50,7 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "escape-unknown-option",
         "hintless-merge-backwards-ts",
         "isolate-duplicate-id",
+        "isolate-sequenced-no-basis",
         "isolate-undeclared-session",
         "isolate-unknown-source-kind",
         "merge-timestamp-tie",

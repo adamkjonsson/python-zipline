@@ -140,10 +140,24 @@ def test_out_of_order_input_stream_is_rejected():
         merged(a, [])
 
 
-def test_non_monotone_hintless_stream_raises_with_guidance():
+def test_a_hintless_stream_may_step_backwards_in_time():
+    # Timestamps are not an ordering invariant. The merge is stable with
+    # respect to stored order, so one participant's own records keep the
+    # order they were stored in however their stamps run.
     alice = [rec(0, ts=100, payload=b"x"), rec(0, ts=50, payload=b"y")]
-    with pytest.raises(zpf.SemanticError, match="sort the"):
-        list(causal_merge({0: alice, 1: [], 2: []}))
+    merged = list(causal_merge({0: alice, 1: [], 2: []}))
+    assert [r.payload for r in merged] == [b"x", b"y"]
+
+
+def test_the_tie_break_orders_between_participants_by_pid():
+    # participant_id is unique within its session, so (timestamp, pid) is a
+    # total order over the frontiers and every reader agrees on the result.
+    streams = {
+        1: [rec(1, ts=10, payload=b"b")],
+        0: [rec(0, ts=10, payload=b"a")],
+        2: [rec(2, ts=10, payload=b"c")],
+    }
+    assert [r.payload for r in causal_merge(streams)] == [b"a", b"b", b"c"]
 
 
 # --- verify_sequenced -------------------------------------------------------------
@@ -157,10 +171,12 @@ def test_verify_accepts_a_causal_order_and_rejects_a_swap():
         verify_sequenced([response, request], participant_count=2)
 
 
-def test_verify_checks_hintless_timestamp_order():
+def test_verify_does_not_check_timestamp_order():
+    # A sequenced hint-less order may rest on a protocol sequence or an
+    # out-of-band record — neither of which the clock reflects — so stored
+    # order is authoritative and a backwards stamp is not a violation.
     verify_sequenced([rec(0, ts=1), rec(1, ts=2), rec(0, ts=2)])
-    with pytest.raises(zpf.SemanticError, match="timestamp order"):
-        verify_sequenced([rec(0, ts=2), rec(1, ts=1)])
+    verify_sequenced([rec(0, ts=2), rec(1, ts=1)])
 
 
 def test_verify_checks_per_participant_seq_order():

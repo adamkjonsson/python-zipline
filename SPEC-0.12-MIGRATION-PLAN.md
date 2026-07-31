@@ -253,25 +253,35 @@ provenance is wrong, so adding the two options is the whole fix.
 *Verification:* `461 passed, 6 xfailed`; `ruff check` clean; docs build clean
 under `-W`.
 
-### Phase 4 — Ordering semantics
+### Phase 4 — Ordering semantics — **DONE**
 
-Mostly deletion, which is the pleasant surprise of this migration.
+- **Both timestamp rejections removed.** Neither the merge nor
+  `verify_sequenced` may refuse a stream whose stamps run backwards.
+- **The tie-break was already right.** `(timestamp, participant_id)` and the
+  stable-merge property needed no change — 0.12 ratified the existing behaviour
+  — so this became documentation plus a test pinning it, including one asserting
+  the merge orders *between* participants by `pid` on an exact timestamp tie.
+- **Hint-less** implemented as defined: no record in the session carries
+  `seq_start` *or* `ack`; one hint anywhere means not hint-less.
 
-- **Remove** both timestamp rejections: the merge's hint-less backwards-time
-  check ([order.py:114](src/zpf/order.py#L114)) and the same check in
-  `verify_sequenced` ([order.py:258](src/zpf/order.py#L258)). Timestamps are not
-  an ordering invariant; a reader must not reject or re-sort on them.
-- **Confirm** the merge tie-break is `(timestamp, participant_id)` and that the
-  merge is stable with respect to stored order. [order.py:204](src/zpf/order.py#L204)
-  already does this — 0.12 ratified our behaviour, so this is a test, not a change.
-- Implement **hint-less** as defined: *no record in the session carries
-  `seq_start` or `ack`*; one hint anywhere means not hint-less. Defer the
-  `sequenced_basis` requirement to Session End / end-of-stream — one boolean per
-  open session.
+The interesting part was **where** the basis check can run. It cannot fire when
+the Session Descriptor is read, because hint-lessness is a property of the
+records and declare-on-first-use puts the descriptor first. So the checker gained
+a `finish()` pass for obligations only the end of the stream can settle, running
+at Session End for a closed session and at end-of-stream for the rest — which is
+exactly the spec's "reaching the End block or end-of-stream closes every
+still-open session". It is wired into the reader's indexing pass and into both
+checking writers' `close()`, so the obligation binds on write as well as read:
+`create()` now refuses a hint-less `SEQUENCED` session that names no basis.
 
-*Files:* [order.py](src/zpf/order.py), [conformance.py](src/zpf/conformance.py).
-*Unlocks:* `hintless-merge-backwards-ts`, `merge-timestamp-tie`,
-`partially-hinted-sequenced`, `isolate-sequenced-no-basis`.
+That hook is worth knowing about beyond this phase — it is the natural home for
+any later rule that cannot be judged block-by-block.
+
+**Vectors: 23 of 28.** The only two left that are ours are `annotator-decoded`
+and `chain/annotated`, both waiting on Phase 5.
+
+*Verification:* `468 passed, 5 xfailed`; `ruff check` clean; docs build clean
+under `-W`.
 
 ### Phase 5 — The file-kind model *(the hard one)*
 

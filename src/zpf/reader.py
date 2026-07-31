@@ -492,9 +492,21 @@ class FileReader:
                 offset += _frame.FRAME_SIZE + len(block.to_bytes())
             if self._admit(block, position):
                 self._file_into_index(block, position)
+        # End-of-stream closes every still-open session, which is where the
+        # checks that only the whole stream can settle finally run.
+        self._finish_checks(offset)
         self.header = flat.header
         self.complete = flat.complete
         self.truncated = flat.truncated
+
+    def _finish_checks(self, offset: int) -> None:
+        """Run the checker's end-of-stream pass, isolating in lenient mode."""
+        try:
+            self._checker.finish()
+        except SemanticError as exc:
+            if self.strict:
+                raise
+            self.diagnostics.append(Diagnostic(offset, "nonconformant", str(exc)))
 
     def _admit(self, block: Block, offset: int) -> bool:
         """Run the semantic checker; in lenient mode isolate violations.
