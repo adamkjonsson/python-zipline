@@ -335,24 +335,46 @@ rather than by the vectors:
 *Verification:* `472 passed, 3 xfailed`; `ruff check` clean; docs build clean
 under `-W`.
 
-### Phase 6 — Decoded offset spaces
+### Phase 6 — Decoded offset spaces — **DONE**
 
-The one place 0.12 requires structure we have no equivalent of.
+Investigation first changed the estimate: most of this **already worked, by
+coincidence**. `StreamView.datagrams()` yielded exactly the positional rule, and
+`check_coverage` took a cumulative branch for decoded inputs. But both keyed on
+*"does the stream carry `seq_start`"* rather than *"is this a decoded layer"* —
+two predicates that agree in practice, so the behaviour was right for the wrong
+reason and would misplace a decoded record that carried transport hints.
 
-A decoded stream's offset space is the concatenation of that participant's
-decoded record payloads in stored order — **not** hole-inclusive, unlike a
-transport stream's. A decoded record's own range is positional:
-`[Σ payload_len of preceding records, + its own)`.
+- **One rule, one place.** `reassembly.record_ranges()` decides the space by
+  layer: positional for a decoded stream (`is_decoded_stream` — any record
+  carrying a `decoder_id`), hole-inclusive for a hinted transport one,
+  positional for a hint-less one. `stream_extent()` derives from it.
+- **`SessionReader.ranges(pid)`** returns one `(off_start, off_end)` per record,
+  matching `stream(pid)` positionally. A decoded record has no offset field, so
+  this is the only way to place it; resolving one costs O(k) on its face, which
+  is why the whole participant's table is built on first call and cached. The
+  cache lives on `_SessionIndex`, not the `SessionReader` — the latter is rebuilt
+  on every `session()` call, so a per-view cache would be no cache at all.
+- **`check_coverage` delegates** to the same rule rather than re-deriving it, so
+  the reader and the validator cannot drift. This is what makes a chained decode
+  (`raw → tls-records → http`) check correctly, where the "input" is itself a
+  decode stage's output.
+- **`resolve_spans()`** implements the two-hop walk (not deferred): one hop for a
+  decode stage's own `spans`, two for a pass-through — participant `origin` into
+  the input, same offsets, read the spans found there. Chained pass-throughs
+  recurse. Inputs resolve beside the file by default, with an `open_input` hook.
 
-Free for forward reading (one running counter per participant); O(k) for random
-access, which the spec now says explicitly and recommends solving with
-per-participant prefix sums built on a first pass. Decide where those live —
-probably alongside the existing session state in `reader.py` rather than in a new
-index type.
+Verified against `chain/`: `annotated.zpf`'s records carry no spans, and the walk
+resolves both participants through `decoded.zpf` to ranges in `raw.zpf`.
+`check_coverage(decoded, raw)` reports no findings — the guarantee holds, checked
+against the real input.
 
-*Files:* [decode.py](src/zpf/decode.py), [reassembly.py](src/zpf/reassembly.py),
-[transform.py](src/zpf/transform.py) (`check_coverage`).
-*Unlocks:* `reordered-decoded`; completes `chain` coverage verification.
+**No vector covers any of this.** `reordered-decoded` already passed before the
+phase began, and the coverage guarantee is only checkable with the input in hand,
+so the tests here are ours: 12 new ones across offset spaces, caching, and the
+walk.
+
+*Verification:* `484 passed, 3 xfailed`; `ruff check` clean; docs build clean
+under `-W`.
 
 ### Phase 7 — Surface and documentation
 

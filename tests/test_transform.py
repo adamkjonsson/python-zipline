@@ -4,14 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import io
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
 import zpf
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 KEY = "10.0.0.1:51000 <-> 93.184.216.34:80"
 
@@ -234,3 +231,52 @@ def test_hole_inclusive_extents(tmp_path: Path):
         )
         w.undecoded(source, 7, 1, 0, 139, reason="undecodable")
     assert zpf.check_coverage(decoded, raw) == []
+
+
+# --- Two-hop provenance resolution -------------------------------------------
+
+CHAIN = Path(__file__).parent / "vectors/chain"
+
+
+def test_a_decode_stages_record_resolves_in_one_hop():
+    # It carries spans of its own: this file's stage built it.
+    (span,) = zpf.resolve_spans(CHAIN / "decoded.zpf", 7, 0, 0)
+    assert (span.off_start, span.off_end) == (0, 9)
+
+
+def test_a_pass_throughs_record_resolves_in_two_hops():
+    # annotated.zpf re-emits decoded.zpf's records unchanged, so they carry
+    # no spans. The walk takes the participant's origin into decoded.zpf,
+    # finds the record occupying the same offsets, and reads its spans —
+    # which name raw.zpf. This file alone cannot answer the question.
+    with zpf.open(CHAIN / "annotated.zpf") as f:
+        assert [r.spans for r in f.session(7).records()] == [(), ()]
+    (span,) = zpf.resolve_spans(CHAIN / "annotated.zpf", 7, 0, 0)
+    assert (span.session_id, span.participant_id) == (7, 0)
+    assert (span.off_start, span.off_end) == (0, 9)
+    (other,) = zpf.resolve_spans(CHAIN / "annotated.zpf", 7, 1, 0)
+    assert (other.off_start, other.off_end) == (0, 16)
+
+
+def test_a_raw_file_records_no_provenance_to_resolve():
+    assert zpf.resolve_spans(CHAIN / "raw.zpf", 7, 0, 0) == ()
+
+
+def test_resolving_a_stream_needs_an_explicit_opener():
+    with (
+        (CHAIN / "annotated.zpf").open("rb") as handle,
+        pytest.raises(zpf.ZpfError, match="open_input"),
+    ):
+        zpf.resolve_spans(handle, 7, 0, 0)
+
+
+def test_an_opener_may_redirect_where_inputs_are_found():
+    seen: list[str] = []
+
+    def opener(source: zpf.Source) -> Path:
+        seen.append(source.uri)
+        return CHAIN / source.uri
+
+    (span,) = zpf.resolve_spans(CHAIN / "annotated.zpf", 7, 0, 0, open_input=opener)
+    assert seen == ["decoded.zpf"]  # only the immediate input needs opening
+    assert (span.off_start, span.off_end) == (0, 9)

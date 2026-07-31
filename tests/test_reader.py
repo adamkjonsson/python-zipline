@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import io
 import json
+import pathlib
 from typing import TYPE_CHECKING
 
 import pytest
@@ -545,3 +546,48 @@ def test_index_offsets_are_exact():
         got = [r.payload for r in tcp.records()] + [r.payload for r in udp.records()]
         assert got == [b"t1", b"t2", b"t3", b"u1", b"u2"]
         assert len(offsets) == 5
+
+
+# --- Decoded offset spaces ---------------------------------------------------
+
+VECTORS = pathlib.Path(__file__).parent / "vectors"
+
+
+def test_ranges_place_a_decoded_record_positionally():
+    # A Record block carries no offset field, so a decoded record's place in
+    # its own stream is implied by the concatenation of the preceding
+    # payloads. ranges() is the only way to recover it.
+    with zpf.open(VECTORS / "chain/decoded.zpf") as f:
+        session = f.session(7)
+        assert session.is_decoded_stream(0)
+        for pid in (0, 1):
+            records = list(session.stream(pid))
+            ranges = session.ranges(pid)
+            assert len(ranges) == len(records)
+            cursor = 0
+            for record, (start, end) in zip(records, ranges, strict=True):
+                assert (start, end) == (cursor, cursor + len(record.payload))
+                cursor = end
+
+
+def test_ranges_are_cached_across_session_views():
+    # SessionReader is rebuilt per call, so the table has to live on the
+    # index or the first pass would be paid again on every lookup.
+    with zpf.open(VECTORS / "chain/decoded.zpf") as f:
+        first = f.session(7).ranges(0)
+        assert f.session(7).ranges(0) is first
+
+
+def test_ranges_agree_with_a_naive_datagram_walk():
+    with zpf.open(VECTORS / "chain/decoded.zpf") as f:
+        session = f.session(7)
+        for view in session.reassemble():
+            pid = view.participant.participant_id
+            walked = [(d.off_start, d.off_end) for d in view.datagrams()]
+            assert list(session.ranges(pid)) == walked
+
+
+def test_a_raw_stream_is_not_a_decoded_one():
+    with zpf.open(VECTORS / "chain/raw.zpf") as f:
+        session = f.session(7)
+        assert not session.is_decoded_stream(0)

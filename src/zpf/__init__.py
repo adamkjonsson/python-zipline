@@ -67,8 +67,16 @@ from zpf.jsonl import (
 )
 from zpf.order import causal_merge, record_end, seq_geq, seq_leq, seq_lt, verify_sequenced
 from zpf.reader import FileReader, SessionReader, detect_face, open
-from zpf.reassembly import Datagram, Gap, Segment, StreamView
-from zpf.transform import check_coverage, merge_files
+from zpf.reassembly import (
+    Datagram,
+    Gap,
+    Segment,
+    StreamView,
+    is_decoded_stream,
+    record_ranges,
+    stream_extent,
+)
+from zpf.transform import check_coverage, merge_files, resolve_spans
 from zpf.writer import (
     DecoderHandle,
     DerivedInput,
@@ -146,15 +154,19 @@ __all__ = [
     "decode_stage",
     "detect_face",
     "dumps_block",
+    "is_decoded_stream",
     "jsonl_to_binary",
     "loads_block",
     "merge_files",
     "open",
     "parse_block",
     "record_end",
+    "record_ranges",
+    "resolve_spans",
     "seq_geq",
     "seq_leq",
     "seq_lt",
+    "stream_extent",
     "unix_seconds",
     "verify_sequenced",
 ]

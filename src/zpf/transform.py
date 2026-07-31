@@ -32,14 +32,15 @@ from typing import IO, TYPE_CHECKING
 from zpf._intervals import complement, intersections
 from zpf.blocks import Origin, SourceKind
 from zpf.errors import Diagnostic, ZpfError
-from zpf.order import SEQ_SPACE, causal_merge, record_end
+from zpf.order import causal_merge
 from zpf.reader import FileReader, SessionReader
+from zpf.reassembly import stream_extent
 from zpf.writer import FileWriter, ParticipantHandle, SessionWriter
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
-    from zpf.blocks import Record
+    from zpf.blocks import Record, Source, Span
 
 # One input participant stream, and its cited [start, end) offset ranges.
 _StreamKey = tuple[int, int]  # (session_id, pid), in the input's namespace
@@ -237,6 +238,117 @@ def check_coverage(
         return findings
 
 
+def resolve_spans(
+    derived: str | os.PathLike[str] | IO[bytes] | IO[str],
+    session_id: int,
+    pid: int,
+    index: int,
+    *,
+    open_input: Callable[[Source], str | os.PathLike[str] | IO[bytes] | IO[str]] | None = None,
+) -> tuple[Span, ...]:
+    """Resolve which upstream ranges a record's bytes came from.
+
+    A record's provenance is one hop or two, and which it is depends on
+    whether this file's own stage *built* the record:
+
+    * A **decode stage's** record carries ``spans`` naming the input ranges
+      it was built from. One hop; those spans are the answer.
+    * A **pass-through's** record carries none — ``origin`` plus offset
+      preservation is its provenance. So the walk takes the participant's
+      ``origin`` to the corresponding stream in the input, computes the
+      record's :meth:`~zpf.SessionReader.ranges` position (offsets are
+      preserved, so it is the same range there), and reads the ``spans`` of
+      the record it finds. That file alone cannot say which raw bytes a
+      record came from, which is the asymmetry this function hides.
+
+    Chained pass-throughs recurse, one level at a time.
+
+    Args:
+        derived: The file holding the record.
+        session_id: Its session id, in *this* file's namespace.
+        pid: Its participant id, in this file's namespace.
+        index: The record's position in that participant's stored order.
+        open_input: How to open a ``zpf-input`` Source this file names.
+            Defaults to resolving the Source's ``uri`` beside ``derived``,
+            which requires ``derived`` to be a path.
+
+    Returns:
+        The spans naming the upstream ranges, empty when the file records
+        no provenance for it (a raw file, or a participant with no
+        ``origin``). Each span's ids are read in the namespace of *the
+        source it names*, as spans always are — which for a two-hop
+        resolution is a file further up the chain than ``derived``, not
+        ``derived`` itself.
+
+    Raises:
+        IndexError: If the participant has no record at ``index``.
+        ZpfError: If an input must be opened but no ``open_input`` was
+            given and ``derived`` is not a path.
+
+    """
+    opener = open_input or _sibling_opener(derived)
+    with FileReader(derived) as reader:
+        session = reader.session(session_id)
+        records = list(session.stream(pid))
+        record = records[index]
+        if record.spans:
+            return record.spans
+        origin = session.participant(pid).origin
+        if origin is None:
+            return ()
+        wanted = session.ranges(pid)[index]
+        source = reader.sources[origin.source_id]
+    return _resolve_at(opener(source), origin, wanted, opener)
+
+
+def _resolve_at(
+    target: str | os.PathLike[str] | IO[bytes] | IO[str],
+    origin: Origin,
+    wanted: tuple[int, int],
+    opener: Callable[[Source], str | os.PathLike[str] | IO[bytes] | IO[str]],
+) -> tuple[Span, ...]:
+    """Collect the spans covering ``wanted`` in one input stream."""
+    found: list[Span] = []
+    deeper: list[tuple[Origin, tuple[int, int]]] = []
+    with FileReader(target) as reader:
+        session = reader.session(origin.session_id)
+        pid = origin.participant_id
+        inner = session.participant(pid).origin
+        for record, (start, end) in zip(
+            session.stream(pid), session.ranges(pid), strict=True
+        ):
+            if end <= wanted[0] or start >= wanted[1]:
+                continue
+            if record.spans:
+                found.extend(record.spans)
+            elif inner is not None:
+                deeper.append((inner, (start, end)))
+        sources = dict(reader.sources)
+    for next_origin, next_range in deeper:
+        found.extend(
+            _resolve_at(opener(sources[next_origin.source_id]), next_origin, next_range, opener)
+        )
+    return tuple(found)
+
+
+def _sibling_opener(
+    derived: str | os.PathLike[str] | IO[bytes] | IO[str],
+) -> Callable[[Source], str | os.PathLike[str] | IO[bytes] | IO[str]]:
+    """Resolve an input Source's ``uri`` beside the file that names it."""
+    if not isinstance(derived, (str, os.PathLike)):
+        msg = "resolving an input needs open_input when the file is a stream, not a path"
+        raise ZpfError(msg)
+    parent = Path(derived).parent
+
+    def open_input(source: Source) -> str | os.PathLike[str] | IO[bytes] | IO[str]:
+        if source.uri is None:
+            msg = f"source {source.source_id} names no uri, so it cannot be opened"
+            raise ZpfError(msg)
+        return parent / source.uri
+
+    return open_input
+
+
 def _input_source_id(decoded: FileReader, raw: object) -> int:
     """Find the zpf-input Source of ``decoded`` that cites the raw file."""
     inputs = [
@@ -259,24 +371,21 @@ def _input_source_id(decoded: FileReader, raw: object) -> int:
 
 
 def _stream_extents(raw: FileReader) -> dict[tuple[int, int], int]:
-    """Compute each raw participant stream's logical extent (hole-inclusive)."""
+    """Compute each input participant stream's extent, in its own offset space.
+
+    Delegates to the shared rule so the coverage check and the reader
+    cannot drift: hole-inclusive for a hinted transport stream, positional
+    for a decoded one. That matters for a chained decode
+    (``raw -> tls-records -> http``), where the "raw" argument is itself a
+    decode stage's output and its offsets are a concatenation of payloads
+    rather than true stream positions.
+    """
     extents: dict[tuple[int, int], int] = {}
     for session in raw.sessions():
         for participant in session.participants:
             pid = participant.participant_id
-            origin = None if participant.isn is None else (participant.isn + 1) % SEQ_SPACE
-            hinted_extent = 0
-            cumulative = 0
-            for record in session.stream(pid):
-                if record.seq_start is not None:
-                    if origin is None:
-                        origin = record.seq_start
-                    end = record_end(record.seq_start, len(record.payload))
-                    hinted_extent = (end - origin) % SEQ_SPACE
-                else:
-                    cumulative += len(record.payload)
-            extents[(session.session_id, pid)] = (
-                hinted_extent if origin is not None else cumulative
+            extents[(session.session_id, pid)] = stream_extent(
+                participant, list(session.stream(pid))
             )
     return extents
 

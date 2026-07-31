@@ -33,10 +33,100 @@ from zpf.errors import ZpfError
 from zpf.order import SEQ_SPACE
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterator, Sequence
 
     from zpf.blocks import Participant, Record
     from zpf.writer import SourceHandle
+
+
+def is_decoded_stream(records: Sequence[Record]) -> bool:
+    """Return whether a participant's records form a *decoded* layer.
+
+    A record is decoded iff it carries a ``decoder_id``, and that is what
+    selects the stream's offset space — not whether it happens to carry
+    transport hints.
+
+    Args:
+        records: The participant's records, in stored order.
+
+    Returns:
+        True if any record carries a ``decoder_id``.
+
+    """
+    return any(record.decoder_id is not None for record in records)
+
+
+def record_ranges(
+    participant: Participant, records: Sequence[Record]
+) -> tuple[tuple[int, int], ...]:
+    """Compute the offset range each record occupies in its own stream.
+
+    Each layer has its own offset space, and which one applies is decided
+    by the layer, not by the presence of hints:
+
+    * A **decoded** stream is the concatenation of that participant's
+      decoded record payloads in stored order, byte 0 being the first byte
+      of the first such record. It is **not** hole-inclusive — Undecoded
+      regions name ranges in the *input's* space and contribute nothing
+      here — so a record's range is purely positional.
+    * A **transport** stream is a true position: holes count as if the
+      bytes were present, so offsets come from ``seq_start`` against the
+      origin (``isn + 1``, or the first captured byte when the handshake
+      was missed). A hint-less transport stream has no way to know about
+      holes, so it too is positional.
+
+    Args:
+        participant: The participant whose stream this is.
+        records: Its records, in stored order.
+
+    Returns:
+        One ``(off_start, off_end)`` per record, positionally matching
+        ``records``. A record whose position cannot be placed — a hinted
+        stream's record carrying no ``seq_start`` — gets a zero-width range
+        at the stream's current end, since it contributes no bytes.
+
+    """
+    decoded = is_decoded_stream(records)
+    origin: int | None = None
+    if not decoded:
+        if participant.isn is not None:
+            origin = (participant.isn + 1) % SEQ_SPACE
+        else:
+            origin = next(
+                (r.seq_start for r in records if r.seq_start is not None), None
+            )
+    if origin is None:
+        cursor = 0
+        positional: list[tuple[int, int]] = []
+        for record in records:
+            positional.append((cursor, cursor + len(record.payload)))
+            cursor += len(record.payload)
+        return tuple(positional)
+    ranges: list[tuple[int, int]] = []
+    end = 0
+    for record in records:
+        if record.seq_start is None:
+            ranges.append((end, end))
+            continue
+        start = (record.seq_start - origin) % SEQ_SPACE
+        stop = start + len(record.payload)
+        ranges.append((start, stop))
+        end = max(end, stop)
+    return tuple(ranges)
+
+
+def stream_extent(participant: Participant, records: Sequence[Record]) -> int:
+    """Return one past the last offset the participant's stream reaches.
+
+    Args:
+        participant: The participant whose stream this is.
+        records: Its records, in stored order.
+
+    Returns:
+        The stream's extent in its own offset space, 0 when empty.
+
+    """
+    return max((end for _, end in record_ranges(participant, records)), default=0)
 
 
 @dataclass(frozen=True)
