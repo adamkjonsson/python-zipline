@@ -279,7 +279,7 @@ class DecodeStage:
             stream: The input stream the range belongs to.
             off_start: First logical offset left undecoded.
             off_end: One past the last offset left undecoded.
-            reason: Why, e.g. ``"undecodable"``, ``"tcp-gap"``,
+            reason: Why, e.g. ``"undecodable"``, ``"gap"``,
                 ``"truncated"``.
             decoder: The decoder that declined the region — for a session
                 with more than one decoder. Defaults to the stage's decoder,
@@ -308,7 +308,7 @@ class DecodeStage:
 
         On a clean close with auto-fill on, every input offset the decoder
         left neither cited nor marked is written as an ``Undecoded`` block
-        first — ``tcp-gap`` for a reassembly hole, ``skipped`` for data the
+        first — ``gap`` for a reassembly hole, ``skipped`` for data the
         decoder passed over — so the output satisfies the coverage guarantee
         by construction.
 
@@ -418,7 +418,7 @@ def decode_stage(
         digest: Content hash of the input; SHA-256 of it when omitted.
         comment: Free-text note for the File Header.
         fill_undecoded: On a clean close, mark every input offset the
-            decoder left uncovered as ``Undecoded`` (``tcp-gap`` for
+            decoder left uncovered as ``Undecoded`` (``gap`` for
             reassembly holes, ``skipped`` for data the decoder passed over),
             so the output satisfies the coverage guarantee by construction.
             On by default; set false to emit only the ``Undecoded`` blocks
@@ -545,7 +545,7 @@ def _label_fills(
     """Split uncovered ranges at gap boundaries, labelling each part's reason.
 
     A part inside a reassembly :class:`~zpf.reassembly.Gap` is a
-    ``"tcp-gap"``; anything else is data the decoder passed over, marked
+    ``"gap"``; anything else is data the decoder passed over, marked
     ``"skipped"``. Auto-fill never emits ``"undecodable"`` — that is the
     decoder's own claim that it *tried and failed*, which only an explicit
     :meth:`DecodeStage.undecoded` call can make.
@@ -559,7 +559,7 @@ def _label_fills(
                 continue
             if position < lo:
                 yield position, lo, "skipped"
-            yield lo, hi, "tcp-gap"
+            yield lo, hi, "gap"
             position = hi
         if position < end:
             yield position, end, "skipped"

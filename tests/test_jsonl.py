@@ -198,6 +198,7 @@ FULL_BLOCKS = [
         proto="tcp",
         flow_key="a <-> b",
         flags=zpf.SessionFlags.SEQUENCED,
+        sequenced_basis="clock",
         comment="s",
     ),
     zpf.Participant(
@@ -226,7 +227,13 @@ FULL_BLOCKS = [
         extra_options=(zpf.RawOption(0x0F00, b"zz"),),
     ),
     zpf.Undecoded(
-        source_id=1, session_id=7, participant_id=1, off_start=100, off_end=139, reason="tcp-gap"
+        source_id=1,
+        session_id=7,
+        participant_id=1,
+        off_start=100,
+        off_end=139,
+        reason="rtp-seq-gap",
+        reason_class="hole",
     ),
     zpf.NameResolution(session_id=7, participant_id=0, label="alice", kind="nick"),
     zpf.End(comment="done"),

@@ -42,6 +42,36 @@ _SWAPPED_MAGIC = 0x4650495A
 SPEC_VERSION: tuple[int, int] = (0, 12)
 
 
+#: The canonical :class:`Undecoded` ``reason`` values, mapped to their
+#: recoverability class. The vocabulary is open — a producer may be more
+#: specific — but every value belongs to one of these two classes, and a
+#: reason outside this table must name its class in ``reason_class``.
+#:
+#: ``bytes`` means the bytes exist at that span upstream and a consumer may
+#: follow the reference to fetch them; ``hole`` means the range has no bytes
+#: anywhere. ``undecodable`` and ``skipped`` differ in *intent*, not
+#: recoverability: the decoder tried and failed, versus declined on purpose.
+UNDECODED_REASONS: dict[str, str] = {
+    "undecodable": "bytes",
+    "skipped": "bytes",
+    "gap": "hole",
+    "truncated": "hole",
+}
+
+#: The two recoverability classes a ``reason_class`` may name.
+REASON_CLASSES: frozenset[str] = frozenset({"bytes", "hole"})
+
+#: The defined ``sequenced_basis`` values. The vocabulary is open and a reader
+#: MUST NOT reject a session for a value it does not recognise — an unknown
+#: value simply means an unknown basis.
+#:
+#: ``trivial`` covers a session with one participant, or only one that ever
+#: sends: there was never a cross-participant order to get wrong. Recording a
+#: basis is unconditional even then, because what a producer is *relying on*
+#: is the one thing it always knows when it sets the flag.
+SEQUENCED_BASES: frozenset[str] = frozenset({"clock", "protocol", "external", "trivial"})
+
+
 def unsupported_version(version_major: int, version_minor: int) -> str | None:
     """Report why a file's stamped version cannot be read, if it cannot.
 
@@ -690,6 +720,9 @@ class Session(Block):
         proto: Session protocol (lowercase; e.g. ``"tcp"``, ``"http"``).
         flow_key: Human-readable flow key, e.g. ``"a:port <-> b:port"``.
         flags: Session-level flags (:class:`SessionFlags`).
+        sequenced_basis: What a SEQUENCED hint-less session's order rests on;
+            see :data:`SEQUENCED_BASES`. Required on such a session, and
+            meaningless without the SEQUENCED flag.
         comment: Free-text note.
         extra_options: Preserved unrecognized/duplicate option occurrences.
 
@@ -701,6 +734,7 @@ class Session(Block):
     proto: str | None = None
     flow_key: str | None = None
     flags: SessionFlags = SessionFlags(0)
+    sequenced_basis: str | None = None
     comment: str | None = None
     extra_options: tuple[RawOption, ...] = ()
 
@@ -711,6 +745,7 @@ class Session(Block):
         _OptSpec(
             _frame.OPT_SESSION_FLAGS, "flags", _unpack_session_flags, _pack_u16, skip_zero=True
         ),
+        _OptSpec(_frame.OPT_SEQUENCED_BASIS, "sequenced_basis", _unpack_str, _pack_str),
     )
 
     def __post_init__(self) -> None:
@@ -1045,8 +1080,11 @@ class Undecoded(Block):
         participant_id: Participant (stream) inside that input.
         off_start: Logical 0-based stream offset of the region's first byte.
         off_end: One past the region's last byte.
-        reason: Why the region is undecoded (``"undecodable"``, ``"tcp-gap"``,
-            ``"truncated"``, …).
+        reason: Why the region is undecoded. Open vocabulary; the canonical
+            values are :data:`UNDECODED_REASONS`.
+        reason_class: ``"bytes"`` or ``"hole"`` — which recoverability class
+            ``reason`` belongs to. Required with a reason outside the
+            canonical four, and must agree with the table for one of them.
         decoder_id: Which decoder declined the region.
         comment: Free-text note.
         extra_options: Preserved unrecognized/duplicate option occurrences.
@@ -1061,6 +1099,7 @@ class Undecoded(Block):
     off_start: int
     off_end: int
     reason: str | None = None
+    reason_class: str | None = None
     decoder_id: int | None = None
     comment: str | None = None
     extra_options: tuple[RawOption, ...] = ()
@@ -1069,7 +1108,21 @@ class Undecoded(Block):
         _COMMENT_SPEC,
         _OptSpec(_frame.OPT_DECODER_ID, "decoder_id", _unpack_u16, _pack_u16),
         _OptSpec(_frame.OPT_UNDECODED_REASON, "reason", _unpack_str, _pack_str),
+        _OptSpec(_frame.OPT_REASON_CLASS, "reason_class", _unpack_str, _pack_str),
     )
+
+    @property
+    def recoverability(self) -> str | None:
+        """Which class the region falls in, or ``None`` if unknowable.
+
+        The class — not the word — is what a consumer must act on: whether
+        the bytes exist upstream and can be fetched, or the range is a hole
+        with no bytes anywhere. A non-canonical ``reason`` with no
+        ``reason_class`` is a writer error, and its class is genuinely
+        unknown; a consumer MUST NOT guess, least of all ``"hole"``, which
+        would silently discard bytes that may well exist.
+        """
+        return UNDECODED_REASONS.get(self.reason or "", self.reason_class)
 
     def __post_init__(self) -> None:
         _check_uint(self.source_id, 16, "source_id")

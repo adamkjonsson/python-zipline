@@ -226,7 +226,7 @@ def test_hole_inclusive_extents(tmp_path: Path):
             spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
                             off_start=0, off_end=10),),
         )
-        w.undecoded(source, 7, 0, 10, 49, reason="tcp-gap")
+        w.undecoded(source, 7, 0, 10, 49, reason="gap")
         s.record(
             client, ts=2, payload=b"b", decoder=http,
             spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,

@@ -121,6 +121,29 @@ def test_zero_flags_options_are_omitted():
     assert _frame.OPT_SESSION_FLAGS not in _option_ids(zpf.Session(session_id=1))
 
 
+def test_sequenced_basis_round_trips():
+    session = zpf.Session(
+        session_id=1, flags=zpf.SessionFlags.SEQUENCED, sequenced_basis="trivial"
+    )
+    assert _frame.OPT_SEQUENCED_BASIS in _option_ids(session)
+    assert zpf.Session.from_content(session.to_bytes()).sequenced_basis == "trivial"
+    # Open vocabulary: an unrecognised basis means an unknown one, not an
+    # invalid one, so it survives unchanged.
+    exotic = zpf.Session(session_id=1, sequenced_basis="ask-the-operator")
+    assert zpf.Session.from_content(exotic.to_bytes()).sequenced_basis == "ask-the-operator"
+    assert "trivial" in zpf.SEQUENCED_BASES
+
+
+def test_reason_class_round_trips():
+    block = zpf.Undecoded(
+        source_id=1, session_id=7, participant_id=0, off_start=0, off_end=4,
+        reason="rtp-seq-gap", reason_class="hole",
+    )
+    reparsed = zpf.Undecoded.from_content(block.to_bytes())
+    assert (reparsed.reason, reparsed.reason_class) == ("rtp-seq-gap", "hole")
+    assert reparsed.recoverability == "hole"
+
+
 def _option_ids(block: zpf.Block) -> list[int]:
     body_size = 16 if isinstance(block, zpf.FileHeader) else 8
     region = block.to_bytes()[body_size:]

@@ -220,20 +220,38 @@ outright.
 *Verification:* `453 passed, 7 xfailed`; `ruff check` clean; docs build clean
 under `-W`.
 
-### Phase 3 — Vocabulary and new options
+### Phase 3 — Vocabulary and new options — **DONE**
 
-- Undecoded `reason`: `tcp-gap` → **`gap`**. Real code change, not just docs —
-  [decode.py:562](src/zpf/decode.py#L562) emits it.
-- New option **`reason_class`** (`0x00A1`, `hole`/`bytes`), required with a
-  non-canonical `reason`, and MUST agree if present with a canonical one.
-- New option **`sequenced_basis`** (`0x0053`, Session), values
-  `clock`/`protocol`/`external`/`trivial`.
-- `skipped` becomes canonical — we already emit it, so this is documentation.
+- Undecoded `reason`: `tcp-gap` → **`gap`**, in the emitter as well as the docs.
+- New option **`reason_class`** (`0x00A1`), required with a non-canonical
+  `reason` and required to agree with a canonical one. `Undecoded.recoverability`
+  resolves the two into the single fact a consumer acts on, returning `None`
+  when a writer left it genuinely unknowable — a consumer must not guess, least
+  of all `hole`, which would silently discard bytes that may exist.
+- New option **`sequenced_basis`** (`0x0053`), with `SEQUENCED_BASES` naming the
+  four defined values. The vocabulary is open and an unrecognised value means an
+  unknown basis, never an invalid one.
+- `skipped` is now canonical; we already emitted it, so it only gained a class.
+- Vocabularies live in `blocks.py` as `UNDECODED_REASONS`, `REASON_CLASSES` and
+  `SEQUENCED_BASES`, exported so a caller can check a value without hardcoding
+  the strings.
 
-*Files:* `_frame.py` (ids), [blocks.py](src/zpf/blocks.py) (Undecoded, Session),
-[writer.py](src/zpf/writer.py) (`undecoded()`, `begin_session()`),
-[jsonl.py](src/zpf/jsonl.py) (mapping).
-*Unlocks:* `undecoded-skipped`, `undecoded-reason-class`, `sequenced-basis`.
+**Vectors: 22 of 28**, up from 21 — `sequenced-basis` was the only vector this
+phase could unlock. `isolate-sequenced-no-basis` still fails, correctly: the
+option now exists, but nothing yet knows *when* it is required, which needs the
+hint-less detection in Phase 4.
+
+The `tcp-gap` rename had a pleasing side effect: because `tcp-gap` is no longer
+canonical, three existing tests that used it started failing the new
+`reason_class` rule — the rule catching real code the moment it landed.
+
+Worth recording for the upstream report: with `reason_class` implemented, both
+defective `undecoded-*` vectors now project **exactly** as their shipped
+`.jsonl` says, line for line. Their content is right; only the File Header
+provenance is wrong, so adding the two options is the whole fix.
+
+*Verification:* `461 passed, 6 xfailed`; `ruff check` clean; docs build clean
+under `-W`.
 
 ### Phase 4 — Ordering semantics
 

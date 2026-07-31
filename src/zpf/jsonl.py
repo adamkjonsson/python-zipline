@@ -367,6 +367,7 @@ def _enc_session(block: Session, on_issue: Callable[[str], None]) -> dict[str, A
     _put(obj, "key", block.flow_key)
     if block.flags & SessionFlags.SEQUENCED:
         obj["sequenced"] = True
+    _put(obj, "sequenced_basis", block.sequenced_basis)
     _put(obj, "comment", block.comment)
     return obj
 
@@ -462,6 +463,7 @@ def _enc_undecoded(block: Undecoded, on_issue: Callable[[str], None]) -> dict[st
         "off_end": _num64(block.off_end),
     }
     _put(obj, "reason", block.reason)
+    _put(obj, "reason_class", block.reason_class)
     _put(obj, "decoder_id", block.decoder_id)
     _put(obj, "comment", block.comment)
     return obj
@@ -597,6 +599,7 @@ def _dec_session(reader: _ObjReader) -> Session:
         proto=reader.take_str("proto"),
         flow_key=reader.take_str("key"),
         flags=flags,
+        sequenced_basis=reader.take_str("sequenced_basis"),
         comment=reader.take_str("comment"),
         extra_options=reader.options(),
     )
@@ -698,6 +701,7 @@ def _dec_undecoded(reader: _ObjReader) -> Undecoded:
         off_start=reader.require_int("off_start"),
         off_end=reader.require_int("off_end"),
         reason=reader.take_str("reason"),
+        reason_class=reader.take_str("reason_class"),
         decoder_id=reader.take_int("decoder_id"),
         comment=reader.take_str("comment"),
         extra_options=reader.options(),

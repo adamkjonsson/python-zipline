@@ -68,6 +68,14 @@ For contrast, every *other* derived vector — `decoded-basic`,
 `chain/` files — sets both fields correctly. The omission looks like an
 oversight in three files rather than a misreading of the rule.
 
+**Everything else about them is right.** Having implemented `reason_class` and
+the `skipped` reason, we projected both `accept` vectors and compared against
+their shipped `.jsonl`: the output matches, line for line, including
+`undecoded-reason-class`'s non-canonical `rtp-seq-gap` reason carrying
+`reason_class: "hole"`. So these two vectors test exactly what they set out to,
+and adding the two header options is the whole fix — no other content needs
+revisiting.
+
 ### Why it matters
 
 The two tiers fail in opposite and equally unhelpful directions.

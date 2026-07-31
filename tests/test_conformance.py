@@ -176,6 +176,58 @@ def test_undecoded_only_in_decode_stage_files():
     accept(DERIVED_HEADER, INP, DEC, undecoded)
 
 
+def undecoded(**kwargs: object) -> zpf.Undecoded:
+    args: dict = {
+        "source_id": 2, "session_id": 9, "participant_id": 0, "off_start": 0, "off_end": 4,
+    }
+    args.update(kwargs)
+    return zpf.Undecoded(**args)
+
+
+def test_a_canonical_reason_implies_its_class():
+    # The canonical four need no reason_class, and each sits in a fixed class.
+    for reason in ("undecodable", "skipped", "gap", "truncated"):
+        accept(DERIVED_HEADER, INP, DEC, undecoded(reason=reason))
+    assert zpf.UNDECODED_REASONS["skipped"] == "bytes"  # intent differs, class does not
+    assert zpf.UNDECODED_REASONS["undecodable"] == "bytes"
+    assert zpf.UNDECODED_REASONS["gap"] == "hole"
+
+
+def test_a_non_canonical_reason_must_name_its_class():
+    # The vocabulary is open so a producer can be specific about *how*; that
+    # freedom must not cost the consumer the one fact it acts on.
+    reject(
+        DERIVED_HEADER, INP, DEC, undecoded(reason="rtp-seq-gap"),
+        match="must carry reason_class",
+    )
+    accept(DERIVED_HEADER, INP, DEC, undecoded(reason="rtp-seq-gap", reason_class="hole"))
+
+
+def test_reason_class_must_be_one_of_the_two_classes():
+    reject(
+        DERIVED_HEADER, INP, DEC, undecoded(reason="rtp-seq-gap", reason_class="maybe"),
+        match="'bytes' or 'hole'",
+    )
+
+
+def test_reason_class_must_agree_with_a_canonical_reason():
+    # Redundant but permitted — so long as it does not contradict the table.
+    accept(DERIVED_HEADER, INP, DEC, undecoded(reason="gap", reason_class="hole"))
+    reject(
+        DERIVED_HEADER, INP, DEC, undecoded(reason="gap", reason_class="bytes"),
+        match="reason_class says",
+    )
+
+
+def test_recoverability_is_unknown_without_a_class():
+    # A consumer must not guess, least of all "hole", which would discard
+    # bytes that may well exist.
+    assert undecoded(reason="gap").recoverability == "hole"
+    assert undecoded(reason="skipped").recoverability == "bytes"
+    assert undecoded(reason="rtp-seq-gap", reason_class="hole").recoverability == "hole"
+    assert undecoded(reason="rtp-seq-gap").recoverability is None
+
+
 def test_pass_through_records_carry_no_spans():
     span = Span(source_id=2, session_id=9, participant_id=0, off_start=0, off_end=1)
     reject(

@@ -244,7 +244,7 @@ def test_decode_stage_undecoded_marks_a_gap(tmp_path: Path):
         for stream in dec.streams():
             for chunk in stream.chunks():
                 if isinstance(chunk, zpf.Gap):
-                    dec.undecoded(stream, chunk.off_start, chunk.off_end, reason="tcp-gap")
+                    dec.undecoded(stream, chunk.off_start, chunk.off_end, reason="gap")
                 else:
                     dec.record(
                         stream,
@@ -256,7 +256,7 @@ def test_decode_stage_undecoded_marks_a_gap(tmp_path: Path):
 
     with zpf.open(io.BytesIO(sink.getvalue())) as out:
         (undecoded,) = out.undecoded
-        assert undecoded.reason == "tcp-gap"
+        assert undecoded.reason == "gap"
         assert (undecoded.session_id, undecoded.participant_id) == (7, 0)
         assert (undecoded.off_start, undecoded.off_end) == (len(REQUEST), len(REQUEST) + 4)
 
@@ -307,7 +307,7 @@ def test_autofill_marks_uncited_data_as_skipped():
     assert zpf.check_coverage(io.BytesIO(sink.getvalue()), io.BytesIO(raw)) == []
 
 
-def test_autofill_marks_a_reassembly_gap_as_tcp_gap():
+def test_autofill_marks_a_reassembly_gap_as_gap():
     raw = raw_file(gap=True)
     sink = io.BytesIO()
     with zpf.decode_stage(
@@ -318,7 +318,7 @@ def test_autofill_marks_a_reassembly_gap_as_tcp_gap():
                 dec.record(stream, seg.data, ts=seg.ts, cites=(seg.off_start, seg.off_end))
 
     marks = undecoded_by_stream(sink.getvalue())
-    (gap_key,) = [k for k, u in marks.items() if u.reason == "tcp-gap"]
+    (gap_key,) = [k for k, u in marks.items() if u.reason == "gap"]
     assert gap_key == (7, 0, len(REQUEST), len(REQUEST) + 4)
     assert zpf.check_coverage(io.BytesIO(sink.getvalue()), io.BytesIO(raw)) == []
 
@@ -337,7 +337,7 @@ def test_autofill_splits_an_uncovered_range_around_a_gap():
         )
     assert [(u.off_start, u.off_end, u.reason) for u in client] == [
         (0, len(REQUEST), "skipped"),
-        (len(REQUEST), len(REQUEST) + 4, "tcp-gap"),
+        (len(REQUEST), len(REQUEST) + 4, "gap"),
         (len(REQUEST) + 4, len(REQUEST) + 4 + len(MORE), "skipped"),
     ]
     assert zpf.check_coverage(io.BytesIO(sink.getvalue()), io.BytesIO(raw)) == []

@@ -18,7 +18,10 @@ from __future__ import annotations
 from zpf._frame import RawOption
 from zpf.binary import BlockReader, BlockWriter
 from zpf.blocks import (
+    REASON_CLASSES,
+    SEQUENCED_BASES,
     SPEC_VERSION,
+    UNDECODED_REASONS,
     Block,
     Custom,
     Decoder,
@@ -122,7 +125,10 @@ __all__ = [
     "SessionWriter",
     "Source",
     "SourceHandle",
+    "REASON_CLASSES",
+    "SEQUENCED_BASES",
     "SPEC_VERSION",
+    "UNDECODED_REASONS",
     "SourceKind",
     "Span",
     "StreamView",

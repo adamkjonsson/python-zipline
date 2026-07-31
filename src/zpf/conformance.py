@@ -40,6 +40,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from zpf.blocks import (
+    REASON_CLASSES,
+    UNDECODED_REASONS,
     Block,
     Decoder,
     End,
@@ -252,7 +254,39 @@ class ConformanceChecker:
         if block.decoder_id is not None and block.decoder_id not in self._decoders:
             msg = f"{described} names undeclared decoder {block.decoder_id}"
             raise SemanticError(msg)
+        self._check_reason_class(block, described)
         self._lock_kind(_DECODE, described)
+
+    def _check_reason_class(self, block: Undecoded, described: str) -> None:
+        """Check the reason names a recoverability class a consumer can act on.
+
+        The vocabulary is open so a producer can be specific about *how* a
+        region came to be undecoded, and ``reason_class`` is what stops that
+        freedom costing the consumer the one fact it must have: whether the
+        bytes exist upstream. A canonical reason implies its class; anything
+        else has to say.
+        """
+        canonical = UNDECODED_REASONS.get(block.reason or "")
+        if block.reason_class is None:
+            if block.reason is not None and canonical is None:
+                msg = (
+                    f"{described} reason {block.reason!r} is outside the canonical "
+                    f"vocabulary, so it must carry reason_class"
+                )
+                raise SemanticError(msg)
+            return
+        if block.reason_class not in REASON_CLASSES:
+            msg = (
+                f"{described} reason_class {block.reason_class!r} must be "
+                f"'bytes' or 'hole'"
+            )
+            raise SemanticError(msg)
+        if canonical is not None and block.reason_class != canonical:
+            msg = (
+                f"{described} reason {block.reason!r} is in the {canonical!r} class, "
+                f"but reason_class says {block.reason_class!r}"
+            )
+            raise SemanticError(msg)
 
     def _on_name(self, block: NameResolution) -> None:
         state = self._require_live_session(block.session_id, _describe(block))

@@ -33,12 +33,12 @@ VECTORS = Path(__file__).parent / "vectors"
 #: Vector cases that MUST pass. Grow it as phases land; never remove a name,
 #: because that is the regression guard.
 #:
-#: Phase 2: the whole ``reject`` tier, three of five ``isolate``, and every
-#: ``accept`` case that does not need a later phase. Still outstanding —
-#: ``annotator-decoded`` and ``chain/annotated`` need the decoded-layer
-#: pass-through (Phase 5); ``sequenced-basis`` and
-#: ``isolate-sequenced-no-basis`` need the ``sequenced_basis`` option
-#: (Phase 3); three more are blocked upstream, see :data:`DEFECTIVE`.
+#: Phase 3: the whole ``reject`` tier and every ``accept`` case bar two.
+#: Still outstanding — ``annotator-decoded`` and ``chain/annotated`` need the
+#: decoded-layer pass-through (Phase 5), and ``isolate-sequenced-no-basis``
+#: needs hint-less detection (Phase 4), since the option now exists but
+#: nothing yet knows when it is *required*. Three more are blocked upstream,
+#: see :data:`DEFECTIVE`.
 KNOWN_PASSING: frozenset[str] = frozenset(
     {
         "chain/decoded",
@@ -62,6 +62,7 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "reject-unknown-major",
         "reject-unknown-minor",
         "reordered-decoded",
+        "sequenced-basis",
     }
 )
 
