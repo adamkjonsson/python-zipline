@@ -320,8 +320,11 @@ D1 and D2 are settled above. Two minor ones remain, neither blocking:
 
 ## Status note
 
-[SPEC-0.11-REVIEW.md](SPEC-0.11-REVIEW.md) is now historical: 0.12's changelog
-states it "fixes what the review of `0.11` found", and all three findings were
-adopted — the merge tie-break verbatim, including the observation that an
-implementation had already converged on `(timestamp, pid)`. Nothing further is
-owed upstream.
+This project reviewed `0.10` and `0.11` upstream, and both reviews have been
+fully absorbed: `0.12`'s changelog states it "fixes what the review of `0.11`
+found", and all three of that review's findings were adopted — the merge
+tie-break verbatim, including the observation that an implementation had already
+converged on `(timestamp, participant_id)`. That is why several items in this
+plan are ratifications of existing behaviour rather than changes. Nothing
+further is owed upstream, and the review documents themselves have been removed
+as superseded.
