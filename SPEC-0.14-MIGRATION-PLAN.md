@@ -41,23 +41,21 @@ decisions not taken*.
 
 ---
 
-## One defect in the specification, found while reading it
+## Findings against the specification
 
-**§File Header's field table says `version_minor` is `13` for this document.**
+Two, both recorded in [SPEC-0.14-FINDINGS.md](SPEC-0.14-FINDINGS.md) rather than
+argued here, so there is one copy of each to correct:
 
-> \| `version_minor` \| u16 \| `13` for this document \|
-
-Everything else in the release says `14`: the document title, the worked hex
-dump (`000E  0E 00  version_minor = 14`), the CHANGELOG, and every shipped
-vector — `raw-minimal` stamps `0E`, and `reject-unknown-minor` stamps `15`,
-which is derived from the current version precisely so it keeps testing an
-unimplemented minor. The table is a stale copy from `0.13`, and it is the same
-fault this release exists to fix: a rule stated in more than one place with only
-some copies updated.
-
-**We implement `14`.** No ambiguity in practice, but it is worth reporting — the
-field table is where a reader author looks first, and a reader built from it
-would reject the entire vector suite. Filed for a `SPEC-0.14-REVIEW.md` batch.
+- **A decode stage that *creates* a break in its own output owes nothing** —
+  every duty attached to the Discontinuity block presupposes an input that
+  already carries one, so a filter or a reorder produces a file whose offset
+  space lies about its own continuity. High severity; registered upstream as
+  [zipline#78](https://github.com/adamkjonsson/zipline/issues/78). It is what
+  [D5](#d5--what-rewrite_decoded-owes-at-a-drop-point--needs-a-call) below hangs
+  on.
+- **§File Header's field table still says `version_minor` is `13`** — a stale
+  copy from `0.13`, contradicted by the title, the worked hex dump, the
+  CHANGELOG and every shipped vector. **We implement `14`.**
 
 ---
 
@@ -176,6 +174,12 @@ said nothing.
 Because this goes beyond the standard, it should be a parameter rather than
 unconditional behaviour: `mark_gaps: bool = True`. Flagging it here rather than
 deciding it.
+
+Reported upstream as [zipline#78](https://github.com/adamkjonsson/zipline/issues/78)
+— see [finding 1](SPEC-0.14-FINDINGS.md), which is the fuller argument and shows
+the gap is not confined to a filter: `reordered-decoded` is a shipped `accept`
+vector that already exhibits it. If #78 lands before Phase 5, this decision is
+made for us and `mark_gaps` becomes unconditional.
 
 ---
 
