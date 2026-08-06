@@ -2,7 +2,7 @@
 
 The Zipline Payload Format stores the payload of network traffic — the bytes
 that flow between endpoints once packets have been reassembled into sessions,
-plus the metadata needed to consume them. This package implements v0.12 of the
+plus the metadata needed to consume them. This package implements v0.14 of the
 specification, and exactly that version: while the format is in ``0.x`` every
 minor is a separate format, so a file stamped with any other version is
 rejected rather than misread. :data:`zpf.SPEC_VERSION` is the single source
@@ -26,9 +26,11 @@ from zpf.blocks import (
     Block,
     Custom,
     Decoder,
+    Discontinuity,
     End,
     FileFlags,
     FileHeader,
+    InputExtent,
     NameResolution,
     Origin,
     Participant,
@@ -108,6 +110,7 @@ __all__ = [
     "DecoderHandle",
     "DerivedInput",
     "Diagnostic",
+    "Discontinuity",
     "EncodeError",
     "End",
     "FileFlags",
@@ -115,6 +118,7 @@ __all__ = [
     "FileReader",
     "FileWriter",
     "Gap",
+    "InputExtent",
     "JsonlReader",
     "JsonlWriter",
     "NameResolution",

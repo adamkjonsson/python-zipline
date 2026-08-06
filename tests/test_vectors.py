@@ -5,13 +5,13 @@ normative text (see ``tests/vectors/VENDORED.md``). They are the acceptance
 criteria for the 0.12 → 0.14 migration: each phase of the port is done when the
 vectors it targets pass.
 
-**The ratchet.** This library implements 0.12, so almost every vector fails
-today — a 0.14 file is refused at the version gate. Rather than leave the suite
-red for the duration of the migration, a vector case is a hard requirement only
-once its name is added to :data:`KNOWN_PASSING`; every other case is
-``xfail(strict=False)``. A case that starts passing shows up as ``XPASS`` — that
-is the progress signal — and is then promoted into :data:`KNOWN_PASSING` so it
-can never silently regress.
+**The ratchet.** A vector case is a hard requirement only once its name is added
+to :data:`KNOWN_PASSING`; every other case is ``xfail(strict=False)``. That keeps
+the suite green across a migration that starts with every file unreadable — until
+the version gate moves, a 0.14 file is refused whatever else is implemented. A
+case that starts passing shows up as ``XPASS`` — that is the progress signal —
+and is then promoted into :data:`KNOWN_PASSING` so it can never silently
+regress.
 
 So the migration invariant is: ``KNOWN_PASSING`` only ever grows, and the suite
 is green at every step.
@@ -23,6 +23,7 @@ the 26 vectors then shipped — only of what it passes against *these* files.
 
 from __future__ import annotations
 
+import dataclasses
 import io
 import json
 from dataclasses import dataclass
@@ -38,16 +39,47 @@ VECTORS = Path(__file__).parent / "vectors"
 #: Vector cases that MUST pass. Grow it as phases land; never remove a name,
 #: because that is the regression guard.
 #:
-#: Phase 0: the three refused before the version gate is reached, or by it.
-#: ``reject-length-misaligned`` and ``reject-payload-len-overrun`` are *not*
-#: here — they stamp 0/14, so today they are refused for their minor rather
-#: than for the framing defect each exists to test, and :data:`_REJECT_REASONS`
-#: catches that. They return at Phase 1.
+#: Phase 1: every vector built only from syntax 0.12 already had. The version
+#: gate was the whole of what stood between this library and them — 25 cases
+#: joined here on the one-line bump, including the two ``reject`` vectors that
+#: had been refused for their minor rather than for the framing defect each
+#: exists to test.
+#:
+#: The 14 still absent are the ones carrying syntax new in 0.13/0.14, plus
+#: ``isolate-coverage-gap``. None of them turns on Phase 1's block and option
+#: work alone: every remaining ``accept`` vector ships a ``.jsonl`` this
+#: compares, so they arrive with the projection in Phase 2, the semantic rules
+#: in Phase 4, and the pairwise splice check in Phase 5.
 KNOWN_PASSING: frozenset[str] = frozenset(
     {
+        "annotator-decoded",
+        "chain/annotated",
+        "chain/decoded",
+        "chain/raw",
+        "custom-block",
+        "descriptive-metadata",
+        "escape-reserved-flag-bit",
+        "escape-unknown-block",
+        "escape-unknown-enum",
+        "escape-unknown-option",
+        "file-clock-metadata",
+        "hintless-merge-backwards-ts",
+        "isolate-duplicate-id",
+        "isolate-sequenced-no-basis",
+        "isolate-undeclared-session",
+        "isolate-unknown-source-kind",
+        "merge-timestamp-tie",
+        "partially-hinted-sequenced",
+        "passthrough-transport",
+        "raw-minimal",
         "reject-bad-magic",
+        "reject-length-misaligned",
+        "reject-payload-len-overrun",
         "reject-unknown-major",
         "reject-unknown-minor",
+        "sequenced-basis",
+        "undecoded-reason-class",
+        "undecoded-skipped",
     }
 )
 
@@ -64,8 +96,9 @@ DEFECTIVE: dict[str, str] = {}
 #: exception escaped is not enough: while the version gate is behind the
 #: vectors, a file is refused for its stamped version long before the check it
 #: actually exercises is reached. That is exactly the state at Phase 0 of each
-#: port — three of these passed for the wrong reason at 0.12's, and two would at
-#: 0.14's. Matched case-insensitively against the error message.
+#: port — three of these passed for the wrong reason at 0.12's, and two did at
+#: 0.14's, held out of :data:`KNOWN_PASSING` until the gate moved in Phase 1.
+#: Matched case-insensitively against the error message.
 _REJECT_REASONS: dict[str, str] = {
     "reject-bad-magic": "magic",
     "reject-unknown-major": "version_major",
@@ -92,6 +125,21 @@ _ISOLATE_REASONS: dict[str, str] = {
     "isolate-unknown-source-kind": "unknown kind",
     "isolate-sequenced-no-basis": "sequenced_basis",
 }
+
+#: Syntax new in 0.13/0.14, by the option id carrying it. Each must be parsed
+#: into a typed field rather than preserved through the unknown-option escape.
+_NEW_OPTION_IDS: dict[int, str] = {
+    0x0015: "transform_params_digest",
+    0x0054: "external_session_id",
+    0x00C1: "input_extents",
+    0x00D0: "width",
+    0x00D1: "reason (Discontinuity)",
+}
+
+#: The one block type that MUST stay unknown. ``escape-unknown-block`` ships it
+#: to prove a reader skips what it does not recognize rather than failing, so a
+#: reader that "recognized" it would have failed the extension contract.
+_DELIBERATELY_UNKNOWN: frozenset[int] = frozenset({0x42})
 
 #: Fields the projection may render as a JSON number *or* a decimal string
 #: ("Value encoding" — 64-bit fields beyond JSON's exact-integer range).
@@ -161,6 +209,19 @@ def _load_cases() -> list[Case]:
 
 
 CASES = _load_cases()
+
+
+def _readable_params() -> list[Any]:
+    """Build unmarked params for every vector a conformant reader can parse.
+
+    The ``reject`` tier is excluded: those files are structurally corrupt by
+    construction, so there are no blocks to inspect.
+
+    Returns:
+        One param per readable case, in name order.
+
+    """
+    return [pytest.param(case, id=case.name) for case in CASES if case.tier != "reject"]
 
 
 def _params(tier: str) -> list[Any]:
@@ -258,6 +319,59 @@ def test_every_case_has_a_file() -> None:
         assert case.path.exists(), case.name
 
 
+@pytest.mark.parametrize("case", _readable_params())
+def test_new_syntax_is_recognized_rather_than_escaped(case: Case) -> None:
+    """No 0.13/0.14 id reaches ``extra_options``, and no block stays unknown.
+
+    This is the acceptance test the vector tiers cannot give. Every ``accept``
+    vector carrying new syntax also ships a ``.jsonl``, which
+    :func:`test_accept` compares, so none of them turns green until the
+    projection lands in Phase 2 — while the escape contract means every one of
+    them *reads* cleanly all along, with ``input_extents`` sitting in
+    ``extra_options`` and the Discontinuity block preserved as an
+    ``UnknownBlock``. Without this test the whole of Phase 1 could be skipped
+    and nothing would go red.
+    """
+    with zpf.open(case.path) as reader:
+        blocks = list(reader.blocks())
+    for index, block in enumerate(blocks):
+        escaped = [
+            _NEW_OPTION_IDS[opt.option_id]
+            for opt in getattr(block, "extra_options", ())
+            if opt.option_id in _NEW_OPTION_IDS
+        ]
+        assert not escaped, (
+            f"{case.name}: block {index} ({type(block).__name__}) preserved "
+            f"{escaped} as raw options instead of parsing them"
+        )
+        if isinstance(block, zpf.UnknownBlock):
+            assert block.block_type in _DELIBERATELY_UNKNOWN, (
+                f"{case.name}: block {index} of type 0x{block.block_type:02X} is not recognized"
+            )
+
+
+@pytest.mark.parametrize("case", _readable_params())
+def test_a_vector_survives_a_canonical_re_encode(case: Case) -> None:
+    """Re-encoding a parsed vector from scratch loses nothing.
+
+    Not a *byte* comparison: :func:`dataclasses.replace` drops the cached
+    original content, and the canonical encoding orders options by ascending
+    registry id, which 18 of these files do not. Option order is not
+    significant, so demanding the bytes back would fail on conformant input.
+    What must survive is every field and every preserved occurrence — which is
+    what catches a mis-declared struct or a dropped option in new syntax.
+    """
+    with zpf.open(case.path) as reader:
+        blocks = list(reader.blocks())
+    sink = io.BytesIO()
+    writer = zpf.BlockWriter(sink)
+    for block in blocks:
+        writer.write(dataclasses.replace(block))
+    with zpf.open(io.BytesIO(sink.getvalue())) as reparsed:
+        again = list(reparsed.blocks())
+    assert again == blocks, f"{case.name}: re-encoding changed the blocks"
+
+
 @pytest.mark.parametrize("case", _params("accept"))
 def test_accept(case: Case) -> None:
     """A conformant file reads cleanly and projects to its expected JSONL."""
@@ -278,7 +392,7 @@ def test_reject(case: Case) -> None:
     """Structural corruption is refused, and refused for the right reason.
 
     The reason matters as much as the refusal. A reader whose version gate
-    rejects every 0.12 file passes this tier wholesale without ever
+    rejects every 0.14 file passes this tier wholesale without ever
     exercising the framing checks the vectors are testing.
     """
     with pytest.raises(zpf.StructuralError) as caught, zpf.open(case.path) as reader:

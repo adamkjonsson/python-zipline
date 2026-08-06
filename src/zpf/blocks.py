@@ -1,4 +1,4 @@
-"""Typed block model for the Zipline Payload Format v0.12.
+"""Typed block model for the Zipline Payload Format v0.14.
 
 One frozen dataclass per block type, mirroring the specification's normative
 binary encoding. Each class knows how to serialize itself (:meth:`Block.to_bytes`)
@@ -39,7 +39,7 @@ _SWAPPED_MAGIC = 0x4650495A
 #: ``(version_major, version_minor)``. A writer stamps the version it
 #: implements; there is no obligation to compute the lowest version whose
 #: features a file happens to use.
-SPEC_VERSION: tuple[int, int] = (0, 12)
+SPEC_VERSION: tuple[int, int] = (0, 14)
 
 
 #: The canonical :class:`Undecoded` ``reason`` values, mapped to their
@@ -213,6 +213,47 @@ class Span:
 
 
 @dataclass(frozen=True)
+class InputExtent:
+    """How long one input participant stream was, in that stream's offsets.
+
+    Declared on a derived file's :class:`SessionEnd`, so that the coverage
+    guarantee — every byte of every input either cited by a ``spans`` entry or
+    marked :class:`Undecoded` — can be checked **from the derived file alone**,
+    without opening the input to measure it. Without this, a gap at the *end*
+    of a stream is invisible: coverage that stops early looks exactly like a
+    stream that was that short.
+
+    Ids are read in the referenced source's namespace, exactly as a
+    :class:`Span`'s are.
+
+    Attributes:
+        source_id: The ``zpf-input`` Source whose stream this measures.
+        session_id: Session inside that source.
+        participant_id: Participant (stream) inside that source.
+        extent: The stream's length — one past its last byte, so a stream of
+            *n* bytes occupies ``[0, n)``.
+
+    """
+
+    source_id: int
+    session_id: int
+    participant_id: int
+    extent: int
+
+    def __post_init__(self) -> None:
+        _check_uint(self.source_id, 16, "source_id")
+        _check_uint(self.session_id, 64, "session_id")
+        _check_uint(self.participant_id, 16, "participant_id")
+        _check_uint(self.extent, 64, "extent")
+
+    def pack(self) -> bytes:
+        """Return the 20-byte packed form (u16s lead for alignment)."""
+        return _frame.INPUT_EXTENT_ENTRY.pack(
+            self.source_id, self.participant_id, self.session_id, self.extent
+        )
+
+
+@dataclass(frozen=True)
 class Origin:
     """The input stream a pass-through participant re-emits.
 
@@ -266,6 +307,10 @@ def _unpack_u32(value: bytes) -> int:
     return _frame.U32.unpack(value)[0]
 
 
+def _unpack_u64(value: bytes) -> int:
+    return _frame.U64.unpack(value)[0]
+
+
 def _unpack_i64(value: bytes) -> int:
     return _frame.I64.unpack(value)[0]
 
@@ -280,6 +325,10 @@ def _pack_u16(value: int) -> bytes:
 
 def _pack_u32(value: int) -> bytes:
     return _frame.U32.pack(int(value))
+
+
+def _pack_u64(value: int) -> bytes:
+    return _frame.U64.pack(int(value))
 
 
 def _pack_i64(value: int) -> bytes:
@@ -341,17 +390,57 @@ def _unpack_spans_chunk(value: bytes) -> tuple[Span, ...]:
     )
 
 
+def _unpack_input_extents_chunk(value: bytes) -> tuple[InputExtent, ...]:
+    size = _frame.INPUT_EXTENT_ENTRY_SIZE
+    if len(value) % size:
+        msg = f"input_extents option length {len(value)} is not a multiple of {size}"
+        raise ValueError(msg)
+    return tuple(
+        InputExtent(
+            source_id=source_id,
+            session_id=session_id,
+            participant_id=participant_id,
+            extent=extent,
+        )
+        for source_id, participant_id, session_id, extent in (
+            _frame.INPUT_EXTENT_ENTRY.iter_unpack(value)
+        )
+    )
+
+
+def _unpack_bytes(value: bytes) -> bytes:
+    return value
+
+
+def _pack_bytes(value: bytes) -> bytes:
+    return bytes(value)
+
+
 def _pack_never(value: object) -> bytes:
     """Raise: options serialized by mode-specific code never call their encoder."""
     msg = f"unreachable: {value!r} is encoded by its option's mode"
     raise EncodeError(msg)
 
 
-def _spans_chunks(spans: tuple[Span, ...]) -> list[bytes]:
-    """Pack a span list into one or more option values (2340 entries each)."""
-    step = _frame.MAX_SPANS_PER_OPTION
+def _chunks(entries: tuple[Any, ...], per_option: int) -> list[bytes]:
+    """Pack a packed-entry list into one or more option values.
+
+    A packed option's value is capped at 65 535 bytes, which caps the entries
+    one occurrence can hold; a longer list simply repeats the option, and the
+    occurrences concatenate in file order. ``spans`` and ``input_extents``
+    chunk identically, differing only in entry size.
+
+    Args:
+        entries: The logical list, each element knowing how to ``pack()``.
+        per_option: How many entries fit in one occurrence.
+
+    Returns:
+        One value per occurrence, in order.
+
+    """
     return [
-        b"".join(span.pack() for span in spans[i : i + step]) for i in range(0, len(spans), step)
+        b"".join(entry.pack() for entry in entries[i : i + per_option])
+        for i in range(0, len(entries), per_option)
     ]
 
 
@@ -364,6 +453,11 @@ class _OptSpec(NamedTuple):
     encode: Callable[[Any], bytes]
     mode: str = "single"  # "single" | "list" (element per option) | "concat" (chunked list)
     skip_zero: bool = False  # omit when the value is falsy (zero flags bitfield)
+    per_option: int = 0  # mode="concat": entries one occurrence holds
+    #: How the JSON-Lines face renders this option's value. ``"scalar"`` is
+    #: whatever the decoder returned; ``"binary"`` is base64, which a reader
+    #: MUST NOT re-spell as text even when it decodes to printable ASCII.
+    json_kind: str = "scalar"
 
 
 class _SpecTable(NamedTuple):
@@ -432,7 +526,7 @@ def _encode_options(block: Block, specs: tuple[_OptSpec, ...]) -> bytes:
         elif spec.mode == "list":
             raws = [spec.encode(element) for element in value]
         else:
-            raws = _spans_chunks(value)
+            raws = _chunks(value, spec.per_option)
         parts.extend(_frame.encode_option(spec.option_id, raw) for raw in raws)
     extras: tuple[RawOption, ...] = getattr(block, "extra_options", ())
     parts.extend(_frame.encode_option(opt.option_id, opt.value) for opt in extras)
@@ -520,13 +614,18 @@ class FileHeader(Block):
         tick_hz: Time units per second for all timestamps; must be non-zero.
         version_major: Format major version; see :data:`SPEC_VERSION`.
         version_minor: Format minor version. While the major is ``0`` this
-            selects the format outright — ``0.12`` and ``0.11`` are different
+            selects the format outright — ``0.14`` and ``0.13`` are different
             formats, not compatible refinements.
         time_epoch: Origin for record timestamps, in ``tick_hz`` ticks since
             the Unix epoch; ``None`` means the default origin (0).
         creator: Tool + version that wrote the file.
         produced_by: Tool + version that ran the transform (derived files).
         produced_at: Wall-clock build time in Unix seconds (derived files).
+        transform_params_digest: Hash of the configuration of a transform that
+            produced records **without decoding** them — a filter, a reordering
+            stage, a merge. A decode stage's configuration lives on its
+            :class:`Decoder` as ``params_digest`` instead; the two are separate
+            because a file can be the output of one, the other, or neither.
         flags: File-level flags (:class:`FileFlags`).
         comment: Free-text note.
         extra_options: Preserved unrecognized/duplicate option occurrences.
@@ -542,6 +641,7 @@ class FileHeader(Block):
     creator: str | None = None
     produced_by: str | None = None
     produced_at: int | None = None
+    transform_params_digest: str | None = None
     flags: FileFlags = FileFlags(0)
     comment: str | None = None
     extra_options: tuple[RawOption, ...] = ()
@@ -553,6 +653,12 @@ class FileHeader(Block):
         _OptSpec(_frame.OPT_PRODUCED_BY, "produced_by", _unpack_str, _pack_str),
         _OptSpec(_frame.OPT_PRODUCED_AT, "produced_at", _unpack_i64, _pack_i64),
         _OptSpec(_frame.OPT_FILE_FLAGS, "flags", _unpack_file_flags, _pack_u16, skip_zero=True),
+        _OptSpec(
+            _frame.OPT_TRANSFORM_PARAMS_DIGEST,
+            "transform_params_digest",
+            _unpack_str,
+            _pack_str,
+        ),
     )
 
     def __post_init__(self) -> None:
@@ -729,6 +835,11 @@ class Session(Block):
         sequenced_basis: What a SEQUENCED hint-less session's order rests on;
             see :data:`SEQUENCED_BASES`. Required on such a session, and
             meaningless without the SEQUENCED flag.
+        external_session_id: An identity assigned by something *outside* this
+            format — a trace id, a capture orchestrator's UUID, a case number.
+            **Opaque bytes, not text.** Nothing here interprets it, and a
+            reader MUST NOT assume it is a string even when it decodes to
+            printable ASCII: one id with two spellings is one id too many.
         comment: Free-text note.
         extra_options: Preserved unrecognized/duplicate option occurrences.
 
@@ -741,6 +852,7 @@ class Session(Block):
     flow_key: str | None = None
     flags: SessionFlags = SessionFlags(0)
     sequenced_basis: str | None = None
+    external_session_id: bytes | None = None
     comment: str | None = None
     extra_options: tuple[RawOption, ...] = ()
 
@@ -752,6 +864,13 @@ class Session(Block):
             _frame.OPT_SESSION_FLAGS, "flags", _unpack_session_flags, _pack_u16, skip_zero=True
         ),
         _OptSpec(_frame.OPT_SEQUENCED_BASIS, "sequenced_basis", _unpack_str, _pack_str),
+        _OptSpec(
+            _frame.OPT_EXTERNAL_SESSION_ID,
+            "external_session_id",
+            _unpack_bytes,
+            _pack_bytes,
+            json_kind="binary",
+        ),
     )
 
     def __post_init__(self) -> None:
@@ -866,6 +985,10 @@ class SessionEnd(Block):
         session_id: The session being ended.
         reason: How the session ended (open vocabulary: ``"fin"``, ``"rst"``,
             ``"timeout"``, ``"capture-end"``, …).
+        input_extents: How long each input participant stream this session drew
+            on was — derived files only. What makes the coverage guarantee
+            checkable from this file alone; see :class:`InputExtent`. One
+            logical list however many option occurrences carry it.
         comment: Free-text note.
         extra_options: Preserved unrecognized/duplicate option occurrences.
 
@@ -875,16 +998,26 @@ class SessionEnd(Block):
 
     session_id: int
     reason: str | None = None
+    input_extents: tuple[InputExtent, ...] = ()
     comment: str | None = None
     extra_options: tuple[RawOption, ...] = ()
 
     _SPEC: ClassVar[_SpecTable] = _specs(
         _COMMENT_SPEC,
         _OptSpec(_frame.OPT_SESSION_END_REASON, "reason", _unpack_str, _pack_str),
+        _OptSpec(
+            _frame.OPT_INPUT_EXTENTS,
+            "input_extents",
+            _unpack_input_extents_chunk,
+            _pack_never,
+            mode="concat",
+            per_option=_frame.MAX_EXTENTS_PER_OPTION,
+        ),
     )
 
     def __post_init__(self) -> None:
         _check_uint(self.session_id, 64, "session_id")
+        object.__setattr__(self, "input_extents", tuple(self.input_extents))
         object.__setattr__(self, "extra_options", tuple(self.extra_options))
 
     def _encode(self) -> bytes:
@@ -949,7 +1082,14 @@ class Record(Block):
         _OptSpec(_frame.OPT_SEQ_START, "seq_start", _unpack_u32, _pack_u32),
         _OptSpec(_frame.OPT_ACK, "ack", _unpack_u32, _pack_u32),
         _OptSpec(_frame.OPT_TS_FIRST, "ts_first", _unpack_i64, _pack_i64),
-        _OptSpec(_frame.OPT_SPANS, "spans", _unpack_spans_chunk, _pack_never, mode="concat"),
+        _OptSpec(
+            _frame.OPT_SPANS,
+            "spans",
+            _unpack_spans_chunk,
+            _pack_never,
+            mode="concat",
+            per_option=_frame.MAX_SPANS_PER_OPTION,
+        ),
         _OptSpec(_frame.OPT_DECODER_ID, "decoder_id", _unpack_u16, _pack_u16),
         _OptSpec(_frame.OPT_CONTENT_TYPE, "content_type", _unpack_str, _pack_str),
     )
@@ -1164,6 +1304,81 @@ class Undecoded(Block):
         )
 
 
+@dataclass(frozen=True)
+class Discontinuity(Block):
+    """Discontinuity block (``0x22``) — a break in **this** file's own stream.
+
+    Decoded layers only. The records either side of it are **not contiguous**,
+    whatever their positional ranges say.
+
+    **This is the mirror image of :class:`Undecoded`, and confusing the two is
+    the easy mistake.** Every field of an Undecoded block is read against the
+    *input*, and it says "there were bytes over there that I did not decode".
+    A Discontinuity says "something is missing **here**, in what I produced",
+    and its ids are this file's own. That is also why it is a block rather than
+    a record option: its meaning is positional, and stored order is what
+    defines a decoded stream's offsets, so it has to interleave with the
+    records it separates.
+
+    A pass-through re-emitting a decoded layer **renumbers** these into its own
+    ids — unlike an inherited :class:`Undecoded` block, which it copies
+    verbatim, because that one's statement is about a file further up the
+    chain while this one's is about the stream carrying it.
+
+    Attributes:
+        session_id: Session in **this** file.
+        participant_id: Participant (stream) in **this** file.
+        width: The gap's extent in this stream's offset space, and a term in
+            the positional arithmetic. **Absent means unknown**, which is not
+            the same as ``0``: an unknown width contributes 0 to the
+            arithmetic, while a declared ``0`` is a zero-width hole. The two
+            project differently and must not be conflated.
+        reason: Why the stream breaks here. Open vocabulary; e.g.
+            ``"tls-record-lost"``, ``"decrypt-failed"``, ``"stream-gap"``.
+        comment: Free-text note.
+        extra_options: Preserved unrecognized/duplicate option occurrences.
+
+    """
+
+    block_type: ClassVar[int] = _frame.BT_DISCONTINUITY
+
+    session_id: int
+    participant_id: int
+    width: int | None = None
+    reason: str | None = None
+    comment: str | None = None
+    extra_options: tuple[RawOption, ...] = ()
+
+    _SPEC: ClassVar[_SpecTable] = _specs(
+        _COMMENT_SPEC,
+        _OptSpec(_frame.OPT_WIDTH, "width", _unpack_u64, _pack_u64),
+        _OptSpec(_frame.OPT_DISCONTINUITY_REASON, "reason", _unpack_str, _pack_str),
+    )
+
+    def __post_init__(self) -> None:
+        _check_uint(self.session_id, 64, "session_id")
+        _check_uint(self.participant_id, 16, "participant_id")
+        _check_uint_opt(self.width, 64, "width")
+        object.__setattr__(self, "extra_options", tuple(self.extra_options))
+
+    def _encode(self) -> bytes:
+        body = _frame.DISCONTINUITY_BODY.pack(self.session_id, self.participant_id, 0)
+        return body + _encode_options(self, self._SPEC.ordered)
+
+    @classmethod
+    def _parse(cls, content: bytes) -> Self:
+        session_id, participant_id, _reserved = cls._body(content, _frame.DISCONTINUITY_BODY)
+        values, extras = _parse_options(
+            content[_frame.DISCONTINUITY_BODY.size :], cls._SPEC.by_id
+        )
+        return cls(
+            session_id=session_id,
+            participant_id=participant_id,
+            extra_options=extras,
+            **values,
+        )
+
+
 _NAME_BODY = struct.Struct("<QHH")
 
 
@@ -1329,6 +1544,7 @@ _BLOCK_CLASSES: dict[int, type[Block]] = {
         SessionEnd,
         Record,
         Undecoded,
+        Discontinuity,
         NameResolution,
         End,
         Custom,

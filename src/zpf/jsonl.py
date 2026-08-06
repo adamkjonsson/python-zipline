@@ -767,8 +767,18 @@ def block_to_obj(block: Block, *, on_issue: Callable[[str], None] | None = None)
     Returns:
         The JSON-serializable object for the block's line.
 
+    Raises:
+        EncodeError: If the block's type has no projection. A block type this
+            package models but the JSONL face does not is an internal gap, not
+            a malformed input — an unknown *file* block never gets here,
+            because it parses to :class:`~zpf.blocks.UnknownBlock`, which does
+            project.
+
     """
-    encoder = _ENCODERS[type(block)]
+    encoder = _ENCODERS.get(type(block))
+    if encoder is None:
+        msg = f"{type(block).__name__} has no JSONL projection"
+        raise EncodeError(msg)
     obj = encoder(block, on_issue or _ignore_issue)
     extras: tuple[RawOption, ...] = getattr(block, "extra_options", ())
     if extras:
