@@ -454,10 +454,6 @@ class _OptSpec(NamedTuple):
     mode: str = "single"  # "single" | "list" (element per option) | "concat" (chunked list)
     skip_zero: bool = False  # omit when the value is falsy (zero flags bitfield)
     per_option: int = 0  # mode="concat": entries one occurrence holds
-    #: How the JSON-Lines face renders this option's value. ``"scalar"`` is
-    #: whatever the decoder returned; ``"binary"`` is base64, which a reader
-    #: MUST NOT re-spell as text even when it decodes to printable ASCII.
-    json_kind: str = "scalar"
 
 
 class _SpecTable(NamedTuple):
@@ -865,11 +861,7 @@ class Session(Block):
         ),
         _OptSpec(_frame.OPT_SEQUENCED_BASIS, "sequenced_basis", _unpack_str, _pack_str),
         _OptSpec(
-            _frame.OPT_EXTERNAL_SESSION_ID,
-            "external_session_id",
-            _unpack_bytes,
-            _pack_bytes,
-            json_kind="binary",
+            _frame.OPT_EXTERNAL_SESSION_ID, "external_session_id", _unpack_bytes, _pack_bytes
         ),
     )
 
