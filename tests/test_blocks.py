@@ -144,9 +144,12 @@ def test_reason_class_round_trips():
     assert reparsed.recoverability == "hole"
 
 
+#: Fixed-body sizes for the blocks this helper is used with; 8 covers the rest.
+_BODY_SIZES: dict[type[zpf.Block], int] = {zpf.FileHeader: 16, zpf.Discontinuity: 12}
+
+
 def _option_ids(block: zpf.Block) -> list[int]:
-    body_size = 16 if isinstance(block, zpf.FileHeader) else 8
-    region = block.to_bytes()[body_size:]
+    region = block.to_bytes()[_BODY_SIZES.get(type(block), 8) :]
     return [opt.option_id for opt in _frame.iter_options(region)]
 
 
@@ -312,3 +315,89 @@ def test_record_payload_len_overrun_is_structural():
     content[24:28] = (2**31).to_bytes(4, "little")  # forge payload_len
     with pytest.raises(zpf.StructuralError):
         zpf.Record.from_content(bytes(content))
+
+
+# --- 0.13/0.14 syntax --------------------------------------------------------
+
+
+def test_discontinuity_round_trips_through_its_own_ids():
+    block = zpf.Discontinuity(session_id=42, participant_id=1, width=25, reason="stream-gap")
+    content = block.to_bytes()
+    assert content[: _frame.DISCONTINUITY_BODY.size] == _frame.DISCONTINUITY_BODY.pack(42, 1, 0)
+    assert zpf.Discontinuity.from_content(content) == block
+    assert zpf.parse_block(_frame.BT_DISCONTINUITY, content) == block
+
+
+def test_a_discontinuity_width_is_tri_state():
+    """Absent and zero are different declarations, and must stay different.
+
+    An absent ``width`` means the break's extent is unknowable and contributes
+    0 to the positional arithmetic; a declared ``0`` is a zero-width hole. They
+    coincide in the arithmetic and nowhere else, so a default of 0 would erase
+    a distinction the format spends a paragraph on.
+    """
+    unknown = zpf.Discontinuity(session_id=7, participant_id=0)
+    zero = zpf.Discontinuity(session_id=7, participant_id=0, width=0)
+    assert unknown.width is None
+    assert zero.width == 0
+    assert unknown != zero
+
+    assert _frame.OPT_WIDTH not in _option_ids(unknown)
+    assert _frame.OPT_WIDTH in _option_ids(zero)
+    assert zpf.Discontinuity.from_content(unknown.to_bytes()).width is None
+    assert zpf.Discontinuity.from_content(zero.to_bytes()).width == 0
+
+
+def test_a_discontinuity_reserved_field_is_written_zero():
+    block = zpf.Discontinuity(session_id=1, participant_id=2)
+    _session_id, _pid, reserved = _frame.DISCONTINUITY_BODY.unpack_from(block.to_bytes())
+    assert reserved == 0
+
+
+def test_input_extents_auto_chunk_and_concatenate():
+    many = tuple(
+        zpf.InputExtent(source_id=1, session_id=1, participant_id=0, extent=i)
+        for i in range(_frame.MAX_EXTENTS_PER_OPTION + 5)
+    )
+    end = zpf.SessionEnd(session_id=1, input_extents=many)
+    content = end.to_bytes()
+    options = [
+        opt for opt in _frame.iter_options(content[8:]) if opt.option_id == _frame.OPT_INPUT_EXTENTS
+    ]
+    assert len(options) == 2
+    assert len(options[0].value) == _frame.MAX_EXTENTS_PER_OPTION * _frame.INPUT_EXTENT_ENTRY_SIZE
+    assert zpf.SessionEnd.from_content(content).input_extents == many
+
+
+def test_an_input_extent_entry_is_twenty_bytes():
+    extent = zpf.InputExtent(source_id=1, session_id=7, participant_id=1, extent=200)
+    assert len(extent.pack()) == 20
+    assert _frame.INPUT_EXTENT_ENTRY_SIZE == 20
+    assert _frame.MAX_EXTENTS_PER_OPTION == 3276
+
+
+def test_external_session_id_stays_bytes():
+    """It is opaque, so it must not acquire a second spelling.
+
+    The value here decodes to printable ASCII, which is exactly the case where
+    a reader is tempted to hand back a ``str`` — and then one id has two
+    spellings, only one of which compares equal to the bytes on disk.
+    """
+    session = zpf.Session(session_id=7, external_session_id=b"case-12345678901")
+    reparsed = zpf.Session.from_content(session.to_bytes())
+    assert reparsed.external_session_id == b"case-12345678901"
+    assert isinstance(reparsed.external_session_id, bytes)
+    assert reparsed == session
+
+
+def test_transform_params_digest_sits_on_the_file_header():
+    """A transform that does not decode has nowhere else to record its config.
+
+    A decode stage's parameters hash lives on its Decoder; a filter, a
+    reordering stage or a merge has no Decoder at all, which is why this is a
+    separate id rather than a reuse of ``params_digest``.
+    """
+    header = zpf.FileHeader(tick_hz=1000, transform_params_digest="sha256:abcd")
+    reparsed = zpf.FileHeader.from_content(header.to_bytes())
+    assert reparsed.transform_params_digest == "sha256:abcd"
+    assert _frame.OPT_TRANSFORM_PARAMS_DIGEST in _option_ids(header)

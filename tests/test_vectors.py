@@ -23,6 +23,7 @@ the 26 vectors then shipped — only of what it passes against *these* files.
 
 from __future__ import annotations
 
+import dataclasses
 import io
 import json
 from dataclasses import dataclass
@@ -125,6 +126,21 @@ _ISOLATE_REASONS: dict[str, str] = {
     "isolate-sequenced-no-basis": "sequenced_basis",
 }
 
+#: Syntax new in 0.13/0.14, by the option id carrying it. Each must be parsed
+#: into a typed field rather than preserved through the unknown-option escape.
+_NEW_OPTION_IDS: dict[int, str] = {
+    0x0015: "transform_params_digest",
+    0x0054: "external_session_id",
+    0x00C1: "input_extents",
+    0x00D0: "width",
+    0x00D1: "reason (Discontinuity)",
+}
+
+#: The one block type that MUST stay unknown. ``escape-unknown-block`` ships it
+#: to prove a reader skips what it does not recognize rather than failing, so a
+#: reader that "recognized" it would have failed the extension contract.
+_DELIBERATELY_UNKNOWN: frozenset[int] = frozenset({0x42})
+
 #: Fields the projection may render as a JSON number *or* a decimal string
 #: ("Value encoding" — 64-bit fields beyond JSON's exact-integer range).
 _WIDE_FIELDS = frozenset(
@@ -193,6 +209,19 @@ def _load_cases() -> list[Case]:
 
 
 CASES = _load_cases()
+
+
+def _readable_params() -> list[Any]:
+    """Build unmarked params for every vector a conformant reader can parse.
+
+    The ``reject`` tier is excluded: those files are structurally corrupt by
+    construction, so there are no blocks to inspect.
+
+    Returns:
+        One param per readable case, in name order.
+
+    """
+    return [pytest.param(case, id=case.name) for case in CASES if case.tier != "reject"]
 
 
 def _params(tier: str) -> list[Any]:
@@ -288,6 +317,59 @@ def test_every_case_has_a_file() -> None:
     assert len(CASES) == 42
     for case in CASES:
         assert case.path.exists(), case.name
+
+
+@pytest.mark.parametrize("case", _readable_params())
+def test_new_syntax_is_recognized_rather_than_escaped(case: Case) -> None:
+    """No 0.13/0.14 id reaches ``extra_options``, and no block stays unknown.
+
+    This is the acceptance test the vector tiers cannot give. Every ``accept``
+    vector carrying new syntax also ships a ``.jsonl``, which
+    :func:`test_accept` compares, so none of them turns green until the
+    projection lands in Phase 2 — while the escape contract means every one of
+    them *reads* cleanly all along, with ``input_extents`` sitting in
+    ``extra_options`` and the Discontinuity block preserved as an
+    ``UnknownBlock``. Without this test the whole of Phase 1 could be skipped
+    and nothing would go red.
+    """
+    with zpf.open(case.path) as reader:
+        blocks = list(reader.blocks())
+    for index, block in enumerate(blocks):
+        escaped = [
+            _NEW_OPTION_IDS[opt.option_id]
+            for opt in getattr(block, "extra_options", ())
+            if opt.option_id in _NEW_OPTION_IDS
+        ]
+        assert not escaped, (
+            f"{case.name}: block {index} ({type(block).__name__}) preserved "
+            f"{escaped} as raw options instead of parsing them"
+        )
+        if isinstance(block, zpf.UnknownBlock):
+            assert block.block_type in _DELIBERATELY_UNKNOWN, (
+                f"{case.name}: block {index} of type 0x{block.block_type:02X} is not recognized"
+            )
+
+
+@pytest.mark.parametrize("case", _readable_params())
+def test_a_vector_survives_a_canonical_re_encode(case: Case) -> None:
+    """Re-encoding a parsed vector from scratch loses nothing.
+
+    Not a *byte* comparison: :func:`dataclasses.replace` drops the cached
+    original content, and the canonical encoding orders options by ascending
+    registry id, which 18 of these files do not. Option order is not
+    significant, so demanding the bytes back would fail on conformant input.
+    What must survive is every field and every preserved occurrence — which is
+    what catches a mis-declared struct or a dropped option in new syntax.
+    """
+    with zpf.open(case.path) as reader:
+        blocks = list(reader.blocks())
+    sink = io.BytesIO()
+    writer = zpf.BlockWriter(sink)
+    for block in blocks:
+        writer.write(dataclasses.replace(block))
+    with zpf.open(io.BytesIO(sink.getvalue())) as reparsed:
+        again = list(reparsed.blocks())
+    assert again == blocks, f"{case.name}: re-encoding changed the blocks"
 
 
 @pytest.mark.parametrize("case", _params("accept"))
