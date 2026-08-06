@@ -43,6 +43,7 @@ from zpf.binary import BlockReader
 from zpf.blocks import (
     Block,
     Decoder,
+    Discontinuity,
     FileHeader,
     NameResolution,
     Participant,
@@ -79,7 +80,11 @@ class _SessionIndex:
     names: list[NameResolution] = field(default_factory=list)
     end: SessionEnd | None = None
     locators: list[int | Record] = field(default_factory=list)
-    by_pid: dict[int, list[int | Record]] = field(default_factory=dict)
+    # Per participant, its records **and** its Discontinuity blocks,
+    # interleaved in stored order: stored order is what defines a decoded
+    # stream's offsets, so a break's position among the records is what
+    # makes its width a term (see :func:`zpf.reassembly.record_ranges`).
+    by_pid: dict[int, list[int | Record | Discontinuity]] = field(default_factory=dict)
     # Per-participant offset ranges, built on first request and kept. The
     # index outlives the SessionReaders handed out for it, so the cost of a
     # first pass is paid once per file rather than once per view.
@@ -166,6 +171,32 @@ class SessionReader:
     def stream(self, pid: int) -> Iterator[Record]:
         """Iterate one participant's records, in stored (``seq_start``) order.
 
+        Only records. A decoded stream may also carry
+        :class:`~zpf.blocks.Discontinuity` blocks between them; those are a
+        statement about the space *between* records rather than content, so
+        they are excluded here and surfaced by :meth:`ranges` — which is
+        where their widths change the answer. Use :meth:`stream_blocks` to
+        walk both.
+
+        Args:
+            pid: The participant whose stream to read.
+
+        Raises:
+            KeyError: If the session has no such participant.
+
+        """
+        for block in self.stream_blocks(pid):
+            if isinstance(block, Record):
+                yield block
+
+    def stream_blocks(self, pid: int) -> Iterator[Record | Discontinuity]:
+        """Iterate one participant's records and breaks, interleaved in stored order.
+
+        The sequence the specification defines a decoded stream's offset
+        space by walking: stored order is what fixes the offsets, so a
+        Discontinuity's position among the records is what makes its
+        ``width`` a term.
+
         Args:
             pid: The participant whose stream to read.
 
@@ -175,7 +206,7 @@ class SessionReader:
         """
         self.participant(pid)  # raises KeyError for an unknown pid
         for locator in self._index.by_pid.get(pid, ()):
-            yield self._resolve(locator)
+            yield locator if isinstance(locator, Discontinuity) else self._resolve(locator)
 
     def is_decoded_stream(self, pid: int) -> bool:
         """Return whether a participant's stream is a decoded layer.
@@ -202,10 +233,16 @@ class SessionReader:
 
         A **decoded** record carries no offset field, so this is the only
         way to know where it sits: record *k* occupies
-        ``[Σ payload_len of the preceding records, + its own)``. Resolving
+        ``[Σ(preceding payload_len + preceding declared widths), + its own
+        payload_len)``, counting the participant's records and its
+        :class:`~zpf.blocks.Discontinuity` blocks in stored order. Resolving
         one record therefore costs O(k) on its face, which is why the whole
         participant's table is built on the first call and kept — forward
         reading pays nothing extra, and random access becomes O(1).
+
+        The ranges are what a break moves: a Discontinuity declaring
+        ``width = 25`` pushes every later record 25 bytes along, so a reader
+        that skips the block computes a different range for each of them.
 
         Args:
             pid: The participant whose stream to measure.
@@ -225,7 +262,7 @@ class SessionReader:
         """
         cached = self._index.ranges.get(pid)
         if cached is None:
-            cached = record_ranges(self.participant(pid), list(self.stream(pid)))
+            cached = record_ranges(self.participant(pid), list(self.stream_blocks(pid)))
             self._index.ranges[pid] = cached
         return cached
 
@@ -246,7 +283,7 @@ class SessionReader:
         return tuple(
             StreamView(
                 participant,
-                lambda pid=participant.participant_id: self.stream(pid),
+                lambda pid=participant.participant_id: self.stream_blocks(pid),
             )
             for participant in self._index.participants
         )
@@ -606,6 +643,9 @@ class FileReader:
             self._sessions[block.session_id].end = block
         elif isinstance(block, Undecoded):
             self._undecoded.append(block)
+        elif isinstance(block, Discontinuity):
+            index = self._sessions[block.session_id]
+            index.by_pid.setdefault(block.participant_id, []).append(block)
         elif isinstance(block, Record):
             index = self._sessions[block.session_id]
             locator: int | Record = block if self._jsonl_blocks is not None else offset

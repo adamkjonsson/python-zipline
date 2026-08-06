@@ -578,13 +578,65 @@ def test_ranges_are_cached_across_session_views():
         assert f.session(7).ranges(0) is first
 
 
-def test_ranges_agree_with_a_naive_datagram_walk():
-    with zpf.open(VECTORS / "chain/decoded.zpf") as f:
-        session = f.session(7)
-        for view in session.reassemble():
-            pid = view.participant.participant_id
-            walked = [(d.off_start, d.off_end) for d in view.datagrams()]
-            assert list(session.ranges(pid)) == walked
+@pytest.mark.parametrize(
+    "vector",
+    [
+        "chain/decoded.zpf",
+        # The positional walk is written twice — record_ranges and the
+        # cursor inside StreamView.datagrams — so this test is the only
+        # thing holding them together. On a file with no Discontinuity it
+        # holds them together at the easy case: both would still agree with
+        # widths ignored. These two make it bite.
+        "discontinuity-known-width/discontinuity-known-width.zpf",
+        "passthrough-discontinuity/passthrough-discontinuity.zpf",
+    ],
+)
+def test_ranges_agree_with_a_naive_datagram_walk(vector: str):
+    with zpf.open(VECTORS / vector) as f:
+        for session in f.sessions():
+            for view in session.reassemble():
+                pid = view.participant.participant_id
+                walked = [(d.off_start, d.off_end) for d in view.datagrams()]
+                assert list(session.ranges(pid)) == walked
+
+
+def test_a_declared_width_moves_the_records_after_it():
+    """The one number that proves the phase.
+
+    ``discontinuity-known-width`` exists because a reader that skips the
+    block, or reads it and ignores ``width``, computes ``[50, 80)`` for the
+    second record where a correct one computes ``[75, 105)``. Nothing in the
+    ``accept`` tier catches the difference: the file reads cleanly and
+    projects correctly either way, because no vector test asks for a range.
+    """
+    path = VECTORS / "discontinuity-known-width/discontinuity-known-width.zpf"
+    with zpf.open(path) as f:
+        session = f.session(9)
+        assert session.ranges(0) == ((0, 50), (75, 105))
+        # The file's own Session End declares the input stream 105 long, and
+        # this decoder is byte-for-byte on its input, so the output space
+        # reaching 105 is the file agreeing with itself.
+        assert session.end is not None
+        assert session.end.input_extents[0].extent == 105
+
+
+def test_an_unknown_width_leaves_the_records_where_they_were():
+    path = VECTORS / "discontinuity-unknown-width/discontinuity-unknown-width.zpf"
+    with zpf.open(path) as f:
+        assert f.session(7).ranges(0) == ((0, 50), (50, 80))
+
+
+def test_a_break_is_indexed_but_kept_out_of_the_record_stream():
+    """``stream`` stays records-only; ``stream_blocks`` is the walked sequence."""
+    path = VECTORS / "discontinuity-known-width/discontinuity-known-width.zpf"
+    with zpf.open(path) as f:
+        session = f.session(9)
+        assert [type(b).__name__ for b in session.stream(0)] == ["Record", "Record"]
+        assert [type(b).__name__ for b in session.stream_blocks(0)] == [
+            "Record",
+            "Discontinuity",
+            "Record",
+        ]
 
 
 def test_a_raw_stream_is_not_a_decoded_one():

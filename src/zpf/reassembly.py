@@ -28,14 +28,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from zpf.blocks import Span
+from zpf.blocks import Discontinuity, Record, Span
 from zpf.errors import ZpfError
 from zpf.order import SEQ_SPACE
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
 
-    from zpf.blocks import Participant, Record
+    from zpf.blocks import Participant
     from zpf.writer import SourceHandle
 
 
@@ -57,7 +57,7 @@ def is_decoded_stream(records: Sequence[Record]) -> bool:
 
 
 def record_ranges(
-    participant: Participant, records: Sequence[Record]
+    participant: Participant, blocks: Sequence[Record | Discontinuity]
 ) -> tuple[tuple[int, int], ...]:
     """Compute the offset range each record occupies in its own stream.
 
@@ -66,26 +66,41 @@ def record_ranges(
 
     * A **decoded** stream is the concatenation of that participant's
       decoded record payloads in stored order, byte 0 being the first byte
-      of the first such record. It is **not** hole-inclusive — Undecoded
-      regions name ranges in the *input's* space and contribute nothing
-      here — so a record's range is purely positional.
+      of the first such record. Record *k* occupies
+      ``[Σ(preceding payload_len + preceding declared widths), + its own
+      payload_len)``, counting that participant's records **and its
+      Discontinuity blocks** in stored order. So it is hole-inclusive
+      exactly where a :class:`~zpf.blocks.Discontinuity` declares a
+      ``width``, and positional everywhere else — an absent width means the
+      break's extent is unknown and contributes 0. Undecoded regions name
+      ranges in the *input's* space and contribute nothing here.
     * A **transport** stream is a true position: holes count as if the
       bytes were present, so offsets come from ``seq_start`` against the
       origin (``isn + 1``, or the first captured byte when the handshake
       was missed). A hint-less transport stream has no way to know about
       holes, so it too is positional.
 
+    A Discontinuity is defined for decoded layers only. One appearing in a
+    hinted transport stream is left alone here — those offsets are absolute,
+    so a width has nothing to add to them — and is diagnosed by the
+    conformance checker rather than silently changing the arithmetic.
+
     Args:
         participant: The participant whose stream this is.
-        records: Its records, in stored order.
+        blocks: Its records **and** Discontinuity blocks, interleaved in
+            stored order. Stored order is what defines the space, so the
+            blocks' positions among the records are what make their widths
+            terms.
 
     Returns:
-        One ``(off_start, off_end)`` per record, positionally matching
-        ``records``. A record whose position cannot be placed — a hinted
-        stream's record carrying no ``seq_start`` — gets a zero-width range
-        at the stream's current end, since it contributes no bytes.
+        One ``(off_start, off_end)`` per :class:`~zpf.blocks.Record` in
+        ``blocks``, in order — Discontinuity blocks occupy no range of their
+        own. A record whose position cannot be placed — a hinted stream's
+        record carrying no ``seq_start`` — gets a zero-width range at the
+        stream's current end, since it contributes no bytes.
 
     """
+    records = [block for block in blocks if isinstance(block, Record)]
     decoded = is_decoded_stream(records)
     origin: int | None = None
     if not decoded:
@@ -98,9 +113,12 @@ def record_ranges(
     if origin is None:
         cursor = 0
         positional: list[tuple[int, int]] = []
-        for record in records:
-            positional.append((cursor, cursor + len(record.payload)))
-            cursor += len(record.payload)
+        for block in blocks:
+            if isinstance(block, Discontinuity):
+                cursor += block.width or 0
+                continue
+            positional.append((cursor, cursor + len(block.payload)))
+            cursor += len(block.payload)
         return tuple(positional)
     ranges: list[tuple[int, int]] = []
     end = 0
@@ -115,18 +133,27 @@ def record_ranges(
     return tuple(ranges)
 
 
-def stream_extent(participant: Participant, records: Sequence[Record]) -> int:
+def stream_extent(participant: Participant, blocks: Sequence[Record | Discontinuity]) -> int:
     """Return one past the last offset the participant's stream reaches.
 
     Args:
         participant: The participant whose stream this is.
-        records: Its records, in stored order.
+        blocks: Its records and Discontinuity blocks, in stored order.
 
     Returns:
         The stream's extent in its own offset space, 0 when empty.
 
+    Note:
+        A Discontinuity **after** the last record does not extend the
+        result. A width only displaces the records that follow it, and
+        there are none; counting it would claim the stream reaches bytes
+        that are by definition missing, which is the opposite of what a
+        coverage check wants from this number. The specification defines
+        the space through the records' ranges and says nothing about a
+        trailing break, so this does not invent an answer for it.
+
     """
-    return max((end for _, end in record_ranges(participant, records)), default=0)
+    return max((end for _, end in record_ranges(participant, blocks)), default=0)
 
 
 @dataclass(frozen=True)
@@ -239,13 +266,17 @@ class StreamView:
     def __init__(
         self,
         participant: Participant,
-        records: Callable[[], Iterator[Record]],
+        blocks: Callable[[], Iterator[Record | Discontinuity]],
         *,
         source: SourceHandle | int | None = None,
     ) -> None:
+        self._blocks = blocks
         self._participant = participant
-        self._records = records
         self._source_id = None if source is None else _source_id_of(source)
+
+    def _records(self) -> Iterator[Record]:
+        """Iterate the stream's records, dropping the breaks between them."""
+        return (block for block in self._blocks() if isinstance(block, Record))
 
     @property
     def participant(self) -> Participant:
@@ -372,13 +403,22 @@ class StreamView:
         included.
 
         Yields:
-            One :class:`Datagram` per record, in stored order.
+            One :class:`Datagram` per record, in stored order. A
+            Discontinuity yields nothing of its own; a declared ``width``
+            displaces every record after it, exactly as in
+            :func:`record_ranges` — the two walk the same space and must
+            not disagree.
 
         """
         hinted = self.is_stream_oriented
         origin = self._origin() if hinted else None
         cursor = 0
-        for record in self._records():
+        for block in self._blocks():
+            if isinstance(block, Discontinuity):
+                if not hinted:
+                    cursor += block.width or 0
+                continue
+            record = block
             if hinted:
                 if record.seq_start is None:
                     continue
@@ -412,7 +452,7 @@ class StreamView:
             A new view over the same stream, with the source bound.
 
         """
-        return StreamView(self._participant, self._records, source=source)
+        return StreamView(self._participant, self._blocks, source=source)
 
     def cite(
         self, off_start: int, off_end: int, *, source: SourceHandle | int | None = None
