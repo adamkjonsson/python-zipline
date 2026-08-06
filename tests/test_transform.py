@@ -370,3 +370,107 @@ def test_a_rewrite_needs_an_input_with_a_decoded_layer(tmp_path: Path):
     with pytest.raises(zpf.ZpfError, match="decoded layer"):
         zpf.rewrite_decoded(raw, tmp_path / "out.zpf",
                             produced_by="zpf-filter 1.0", produced_at=2)
+
+
+# --- check_extents: the coverage claims a single file can be checked for ------
+
+VECTORS = Path(__file__).parent / "vectors"
+
+
+def test_check_extents_needs_no_input_file():
+    """The point of the function: coverage checkable from the file alone.
+
+    ``check_coverage`` has to open the input to measure it, which a consumer
+    handed one file cannot do. ``input_extents`` is what makes the weaker
+    check possible.
+    """
+    path = VECTORS / "isolate-extent-exceeds-coverage/isolate-extent-exceeds-coverage.zpf"
+    (finding,) = zpf.check_extents(path)
+    assert finding.category == "extent-exceeds-coverage"
+    assert "40" in finding.message
+
+
+def test_check_extents_reports_one_finding_per_fault():
+    disagree = VECTORS / "isolate-extents-disagree/isolate-extents-disagree.zpf"
+    (finding,) = zpf.check_extents(disagree)
+    # Session 101 declares 160 while the union of both sessions' spans reaches
+    # 200, so a naive check would also report extent-below-coverage. There is
+    # one fault here — the two declarations cannot both be right — and until
+    # it is resolved there is no agreed extent to measure coverage against.
+    assert finding.category == "extents-disagree"
+
+
+def test_check_extents_finds_an_interior_hole_with_nothing_declared():
+    path = VECTORS / "isolate-coverage-gap/isolate-coverage-gap.zpf"
+    (finding,) = zpf.check_extents(path)
+    assert finding.category == "coverage-gap"
+    assert finding.offset == 10
+
+
+def test_check_extents_passes_every_conformant_vector():
+    """No false positive on anything upstream ships as ``accept``.
+
+    ``session-fan-out`` is the one that matters: its ``[0, 80)`` is spanned by
+    *both* output sessions, and neither session covers the extent 200 it
+    declares — only the union across both does. A checker keyed on the output
+    session fails it and passes every other file in the suite.
+    """
+    for name in ("decoded-basic", "broken-chain", "session-fan-out",
+                 "annotator-decoded", "passthrough-discontinuity",
+                 "discontinuity-known-width", "discontinuity-unknown-width"):
+        path = VECTORS / name / f"{name}.zpf"
+        assert zpf.check_extents(path) == [], name
+
+
+def test_check_coverage_cross_checks_a_declared_extent_against_the_input(tmp_path: Path):
+    """The check only the input file can settle.
+
+    A declaration can agree with every span in its own file and still be
+    wrong about the stream it measures. ``check_extents`` cannot see that;
+    with the input in hand there is a real length to compare against.
+
+    Built with the flat writer because the ergonomic ``SessionWriter.end``
+    does not take ``input_extents`` yet — that is Phase 5's write side.
+    """
+    raw = tmp_path / "raw.zpf"
+    write_raw(raw)
+    with zpf.open(raw) as reader:
+        session = next(iter(reader.sessions()))
+        participant = session.participants[0]
+        pid = participant.participant_id
+        actual = zpf.reassembly.stream_extent(participant, list(session.stream_blocks(pid)))
+
+    decoded = tmp_path / "decoded.zpf"
+    blocks = [
+        zpf.FileHeader(tick_hz=1_000_000, produced_by="dec 1", produced_at=1),
+        zpf.Source(source_id=0, kind=zpf.SourceKind.ZPF_INPUT, uri=str(raw)),
+        zpf.Decoder(decoder_id=0, name="http/1.1"),
+        zpf.Session(session_id=7, proto="http"),
+        zpf.Participant(session_id=7, participant_id=0),
+        zpf.Record(
+            session_id=7, sender_pid=0, source_id=0, timestamp=1, payload=b"X", decoder_id=0,
+            spans=(zpf.Span(source_id=0, session_id=7, participant_id=pid,
+                            off_start=0, off_end=actual),),
+        ),
+        zpf.SessionEnd(
+            session_id=7,
+            input_extents=(
+                zpf.InputExtent(source_id=0, session_id=7, participant_id=pid,
+                                extent=actual + 5),
+            ),
+        ),
+    ]
+    with decoded.open("wb") as handle, zpf.BlockWriter(handle) as writer:
+        for block in blocks:
+            writer.write(block)
+
+    # The two checks see different things. From the file alone, the
+    # declaration overshoots what this file's own spans account for.
+    assert [f.category for f in zpf.check_extents(decoded)] == ["extent-exceeds-coverage"]
+    # With the input open, there is a real length to name. (The raw file's
+    # second participant stream is undecoded here and reported too; this
+    # test is about the extent, not that gap.)
+    findings = zpf.check_coverage(decoded, raw)
+    mismatch = [f for f in findings if f.category == "extent-mismatch"]
+    assert len(mismatch) == 1
+    assert str(actual) in mismatch[0].message

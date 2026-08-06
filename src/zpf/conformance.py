@@ -39,11 +39,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from zpf._intervals import complement
 from zpf.blocks import (
     REASON_CLASSES,
     UNDECODED_REASONS,
     Block,
     Decoder,
+    Discontinuity,
     End,
     FileHeader,
     NameResolution,
@@ -86,6 +88,135 @@ class _SessionState:
     has_hints: bool = False  # any record carried seq_start or ack
 
 
+@dataclass
+class _StreamLedger:
+    """What one **input** participant stream was said about, across the file."""
+
+    spans: list[tuple[int, int]] = field(default_factory=list)
+    undecoded: list[tuple[int, int]] = field(default_factory=list)
+    #: Declared extent per *output* session. More than one distinct value is
+    #: a contradiction: an input stream has one length.
+    declared: dict[int, int] = field(default_factory=dict)
+
+    @property
+    def covered(self) -> list[tuple[int, int]]:
+        """Every range this file accounts for, decoded or marked, in order."""
+        return sorted(self.spans + self.undecoded)
+
+
+class CoverageLedger:
+    """Accumulates what a derived file says about each input stream it cites.
+
+    The coverage guarantee is a whole-file property: a range is accounted for
+    if *any* record's ``spans`` cite it or *any* Undecoded block marks it, and
+    the declared extents live on Session End blocks that come last. So no
+    single block can be judged as it is read — this gathers the statements and
+    :meth:`findings` rules on them once the stream is complete.
+
+    Keyed on the **input** stream ``(source_id, session_id, pid)``, never on
+    the output session that happened to cite it. One input stream may be
+    demultiplexed into several output sessions (session fan-out), and then no
+    single session covers the whole of it — only the union across all of them
+    does.
+    """
+
+    def __init__(self) -> None:
+        self._streams: dict[tuple[int, int, int], _StreamLedger] = {}
+
+    def _for(self, key: tuple[int, int, int]) -> _StreamLedger:
+        return self._streams.setdefault(key, _StreamLedger())
+
+    def observe(self, block: Block) -> None:
+        """Absorb one block's coverage statements, if it makes any."""
+        if isinstance(block, Record):
+            for span in block.spans:
+                if span.off_start < span.off_end:
+                    key = (span.source_id, span.session_id, span.participant_id)
+                    self._for(key).spans.append((span.off_start, span.off_end))
+        elif isinstance(block, Undecoded):
+            if block.off_start < block.off_end:
+                key = (block.source_id, block.session_id, block.participant_id)
+                self._for(key).undecoded.append((block.off_start, block.off_end))
+        elif isinstance(block, SessionEnd):
+            for extent in block.input_extents:
+                key = (extent.source_id, extent.session_id, extent.participant_id)
+                self._for(key).declared[block.session_id] = extent.extent
+
+    def findings(self, file_kind: str | None) -> list[tuple[int, str, str]]:
+        """Rule on everything gathered, once the stream is complete.
+
+        Args:
+            file_kind: The inferred kind, as
+                :attr:`ConformanceChecker.file_kind` reports it. The
+                interior-gap check runs only for a decode stage: a
+                pass-through re-emits records rather than citing them, so its
+                records carry no ``spans`` and its only covered ranges are the
+                Undecoded blocks it inherited — everything else would look
+                like a hole. Applying a decode stage's obligation to a
+                pass-through fails conformant files.
+
+        Returns:
+            ``(offset, category, message)`` per finding, in stream order.
+
+        """
+        findings: list[tuple[int, str, str]] = []
+        for key in sorted(self._streams):
+            findings.extend(self._stream_findings(key, self._streams[key], file_kind))
+        return findings
+
+    def _stream_findings(
+        self, key: tuple[int, int, int], ledger: _StreamLedger, file_kind: str | None
+    ) -> list[tuple[int, str, str]]:
+        source_id, session_id, pid = key
+        where = f"input stream (source {source_id}, session {session_id}, pid {pid})"
+        findings: list[tuple[int, str, str]] = []
+        covered = ledger.covered
+        reach = max((end for _, end in covered), default=0)
+
+        values = set(ledger.declared.values())
+        if len(values) > 1:
+            spelled = ", ".join(
+                f"session {sid} says {ext}" for sid, ext in sorted(ledger.declared.items())
+            )
+            findings.append((
+                0,
+                "extents-disagree",
+                f"{where}: declared extents disagree ({spelled}); an input stream has one length",
+            ))
+            # No single declared extent to measure coverage against, so the
+            # comparisons below would report a second violation for what is
+            # one fault.
+            return findings
+
+        if file_kind == _DECODE:
+            findings.extend(
+                (
+                    start,
+                    "coverage-gap",
+                    f"{where}: [{start}, {end}) is neither decoded nor marked Undecoded",
+                )
+                for start, end in complement(covered, reach)
+            )
+
+        if values:
+            extent = next(iter(values))
+            if extent > reach:
+                findings.append((
+                    reach,
+                    "extent-exceeds-coverage",
+                    f"{where}: declared extent {extent}, but spans and Undecoded blocks "
+                    f"account for only [0, {reach}) — the tail is silently dropped",
+                ))
+            elif extent < reach:
+                findings.append((
+                    extent,
+                    "extent-below-coverage",
+                    f"{where}: declared extent {extent}, but spans and Undecoded blocks "
+                    f"reach {reach} — the file contradicts itself",
+                ))
+        return findings
+
+
 class ConformanceChecker:
     """Validate a block stream against the specification's semantic tier.
 
@@ -114,6 +245,7 @@ class ConformanceChecker:
         self._derived_only: list[str] = []  # blocks that forbid raw, kind still open
         self._file_ended = False
         self._advisory: list[str] = []  # findings for the block being observed
+        self._coverage = CoverageLedger()
         self._dispatch: dict[type[Block], Callable[[Any], None]] = {
             FileHeader: self._on_file_header,
             Source: self._on_source,
@@ -123,6 +255,7 @@ class ConformanceChecker:
             SessionEnd: self._on_session_end,
             Record: self._on_record,
             Undecoded: self._on_undecoded,
+            Discontinuity: self._on_discontinuity,
             NameResolution: self._on_name,
             End: self._on_end,
         }
@@ -161,6 +294,10 @@ class ConformanceChecker:
         handler = self._dispatch.get(type(block))
         if handler is not None:
             handler(block)
+        # Only blocks the handlers accepted contribute coverage: an
+        # isolated block is one a lenient reader drops, and a dropped
+        # block's claims must not count towards the guarantee.
+        self._coverage.observe(block)
         # Advisory findings are raised only here, once the handler has
         # returned: a lenient reader keeps such a block, so the checker must
         # already have absorbed it. An isolating violation raised inside the
@@ -192,6 +329,12 @@ class ConformanceChecker:
         the End block or end-of-stream implicitly closes every still-open
         session, and this is that moment.
 
+        The coverage guarantee is the other kind: a range is accounted for if
+        *any* record cites it or *any* Undecoded block marks it, and the
+        declared extents arrive on Session End blocks at the very end, so no
+        single block can be ruled on as it is read. See :class:`CoverageLedger`
+        for what that settles and :meth:`coverage_findings` for the whole list.
+
         Idempotent: finalized sessions are not revisited.
 
         Raises:
@@ -203,6 +346,21 @@ class ConformanceChecker:
             del self._live[session_id]
             self._ended.add(session_id)
             self._check_sequenced_basis(state)
+        for _offset, _category, message in self.coverage_findings():
+            raise SemanticError(message)
+
+    def coverage_findings(self) -> list[tuple[int, str, str]]:
+        """Return every coverage/extent finding the gathered blocks support.
+
+        :meth:`finish` raises the first of these; this is the whole list, for
+        a caller that wants to report rather than refuse (see
+        :func:`zpf.check_extents`).
+
+        Returns:
+            ``(offset, category, message)`` per finding, in stream order.
+
+        """
+        return self._coverage.findings(self._kind)
 
     def _check_sequenced_basis(self, state: _SessionState) -> None:
         """Require a hint-less sequenced session to say what its order rests on.
@@ -229,6 +387,10 @@ class ConformanceChecker:
             msg = "second File Header; a file has exactly one, as its first block"
             raise SemanticError(msg)
         self._header = block
+        if block.transform_params_digest is not None:
+            # Names the configuration of a transform that produced records,
+            # which a raw capture has not got.
+            self._require_derived(f"{_describe(block)} carries transform_params_digest")
 
     def _on_source(self, block: Source) -> None:
         if block.source_id in self._sources:
@@ -279,7 +441,11 @@ class ConformanceChecker:
         state.last_seq[block.participant_id] = None
 
     def _on_session_end(self, block: SessionEnd) -> None:
-        state = self._require_live_session(block.session_id, _describe(block))
+        described = _describe(block)
+        if block.input_extents:
+            # Measures an input stream, so the file has one.
+            self._require_derived(f"{described} carries input_extents")
+        state = self._require_live_session(block.session_id, described)
         del self._live[block.session_id]
         self._ended.add(block.session_id)
         self._check_sequenced_basis(state)
@@ -299,6 +465,19 @@ class ConformanceChecker:
             state.has_hints = True
         if block.seq_start is not None:
             state.last_seq[block.sender_pid] = block.seq_start
+
+    def _on_discontinuity(self, block: Discontinuity) -> None:
+        described = _describe(block)
+        state = self._require_live_session(block.session_id, described)
+        if block.participant_id not in state.last_seq:
+            msg = f"{described} names undeclared participant {block.participant_id}"
+            raise SemanticError(msg)
+        # Marks a break in a *decoded* stream this file produced, so the file
+        # is derived. A raw capture's offsets are true stream positions, in
+        # which a hole is already expressible as the space between seq_starts
+        # — there is nothing for this block to say and no space for it to say
+        # it in.
+        self._require_derived(described)
 
     def _on_undecoded(self, block: Undecoded) -> None:
         described = _describe(block)

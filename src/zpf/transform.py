@@ -37,6 +37,7 @@ from typing import IO, TYPE_CHECKING
 
 from zpf._intervals import complement, intersections
 from zpf.blocks import Origin, SourceKind, Span
+from zpf.conformance import CoverageLedger
 from zpf.errors import Diagnostic, ZpfError
 from zpf.order import causal_merge
 from zpf.reader import FileReader, SessionReader
@@ -236,13 +237,105 @@ def check_coverage(
         source_id = _input_source_id(decoded_reader, raw)
         extents = _stream_extents(raw_reader)
         spans, undecoded = _cited_intervals(decoded_reader, source_id)
+        declared = _declared_extents(decoded_reader, source_id)
         findings: list[Diagnostic] = []
         for key in sorted(set(extents) | set(spans) | set(undecoded)):
             findings.extend(
                 _check_stream(key, extents.get(key, 0), spans.get(key, []),
                               undecoded.get(key, []))
             )
+        findings.extend(_check_declared(declared, extents))
         return findings
+
+
+def _declared_extents(decoded: FileReader, source_id: int) -> dict[tuple[int, int], set[int]]:
+    """Collect each input stream's declared extents, keyed as the intervals are."""
+    declared: dict[tuple[int, int], set[int]] = {}
+    for session in decoded.sessions():
+        end = session.end
+        if end is None:
+            continue
+        for extent in end.input_extents:
+            if extent.source_id == source_id:
+                key = (extent.session_id, extent.participant_id)
+                declared.setdefault(key, set()).add(extent.extent)
+    return declared
+
+
+def _check_declared(
+    declared: dict[tuple[int, int], set[int]], measured: dict[tuple[int, int], int]
+) -> list[Diagnostic]:
+    """Cross-check declared extents against the input actually opened.
+
+    The check only this function can make: :func:`check_extents` compares a
+    declaration against what the file itself accounts for, which catches a
+    declaration that contradicts its own spans — but a declaration can be
+    self-consistent and still be wrong about the input. With the input in
+    hand there is a real length to compare against.
+    """
+    findings: list[Diagnostic] = []
+    for key in sorted(declared):
+        session_id, pid = key
+        where = f"input stream (session {session_id}, pid {pid})"
+        if key not in measured:
+            continue
+        actual = measured[key]
+        for value in sorted(declared[key]):
+            if value != actual:
+                findings.append(
+                    Diagnostic(
+                        value,
+                        "extent-mismatch",
+                        f"{where}: declared extent {value}, but the input measures {actual}",
+                    )
+                )
+    return findings
+
+
+def check_extents(
+    derived: str | os.PathLike[str] | IO[bytes] | IO[str],
+) -> list[Diagnostic]:
+    """Validate a derived file's coverage claims **from that file alone**.
+
+    The weaker half of :func:`check_coverage`, and the one a consumer can
+    always run: it needs no input file, only what this one says about the
+    streams it cites. That is what ``input_extents`` is for — without a
+    declared length, coverage stopping early is indistinguishable from a
+    stream that was that short.
+
+    Args:
+        derived: A decode-stage or pass-through file.
+
+    Returns:
+        The violations found, empty when the file is self-consistent —
+        categories ``"extents-disagree"`` (two sessions declaring different
+        lengths for one input stream), ``"extent-exceeds-coverage"`` (a
+        declared length beyond what spans plus Undecoded account for: the
+        silent-truncation case), ``"extent-below-coverage"`` (a declared
+        length the file's own citations overshoot), and ``"coverage-gap"``
+        (an interior range neither decoded nor marked, which needs no
+        declaration to detect).
+
+    Note:
+        ``coverage-gap`` is reported for a **decode stage** only. A
+        pass-through re-emits records rather than citing them, so it has no
+        ``spans`` and the guarantee is not its to keep — see
+        :class:`~zpf.conformance.CoverageLedger`.
+
+    Example:
+        >>> for finding in zpf.check_extents("http.zpf"):
+        ...     print(finding.category, finding.message)
+
+    """
+    ledger = CoverageLedger()
+    with FileReader(derived) as reader:
+        for block in reader.blocks():
+            ledger.observe(block)
+        kind = reader.file_kind
+    return [
+        Diagnostic(offset, category, message)
+        for offset, category, message in ledger.findings(kind)
+    ]
 
 
 def resolve_spans(
