@@ -43,9 +43,11 @@ from zpf.blocks import (
     Block,
     Custom,
     Decoder,
+    Discontinuity,
     End,
     FileFlags,
     FileHeader,
+    InputExtent,
     NameResolution,
     Origin,
     Participant,
@@ -290,6 +292,30 @@ def _span_from_json(value: Any) -> Span:
     return span
 
 
+def _input_extent_to_json(extent: InputExtent) -> dict[str, Any]:
+    return {
+        "source_id": extent.source_id,
+        "session_id": _num64(extent.session_id),
+        "pid": extent.participant_id,
+        "extent": _num64(extent.extent),
+    }
+
+
+def _input_extent_from_json(value: Any) -> InputExtent:
+    if not isinstance(value, dict):
+        msg = f"input_extents entry must be an object, got {value!r}"
+        raise ValueError(msg)
+    reader = _ObjReader(value)
+    extent = InputExtent(
+        source_id=reader.require_int("source_id"),
+        session_id=reader.require_int("session_id"),
+        participant_id=reader.require_int("pid"),
+        extent=reader.require_int("extent"),
+    )
+    reader.finish(_raise_issue)
+    return extent
+
+
 def _origin_to_json(origin: Origin) -> dict[str, Any]:
     return {
         "source_id": origin.source_id,
@@ -333,6 +359,7 @@ def _enc_file(block: FileHeader, on_issue: Callable[[str], None]) -> dict[str, A
     _put(obj, "creator", block.creator)
     _put(obj, "produced_by", block.produced_by)
     _put(obj, "produced_at", None if block.produced_at is None else _num64(block.produced_at))
+    _put(obj, "transform_params_digest", block.transform_params_digest)
     if block.flags & FileFlags.SINGLE_CLOCK:
         obj["single_clock"] = True
     _put(obj, "comment", block.comment)
@@ -368,6 +395,10 @@ def _enc_session(block: Session, on_issue: Callable[[str], None]) -> dict[str, A
     if block.flags & SessionFlags.SEQUENCED:
         obj["sequenced"] = True
     _put(obj, "sequenced_basis", block.sequenced_basis)
+    # Opaque bytes, so base64 rather than spelled out — a reader MUST NOT
+    # assume it is text even when it decodes to printable ASCII.
+    if block.external_session_id is not None:
+        obj["external_session_id"] = _b64e(block.external_session_id)
     _put(obj, "comment", block.comment)
     return obj
 
@@ -401,6 +432,10 @@ def _enc_session_end(block: SessionEnd, on_issue: Callable[[str], None]) -> dict
     del on_issue
     obj: dict[str, Any] = {"type": "session_end", "session_id": _num64(block.session_id)}
     _put(obj, "reason", block.reason)
+    if block.input_extents:
+        # Always an array, and one array however many option occurrences
+        # carried it: the chunking is a TLV size limit, not a structure.
+        obj["input_extents"] = [_input_extent_to_json(item) for item in block.input_extents]
     _put(obj, "comment", block.comment)
     return obj
 
@@ -469,6 +504,21 @@ def _enc_undecoded(block: Undecoded, on_issue: Callable[[str], None]) -> dict[st
     return obj
 
 
+def _enc_discontinuity(block: Discontinuity, on_issue: Callable[[str], None]) -> dict[str, Any]:
+    del on_issue
+    obj: dict[str, Any] = {
+        "type": "discontinuity",
+        "session_id": _num64(block.session_id),
+        "pid": block.participant_id,
+    }
+    # Absent width is an omitted key, never a 0: unknown extent and a
+    # zero-width hole are different declarations.
+    _put(obj, "width", None if block.width is None else _num64(block.width))
+    _put(obj, "reason", block.reason)
+    _put(obj, "comment", block.comment)
+    return obj
+
+
 def _enc_name(block: NameResolution, on_issue: Callable[[str], None]) -> dict[str, Any]:
     del on_issue
     obj: dict[str, Any] = {
@@ -528,6 +578,7 @@ _ENCODERS: dict[type[Block], Callable[[Any, Callable[[str], None]], dict[str, An
     SessionEnd: _enc_session_end,
     Record: _enc_record,
     Undecoded: _enc_undecoded,
+    Discontinuity: _enc_discontinuity,
     NameResolution: _enc_name,
     End: _enc_end,
     Custom: _enc_custom,
@@ -550,6 +601,7 @@ def _dec_file(reader: _ObjReader) -> FileHeader:
         creator=reader.take_str("creator"),
         produced_by=reader.take_str("produced_by"),
         produced_at=reader.take_int("produced_at"),
+        transform_params_digest=reader.take_str("transform_params_digest"),
         flags=flags,
         comment=reader.take_str("comment"),
         extra_options=reader.options(),
@@ -594,12 +646,15 @@ def _dec_decoder(reader: _ObjReader) -> Decoder:
 
 def _dec_session(reader: _ObjReader) -> Session:
     flags = SessionFlags.SEQUENCED if _take_flag(reader, "sequenced") else SessionFlags(0)
+    raw_external = reader.take("external_session_id")
+    external = None if raw_external is None else _b64d(raw_external, "external_session_id")
     return Session(
         session_id=reader.require_int("session_id"),
         proto=reader.take_str("proto"),
         flow_key=reader.take_str("key"),
         flags=flags,
         sequenced_basis=reader.take_str("sequenced_basis"),
+        external_session_id=external,
         comment=reader.take_str("comment"),
         extra_options=reader.options(),
     )
@@ -643,9 +698,16 @@ def _dec_participant(reader: _ObjReader) -> Participant:
 
 
 def _dec_session_end(reader: _ObjReader) -> SessionEnd:
+    raw_extents = reader.take("input_extents")
+    if raw_extents is not None and not isinstance(raw_extents, list):
+        msg = f"input_extents must be an array, got {raw_extents!r}"
+        raise ValueError(msg)
     return SessionEnd(
         session_id=reader.require_int("session_id"),
         reason=reader.take_str("reason"),
+        input_extents=()
+        if raw_extents is None
+        else tuple(_input_extent_from_json(entry) for entry in raw_extents),
         comment=reader.take_str("comment"),
         extra_options=reader.options(),
     )
@@ -708,6 +770,17 @@ def _dec_undecoded(reader: _ObjReader) -> Undecoded:
     )
 
 
+def _dec_discontinuity(reader: _ObjReader) -> Discontinuity:
+    return Discontinuity(
+        session_id=reader.require_int("session_id"),
+        participant_id=reader.require_int("pid"),
+        width=reader.take_int("width"),
+        reason=reader.take_str("reason"),
+        comment=reader.take_str("comment"),
+        extra_options=reader.options(),
+    )
+
+
 def _dec_name(reader: _ObjReader) -> NameResolution:
     return NameResolution(
         session_id=reader.require_int("session_id"),
@@ -746,6 +819,7 @@ _DECODERS: dict[str, Callable[[_ObjReader], Block]] = {
     "participant": _dec_participant,
     "session_end": _dec_session_end,
     "undecoded": _dec_undecoded,
+    "discontinuity": _dec_discontinuity,
     "name": _dec_name,
     "end": _dec_end,
     "custom": _dec_custom,

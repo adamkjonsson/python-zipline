@@ -541,3 +541,119 @@ def test_converter_carries_unknown_blocks():
     text.seek(0)
     zpf.jsonl_to_binary(text, binary_again)
     assert binary_again.getvalue() == binary.getvalue()  # canonical in, canonical out
+
+
+# --- 0.13/0.14 projections ---------------------------------------------------
+
+
+def test_discontinuity_projects_and_round_trips():
+    block = zpf.Discontinuity(session_id=9, participant_id=0, width=25, reason="stream-gap")
+    obj = block_to_obj(block)
+    assert obj == {
+        "type": "discontinuity",
+        "session_id": 9,
+        "pid": 0,
+        "width": 25,
+        "reason": "stream-gap",
+    }
+    assert loads_block(dumps_block(block)) == block
+
+
+def test_an_unknown_discontinuity_width_is_an_omitted_key():
+    """Absent must not project as ``0``, or the two declarations merge.
+
+    The binary form keeps them apart by omitting the option; the projection
+    keeps them apart by omitting the key. A reader treats a missing key as
+    "option not present", never as a present option carrying a default.
+    """
+    unknown = zpf.Discontinuity(session_id=7, participant_id=0, reason="tls-record-lost")
+    zero = zpf.Discontinuity(session_id=7, participant_id=0, width=0, reason="tls-record-lost")
+    assert "width" not in block_to_obj(unknown)
+    assert block_to_obj(zero)["width"] == 0
+    assert loads_block(dumps_block(unknown)).width is None
+    assert loads_block(dumps_block(zero)).width == 0
+
+
+def test_input_extents_project_as_an_array_even_when_single():
+    end = zpf.SessionEnd(
+        session_id=7,
+        reason="fin",
+        input_extents=(
+            zpf.InputExtent(source_id=1, session_id=7, participant_id=0, extent=18),
+        ),
+    )
+    obj = block_to_obj(end)
+    assert obj["input_extents"] == [
+        {"source_id": 1, "session_id": 7, "pid": 0, "extent": 18}
+    ]
+    assert loads_block(dumps_block(end)) == end
+
+
+def test_input_extent_chunking_is_invisible_to_the_projection():
+    """Several binary occurrences merge into one array, and may re-split.
+
+    The chunking exists because a TLV value caps at 65 535 bytes; it carries
+    no meaning, so the projection must not expose it.
+    """
+    many = tuple(
+        zpf.InputExtent(source_id=1, session_id=1, participant_id=0, extent=i)
+        for i in range(_frame.MAX_EXTENTS_PER_OPTION + 5)
+    )
+    end = zpf.SessionEnd(session_id=1, input_extents=many)
+    obj = block_to_obj(end)
+    assert len(obj["input_extents"]) == len(many)
+    rebuilt = loads_block(dumps_block(end))
+    assert rebuilt.input_extents == many
+    options = [
+        opt
+        for opt in _frame.iter_options(rebuilt.to_bytes()[8:])
+        if opt.option_id == _frame.OPT_INPUT_EXTENTS
+    ]
+    assert len(options) == 2
+
+
+def test_external_session_id_projects_as_base64():
+    """It is opaque bytes, so it must not be spelled out as text.
+
+    This value is printable ASCII, which is exactly when a converter is
+    tempted to write the string — and then the same id has two spellings.
+    """
+    session = zpf.Session(session_id=7, proto="tcp", external_session_id=b"case-12345678901")
+    obj = block_to_obj(session)
+    assert obj["external_session_id"] == "Y2FzZS0xMjM0NTY3ODkwMQ=="
+    rebuilt = loads_block(dumps_block(session))
+    assert rebuilt.external_session_id == b"case-12345678901"
+    assert rebuilt == session
+
+
+def test_transform_params_digest_projects_on_the_file_line():
+    header = zpf.FileHeader(tick_hz=1000, transform_params_digest="sha256:7c1e")
+    obj = block_to_obj(header)
+    assert obj["transform_params_digest"] == "sha256:7c1e"
+    assert loads_block(dumps_block(header)) == header
+
+
+def test_width_and_extent_accept_a_decimal_string():
+    """Both joined the 64-bit set, so both MUST be readable either way."""
+    big = 2**60
+    disc = loads_block(
+        json.dumps({"type": "discontinuity", "session_id": "7", "pid": 0, "width": str(big)})
+    )
+    assert disc.width == big
+    end = loads_block(
+        json.dumps(
+            {
+                "type": "session_end",
+                "session_id": 7,
+                "input_extents": [
+                    {"source_id": 1, "session_id": "7", "pid": 0, "extent": str(big)}
+                ],
+            }
+        )
+    )
+    assert end.input_extents[0].extent == big
+
+
+def test_a_wide_width_projects_as_a_decimal_string():
+    block = zpf.Discontinuity(session_id=7, participant_id=0, width=2**60)
+    assert block_to_obj(block)["width"] == str(2**60)

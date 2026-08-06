@@ -39,20 +39,25 @@ VECTORS = Path(__file__).parent / "vectors"
 #: Vector cases that MUST pass. Grow it as phases land; never remove a name,
 #: because that is the regression guard.
 #:
-#: Phase 1: every vector built only from syntax 0.12 already had. The version
-#: gate was the whole of what stood between this library and them — 25 cases
-#: joined here on the one-line bump, including the two ``reject`` vectors that
-#: had been refused for their minor rather than for the framing defect each
-#: exists to test.
+#: Phase 2: **every** ``accept`` vector in the suite. The eight that Phase 1's
+#: syntax work could not move needed only the projection — each of them already
+#: read with no diagnostics, so the JSONL face was the whole of the remainder.
 #:
-#: The 14 still absent are the ones carrying syntax new in 0.13/0.14, plus
-#: ``isolate-coverage-gap``. None of them turns on Phase 1's block and option
-#: work alone: every remaining ``accept`` vector ships a ``.jsonl`` this
-#: compares, so they arrive with the projection in Phase 2, the semantic rules
-#: in Phase 4, and the pairwise splice check in Phase 5.
+#: The six still absent are all negative, and no amount of syntax reaches them:
+#: four ``isolate-*`` want semantic rules (Phase 4), and the two ``splice/``
+#: members are individually clean, so only a pairwise check sees the violation
+#: (Phase 5).
 KNOWN_PASSING: frozenset[str] = frozenset(
     {
         "annotator-decoded",
+        "broken-chain",
+        "decoded-basic",
+        "discontinuity-known-width",
+        "discontinuity-unknown-width",
+        "external-session-id",
+        "passthrough-discontinuity",
+        "reordered-decoded",
+        "session-fan-out",
         "chain/annotated",
         "chain/decoded",
         "chain/raw",
@@ -154,6 +159,8 @@ _WIDE_FIELDS = frozenset(
         "ts_first",
         "off_start",
         "off_end",
+        "extent",
+        "width",
     }
 )
 
@@ -222,6 +229,16 @@ def _readable_params() -> list[Any]:
 
     """
     return [pytest.param(case, id=case.name) for case in CASES if case.tier != "reject"]
+
+
+def _projected_params() -> list[Any]:
+    """Build unmarked params for every vector shipping an expected projection.
+
+    Returns:
+        One param per case with a ``.jsonl`` beside it, in name order.
+
+    """
+    return [pytest.param(case, id=case.name) for case in CASES if case.expected_jsonl is not None]
 
 
 def _params(tier: str) -> list[Any]:
@@ -348,6 +365,29 @@ def test_new_syntax_is_recognized_rather_than_escaped(case: Case) -> None:
             assert block.block_type in _DELIBERATELY_UNKNOWN, (
                 f"{case.name}: block {index} of type 0x{block.block_type:02X} is not recognized"
             )
+
+
+@pytest.mark.parametrize("case", _projected_params())
+def test_the_shipped_jsonl_converts_back_to_the_binary(case: Case) -> None:
+    """The projection is lossless in the direction the tier tests do not cover.
+
+    :func:`test_accept` compares binary → JSONL. This is the other way: the
+    vector's own ``.jsonl`` is the input, and what comes out must be the blocks
+    the ``.zpf`` holds. Semantic rather than byte comparison, for the reason
+    the re-encode test gives — a converter may legally re-chunk ``spans`` and
+    order options as it likes.
+
+    It also reaches the two ``splice/`` files, whose ``.jsonl`` no tier test
+    looks at: they are ``isolate``, so :func:`test_accept` never sees them.
+    """
+    assert case.expected_jsonl is not None
+    with zpf.open(case.path) as reader:
+        expected = list(reader.blocks())
+    sink = io.BytesIO()
+    zpf.jsonl_to_binary(io.StringIO(case.expected_jsonl.read_text()), sink)
+    with zpf.open(io.BytesIO(sink.getvalue())) as converted:
+        got = list(converted.blocks())
+    assert got == expected, f"{case.name}: the JSONL does not rebuild the binary"
 
 
 @pytest.mark.parametrize("case", _readable_params())
