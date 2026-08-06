@@ -385,14 +385,18 @@ def _stream_extents(raw: FileReader) -> dict[tuple[int, int], int]:
     for a decoded one. That matters for a chained decode
     (``raw -> tls-records -> http``), where the "raw" argument is itself a
     decode stage's output and its offsets are a concatenation of payloads
-    rather than true stream positions.
+    rather than true stream positions — and where, since 0.14, it may carry
+    Discontinuity blocks whose declared widths are terms in that sum. Hence
+    ``stream_blocks``: passing records alone would measure a chained input
+    short by every width it declares, which is exactly the drift this
+    delegation exists to prevent.
     """
     extents: dict[tuple[int, int], int] = {}
     for session in raw.sessions():
         for participant in session.participants:
             pid = participant.participant_id
             extents[(session.session_id, pid)] = stream_extent(
-                participant, list(session.stream(pid))
+                participant, list(session.stream_blocks(pid))
             )
     return extents
 

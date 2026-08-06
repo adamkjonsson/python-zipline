@@ -380,3 +380,90 @@ def test_a_transport_stream_counts_its_holes():
     ]
     assert zpf.reassembly.record_ranges(participant, records) == ((0, 10), (49, 52))
     assert zpf.reassembly.stream_extent(participant, records) == 52
+
+
+# --- Discontinuity in the positional arithmetic (0.14) ------------------------
+
+
+def _decoded(pid: int, payload: bytes, ts: int = 0) -> zpf.Record:
+    return zpf.Record(
+        session_id=7, sender_pid=pid, source_id=1, timestamp=ts, payload=payload, decoder_id=1
+    )
+
+
+def test_a_declared_width_displaces_every_later_record():
+    """The whole reason the block exists: a skipped width shifts every range.
+
+    Without the break the second record sits at ``[3, 11)``; with a declared
+    width of 25 it sits at ``[28, 36)``. A reader that parses the block but
+    ignores ``width`` gets the first answer, which is why reading it is not
+    enough.
+    """
+    participant = zpf.Participant(session_id=7, participant_id=0)
+    blocks = [
+        _decoded(0, b"REQ"),
+        zpf.Discontinuity(session_id=7, participant_id=0, width=25, reason="stream-gap"),
+        _decoded(0, b"RESPONSE", ts=1),
+    ]
+    assert zpf.reassembly.record_ranges(participant, blocks) == ((0, 3), (28, 36))
+    assert zpf.reassembly.stream_extent(participant, blocks) == 36
+
+
+def test_an_unknown_width_contributes_nothing_to_the_arithmetic():
+    """Absent means unknowable, and an unknowable extent adds 0.
+
+    The records still do not *join* — that is the block's other job, and the
+    one a consumer must honour — but there is no number to displace them by.
+    """
+    participant = zpf.Participant(session_id=7, participant_id=0)
+    blocks = [
+        _decoded(0, b"REQ"),
+        zpf.Discontinuity(session_id=7, participant_id=0, reason="tls-record-lost"),
+        _decoded(0, b"RESPONSE", ts=1),
+    ]
+    assert zpf.reassembly.record_ranges(participant, blocks) == ((0, 3), (3, 11))
+
+
+def test_a_zero_width_break_is_read_as_zero_not_as_unknown():
+    # Numerically the same as an unknown width, but reached by a different
+    # route: a declared 0 is a zero-width hole. Pinning it keeps a future
+    # `width or 0` refactor from quietly conflating the two.
+    participant = zpf.Participant(session_id=7, participant_id=0)
+    blocks = [
+        _decoded(0, b"REQ"),
+        zpf.Discontinuity(session_id=7, participant_id=0, width=0),
+        _decoded(0, b"RESPONSE", ts=1),
+    ]
+    assert zpf.reassembly.record_ranges(participant, blocks) == ((0, 3), (3, 11))
+
+
+def test_a_break_after_the_last_record_does_not_extend_the_stream():
+    """Nothing follows it to displace, and the bytes are missing by definition.
+
+    A coverage check reads this number as "how far the stream reaches"; a
+    trailing break must not make it claim bytes that are not there.
+    """
+    participant = zpf.Participant(session_id=7, participant_id=0)
+    blocks = [
+        _decoded(0, b"REQ"),
+        zpf.Discontinuity(session_id=7, participant_id=0, width=25),
+    ]
+    assert zpf.reassembly.record_ranges(participant, blocks) == ((0, 3),)
+    assert zpf.reassembly.stream_extent(participant, blocks) == 3
+
+
+def test_a_break_leaves_a_hinted_transport_stream_alone():
+    """Transport offsets are absolute, so a width has nothing to add to them.
+
+    The block is defined for decoded layers only; one appearing here is a
+    conformance violation, not an instruction to move the records.
+    """
+    participant = zpf.Participant(session_id=7, participant_id=0, isn=1000)
+    blocks = [
+        zpf.Record(session_id=7, sender_pid=0, source_id=1, timestamp=0,
+                   payload=b"0123456789", seq_start=1001),
+        zpf.Discontinuity(session_id=7, participant_id=0, width=25),
+        zpf.Record(session_id=7, sender_pid=0, source_id=1, timestamp=1,
+                   payload=b"xyz", seq_start=1050),
+    ]
+    assert zpf.reassembly.record_ranges(participant, blocks) == ((0, 10), (49, 52))
