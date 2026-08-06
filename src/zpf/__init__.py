@@ -71,6 +71,7 @@ from zpf.jsonl import (
 from zpf.order import causal_merge, record_end, seq_geq, seq_leq, seq_lt, verify_sequenced
 from zpf.reader import FileReader, SessionReader, detect_face, open
 from zpf.reassembly import (
+    Break,
     Datagram,
     Gap,
     Segment,
@@ -80,8 +81,10 @@ from zpf.reassembly import (
     stream_extent,
 )
 from zpf.transform import (
+    InputRef,
     check_coverage,
     check_extents,
+    check_splice,
     merge_files,
     resolve_spans,
     rewrite_decoded,
@@ -102,6 +105,7 @@ __version__ = "0.1.0"
 __all__ = [
     "AdvisoryError",
     "Block",
+    "Break",
     "BlockReader",
     "BlockWriter",
     "ConformanceChecker",
@@ -125,6 +129,7 @@ __all__ = [
     "FileWriter",
     "Gap",
     "InputExtent",
+    "InputRef",
     "JsonlReader",
     "JsonlWriter",
     "NameResolution",
@@ -161,6 +166,7 @@ __all__ = [
     "causal_merge",
     "check_coverage",
     "check_extents",
+    "check_splice",
     "create",
     "decode_prim",
     "decode_stage",

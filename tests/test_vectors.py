@@ -39,14 +39,10 @@ VECTORS = Path(__file__).parent / "vectors"
 #: Vector cases that MUST pass. Grow it as phases land; never remove a name,
 #: because that is the regression guard.
 #:
-#: Phase 4: every vector but one pair. The four ``isolate-*`` added here are
-#: whole-file properties — a raw file carrying a block only a derived one may,
-#: and three ways a derived file can contradict itself about an input stream —
-#: so each is settled at end-of-stream rather than when a block is read.
-#:
-#: Only ``splice/`` remains. Its two files are individually clean, so no test
-#: that looks at one file can see the violation: it belongs to the pair, and
-#: needs the checker Phase 5 brings.
+#: Phase 5: the whole suite. ``splice`` is one name for two files, because its
+#: violation belongs to neither of them — 41 names for 42 files, which is the
+#: honest arithmetic. :data:`PAIRWISE` routes it to
+#: :func:`test_a_pairwise_vector_is_caught`, and the per-file tiers skip it.
 KNOWN_PASSING: frozenset[str] = frozenset(
     {
         "annotator-decoded",
@@ -86,6 +82,7 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "reject-unknown-minor",
         "reordered-decoded",
         "sequenced-basis",
+        "splice",
         "session-fan-out",
         "undecoded-reason-class",
         "undecoded-skipped",
@@ -191,6 +188,29 @@ class Case:
     summary: str
 
 
+def _pairwise_vectors() -> list[str]:
+    """Name the vectors whose violation belongs to a *pair* of files.
+
+    A multi-file entry in the ``accept`` tier (``chain``) is still judged
+    file by file: each member is conformant on its own. A multi-file entry
+    in a negative tier is the other thing — ``splice`` ships two files that
+    are each individually clean, so no per-file test can see what is wrong.
+
+    Returns:
+        The manifest names of those vectors, in manifest order.
+
+    """
+    manifest = json.loads((VECTORS / "manifest.json").read_text())
+    return [
+        entry["name"]
+        for entry in manifest["vectors"]
+        if entry.get("files") and entry["tier"] != "accept"
+    ]
+
+
+PAIRWISE = _pairwise_vectors()
+
+
 def _load_cases() -> list[Case]:
     """Expand the manifest into one case per `.zpf` file.
 
@@ -261,6 +281,8 @@ def _params(tier: str) -> list[Any]:
     for case in CASES:
         if case.tier != tier:
             continue
+        if case.name.split("/")[0] in PAIRWISE:
+            continue  # judged as a pair; see test_a_pairwise_vector_is_caught
         if case.name in KNOWN_PASSING:
             marks: tuple[Any, ...] = ()
         else:
@@ -476,3 +498,65 @@ def test_isolate(case: Case) -> None:
         f"{case.name}: isolated, but for the wrong reason — "
         f"expected {wanted!r} in {reported!r}"
     )
+
+
+def _pairwise_params() -> list[Any]:
+    """Build params for the pairwise vectors, xfailing all but known-passing."""
+    params = []
+    for name in PAIRWISE:
+        marks: tuple[Any, ...] = ()
+        if name not in KNOWN_PASSING:
+            marks = (pytest.mark.xfail(reason="not yet ported to 0.14", strict=False),)
+        params.append(pytest.param(name, id=name, marks=marks))
+    return params
+
+
+def _stage_order(vector: str) -> tuple[Path, Path]:
+    """Work out which member decodes which, from the Source each declares.
+
+    Returns:
+        ``(stage2, stage1)`` — the file citing a sibling, and the sibling it
+        cites.
+
+    """
+    members = {path.name: path for path in sorted((VECTORS / vector).glob("*.zpf"))}
+    for path in members.values():
+        with zpf.open(path) as reader:
+            cited = [
+                source.uri
+                for source in reader.sources.values()
+                if source.kind == zpf.SourceKind.ZPF_INPUT and source.uri in members
+            ]
+        if cited:
+            return path, members[cited[0]]
+    msg = f"{vector}: no member cites a sibling, so there is no stage order to find"
+    raise AssertionError(msg)
+
+
+@pytest.mark.parametrize("vector", _pairwise_params())
+def test_a_pairwise_vector_is_caught(vector: str) -> None:
+    """A violation that belongs to the pair, not to either file.
+
+    ``splice`` is built so this cannot be faked: stage 1 declares a break
+    and breaks no rule, stage 2 is well-framed with complete coverage and
+    nothing wrong on its face. **A harness that tests files individually
+    passes it** — so this asserts both halves: each file is clean alone, and
+    the pair is not.
+    """
+    stage2, stage1 = _stage_order(vector)
+    for path in (stage1, stage2):
+        with zpf.open(path) as reader:
+            for session in reader.sessions():
+                list(session.records())
+            assert reader.diagnostics == [], f"{path.name} should be clean on its own"
+        assert zpf.check_extents(path) == [], f"{path.name} should be clean on its own"
+    findings = zpf.check_splice(stage2, stage1)
+    assert findings, f"{vector}: the pair passed, and it must not"
+    assert all(f.category == "discontinuity-splice" for f in findings)
+
+
+def test_a_clean_pair_reports_nothing() -> None:
+    """The chain's own hops splice nothing, so the checker stays quiet."""
+    chain = VECTORS / "chain"
+    assert zpf.check_splice(chain / "annotated.zpf", chain / "decoded.zpf") == []
+    assert zpf.check_splice(chain / "decoded.zpf", chain / "raw.zpf") == []

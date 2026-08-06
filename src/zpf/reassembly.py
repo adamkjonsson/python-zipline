@@ -233,6 +233,35 @@ class Gap:
 
 
 @dataclass(frozen=True)
+class Break:
+    """A declared discontinuity between two units of a decoded stream.
+
+    The reassembly face of a :class:`~zpf.blocks.Discontinuity`. What it
+    asserts is not a length but that the units either side **do not join**:
+    a consumer that splices them reads a message that was never sent.
+
+    Distinct from :class:`Gap`, which is a transport hole of known extent —
+    bytes that existed and were lost. A break's :attr:`width` may be
+    ``None``, meaning the missing extent is not recoverable at all (TLS lost
+    a record, and the plaintext length it would have produced cannot be
+    known from the ciphertext).
+
+    Attributes:
+        off_start: Where the break sits in the stream's offset space.
+        width: Its extent, or ``None`` when unknowable. An absent width
+            contributes 0 to the arithmetic, so the units either side are
+            numerically adjacent — which is exactly why this marker has to
+            be surfaced rather than inferred from the offsets.
+        reason: Why the stream breaks here, if declared.
+
+    """
+
+    off_start: int
+    width: int | None
+    reason: str | None
+
+
+@dataclass(frozen=True)
 class Datagram:
     """One record of a packet-oriented stream, consumed as a whole unit.
 
@@ -409,12 +438,47 @@ class StreamView:
             :func:`record_ranges` — the two walk the same space and must
             not disagree.
 
+        Note:
+            Records only, so a break between two of them is **not visible
+            here** — and with an unknown width the two are numerically
+            adjacent, so the offsets do not betray it either. A consumer
+            that must not splice across a break wants :meth:`units`.
+
+        """
+        for unit in self.units():
+            if isinstance(unit, Datagram):
+                yield unit
+
+    def units(self) -> Iterator[Datagram | Break]:
+        """Iterate the stream's datagrams **and** the breaks between them.
+
+        The specification forbids a consumer from treating the records
+        either side of a :class:`~zpf.blocks.Discontinuity` as contiguous.
+        Honouring that needs the break to be visible, which is what this
+        adds over :meth:`datagrams`: an absent ``width`` contributes 0, so
+        the two records are numerically adjacent and nothing in their
+        offsets says they do not join.
+
+        The same distinction :meth:`zpf.SessionReader.stream` and
+        :meth:`~zpf.SessionReader.stream_blocks` draw, one level up.
+
+        Yields:
+            Each :class:`Datagram` and :class:`Break`, in stored order.
+
+        Example:
+            >>> for unit in view.units():
+            ...     if isinstance(unit, zpf.Break):
+            ...         flush()  # whatever follows did not adjoin what came before
+            ...     else:
+            ...         feed(unit.data)
+
         """
         hinted = self.is_stream_oriented
         origin = self._origin() if hinted else None
         cursor = 0
         for block in self._blocks():
             if isinstance(block, Discontinuity):
+                yield Break(off_start=cursor, width=block.width, reason=block.reason)
                 if not hinted:
                     cursor += block.width or 0
                 continue

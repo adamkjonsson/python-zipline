@@ -526,3 +526,57 @@ def test_autofill_always_uses_the_stage_default_decoder():
     with zpf.open(io.BytesIO(sink.getvalue())) as out:
         # Both streams are auto-filled, all attributed to the stage's decoder.
         assert {u.decoder_id for u in out.undecoded} == {http.decoder_id}
+
+
+def test_a_stage_declares_how_long_its_inputs_were(tmp_path: Path):
+    """The autofill 0.14's SHOULD asks for.
+
+    The stage knows every input stream's extent by the time it closes, and
+    declaring it is what lets a consumer check coverage from the output alone
+    — a trailing gap is otherwise indistinguishable from a short stream.
+    """
+    raw, out = tmp_path / "raw.zpf", tmp_path / "dec.zpf"
+    with zpf.create(raw, tick_hz=1) as w:
+        w.add_source("capture", uri="t.pcap")
+        with w.begin_session(proto="tcp", session_id=7) as s:
+            sender = s.participant("a", isn=1000)
+            s.record(sender, ts=1, payload=b"HELLO WORLD", seq_start=1001)
+    with zpf.decode_stage(raw, out, decoder="http/1.1", produced_by="d 1", produced_at=1) as stage:
+        for stream in stage.streams():
+            for datagram in stream.datagrams():
+                stage.record(stream, ts=datagram.ts, payload=datagram.data[:5],
+                             spans=(stream.cite(0, 5),))
+    with zpf.open(out) as reader:
+        end = reader.session(7).end
+        assert end is not None
+        assert [(e.participant_id, e.extent) for e in end.input_extents] == [(0, 11)]
+        assert reader.diagnostics == []
+    assert zpf.check_extents(out) == []
+    assert zpf.check_coverage(out, raw) == []
+
+
+def test_a_stage_can_break_its_own_output(tmp_path: Path):
+    """The mirror of ``undecoded``: this one is about the output.
+
+    It discharges no coverage obligation, so the tail the decoder skipped
+    still has to be marked — which the auto-fill does.
+    """
+    raw, out = tmp_path / "raw.zpf", tmp_path / "dec.zpf"
+    with zpf.create(raw, tick_hz=1) as w:
+        w.add_source("capture", uri="t.pcap")
+        with w.begin_session(proto="tcp", session_id=7) as s:
+            sender = s.participant("a", isn=1000)
+            s.record(sender, ts=1, payload=b"HELLO WORLD", seq_start=1001)
+    with zpf.decode_stage(raw, out, decoder="tls", produced_by="d 1", produced_at=1) as stage:
+        for stream in stage.streams():
+            stage.record(stream, ts=0, payload=b"HELLO", spans=(stream.cite(0, 5),))
+            stage.discontinuity(stream, reason="tls-record-lost")
+    with zpf.open(out) as reader:
+        (block,) = [b for b in reader.blocks() if isinstance(b, zpf.Discontinuity)]
+        assert (block.session_id, block.participant_id) == (7, 0)
+        assert block.width is None
+        assert reader.diagnostics == []
+        # Coverage is untouched by the break: the undecoded tail is still marked.
+        marked = [b for b in reader.blocks() if isinstance(b, zpf.Undecoded)]
+        assert [(b.off_start, b.off_end) for b in marked] == [(5, 11)]
+    assert zpf.check_coverage(out, raw) == []

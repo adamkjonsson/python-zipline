@@ -474,3 +474,186 @@ def test_check_coverage_cross_checks_a_declared_extent_against_the_input(tmp_pat
     mismatch = [f for f in findings if f.category == "extent-mismatch"]
     assert len(mismatch) == 1
     assert str(actual) in mismatch[0].message
+
+
+# --- check_splice: a violation belonging to a pair of files -------------------
+
+
+def test_check_splice_catches_a_unit_welding_two_sides_of_a_break():
+    stage1 = VECTORS / "splice/tls-records.zpf"
+    stage2 = VECTORS / "splice/http.zpf"
+    (finding,) = zpf.check_splice(stage2, stage1)
+    assert finding.category == "discontinuity-splice"
+    assert finding.offset == 50  # where the break sits in stage 1's output
+
+
+def test_check_splice_is_quiet_when_the_stage_carries_the_break_forward(tmp_path: Path):
+    """Two units with a break between them cross nothing.
+
+    The escape the specification allows: emit your own Discontinuity in the
+    corresponding position instead of spanning the join.
+    """
+    stage1 = tmp_path / "stage1.zpf"
+    with zpf.create(stage1, tick_hz=1, produced_by="s1", produced_at=1) as w:
+        source = w.add_source("zpf-input", uri="raw.zpf")
+        decoder = w.add_decoder("tls")
+        with w.begin_session(session_id=7) as s:
+            client = s.participant("a")
+            s.record(client, ts=0, payload=b"A" * 50, source=source, decoder=decoder,
+                     spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
+                                     off_start=0, off_end=50),))
+            s.discontinuity(client, reason="tls-record-lost")
+            s.record(client, ts=1, payload=b"B" * 30, source=source, decoder=decoder,
+                     spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
+                                     off_start=50, off_end=80),))
+
+    def write_stage2(path: Path, *, weld: bool) -> None:
+        with zpf.create(path, tick_hz=1, produced_by="s2", produced_at=2) as w:
+            source = w.add_source("zpf-input", uri=str(stage1))
+            decoder = w.add_decoder("http/1.1")
+            with w.begin_session(session_id=7) as s:
+                client = s.participant("a")
+                if weld:
+                    s.record(client, ts=0, payload=b"M", source=source, decoder=decoder,
+                             spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
+                                             off_start=0, off_end=80),))
+                else:
+                    s.record(client, ts=0, payload=b"M", source=source, decoder=decoder,
+                             spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
+                                             off_start=0, off_end=50),))
+                    s.discontinuity(client, reason="tls-record-lost")
+                    s.record(client, ts=1, payload=b"N", source=source, decoder=decoder,
+                             spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
+                                             off_start=50, off_end=80),))
+
+    honest, welded = tmp_path / "honest.zpf", tmp_path / "welded.zpf"
+    write_stage2(honest, weld=False)
+    write_stage2(welded, weld=True)
+    assert zpf.check_splice(honest, stage1) == []
+    assert [f.category for f in zpf.check_splice(welded, stage1)] == ["discontinuity-splice"]
+
+
+def test_a_units_spans_are_judged_together(tmp_path: Path):
+    """Two spans either side of a break still weld the join into one unit.
+
+    Neither span contains the break on its own, so a per-span check misses
+    it. The rule is written about the *unit*.
+    """
+    stage1 = tmp_path / "stage1.zpf"
+    with zpf.create(stage1, tick_hz=1, produced_by="s1", produced_at=1) as w:
+        source = w.add_source("zpf-input", uri="raw.zpf")
+        decoder = w.add_decoder("tls")
+        with w.begin_session(session_id=7) as s:
+            client = s.participant("a")
+            s.record(client, ts=0, payload=b"A" * 50, source=source, decoder=decoder,
+                     spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
+                                     off_start=0, off_end=50),))
+            s.discontinuity(client, reason="stream-gap")
+            s.record(client, ts=1, payload=b"B" * 30, source=source, decoder=decoder,
+                     spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
+                                     off_start=50, off_end=80),))
+    stage2 = tmp_path / "stage2.zpf"
+    with zpf.create(stage2, tick_hz=1, produced_by="s2", produced_at=2) as w:
+        source = w.add_source("zpf-input", uri=str(stage1))
+        decoder = w.add_decoder("http/1.1")
+        with w.begin_session(session_id=7) as s:
+            client = s.participant("a")
+            s.record(
+                client, ts=0, payload=b"M", source=source, decoder=decoder,
+                spans=(
+                    zpf.Span(source_id=0, session_id=7, participant_id=0,
+                             off_start=0, off_end=50),
+                    zpf.Span(source_id=0, session_id=7, participant_id=0,
+                             off_start=50, off_end=80),
+                ),
+            )
+    assert [f.category for f in zpf.check_splice(stage2, stage1)] == ["discontinuity-splice"]
+
+
+# --- rewrite_decoded against an input that breaks -----------------------------
+
+
+def decoded_with_a_break(path: Path) -> None:
+    """Write a decode stage whose output carries a declared break."""
+    with zpf.create(path, tick_hz=1, produced_by="t", produced_at=1) as w:
+        source = w.add_source("zpf-input", uri="raw.zpf")
+        decoder = w.add_decoder("tls")
+        with w.begin_session(session_id=7) as s:
+            client = s.participant("a")
+            for index, (body, (start, end)) in enumerate(
+                [(b"AAA", (0, 10)), (b"BB", (10, 20)), (b"CCCC", (30, 40))]
+            ):
+                if index == 2:
+                    s.discontinuity(client, width=5, reason="tls-record-lost")
+                s.record(client, ts=index, payload=body, source=source, decoder=decoder,
+                         spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
+                                         off_start=start, off_end=end),))
+            w.undecoded(source, 7, 0, 20, 30, reason="undecodable")
+
+
+def test_a_rewrite_carries_its_inputs_breaks_forward(tmp_path: Path):
+    """Duty 1 of the MUST NOT, and the one the standard actually requires.
+
+    A filter re-emits records rather than merging them, so it satisfies the
+    rule by putting every input break back between the same two units. Drop
+    them and the output welds records the input said do not join.
+    """
+    src, out = tmp_path / "in.zpf", tmp_path / "out.zpf"
+    decoded_with_a_break(src)
+    zpf.rewrite_decoded(src, out, produced_by="f 1", produced_at=2, mark_gaps=False)
+    with zpf.open(out) as reader:
+        breaks = [b for b in reader.blocks() if isinstance(b, zpf.Discontinuity)]
+    assert [(b.width, b.reason) for b in breaks] == [(5, "tls-record-lost")]
+    assert zpf.check_splice(out, src) == []
+
+
+def test_a_rewrite_marks_a_break_as_a_hole_not_as_skipped(tmp_path: Path):
+    """A break's range holds no bytes, and the reason has to say so.
+
+    ``skipped`` is the ``bytes`` class — the data exists upstream, go and
+    fetch it. For the range a declared width covers that is false, and acting
+    on it would send a consumer after bytes that were never sent.
+    """
+    src, out = tmp_path / "in.zpf", tmp_path / "out.zpf"
+    decoded_with_a_break(src)
+    zpf.rewrite_decoded(src, out, keep=lambda r: r.payload != b"BB",
+                        produced_by="f 1", produced_at=2)
+    with zpf.open(out) as reader:
+        marked = [b for b in reader.blocks() if isinstance(b, zpf.Undecoded)]
+        assert reader.diagnostics == []
+    by_range = {(b.off_start, b.off_end): b.reason for b in marked}
+    assert by_range[(5, 10)] == "gap"  # the break: no bytes anywhere
+    assert zpf.UNDECODED_REASONS["gap"] == "hole"
+    assert by_range[(3, 5)] == "skipped"  # the dropped record: bytes upstream
+    assert zpf.check_coverage(out, src) == []
+
+
+def test_mark_gaps_records_a_join_the_filter_itself_made(tmp_path: Path):
+    """D5: beyond what 0.14 requires, and off by request.
+
+    Dropping the middle record leaves its neighbours adjacent in the output
+    when they did not adjoin in the input — the defect a Discontinuity exists
+    to prevent, one hop along, and one no rule covers.
+    """
+    src = tmp_path / "in.zpf"
+    decoded_with_a_break(src)
+
+    def reasons(path: Path, *, mark_gaps: bool) -> list[str | None]:
+        zpf.rewrite_decoded(src, path, keep=lambda r: r.payload != b"BB",
+                            produced_by="f 1", produced_at=2, mark_gaps=mark_gaps)
+        with zpf.open(path) as reader:
+            return [b.reason for b in reader.blocks() if isinstance(b, zpf.Discontinuity)]
+
+    assert reasons(tmp_path / "on.zpf", mark_gaps=True) == ["tls-record-lost", "filtered"]
+    # Off: only the duty the standard states survives.
+    assert reasons(tmp_path / "off.zpf", mark_gaps=False) == ["tls-record-lost"]
+
+
+def test_a_rewrite_can_record_its_own_configuration(tmp_path: Path):
+    """The gap 0.14 closed: a transform that decodes nothing can now say how."""
+    src, out = tmp_path / "in.zpf", tmp_path / "out.zpf"
+    decoded_with_a_break(src)
+    zpf.rewrite_decoded(src, out, produced_by="f 1", produced_at=2,
+                        transform_params_digest="sha256:c0ffee")
+    with zpf.open(out) as reader:
+        assert reader.header.transform_params_digest == "sha256:c0ffee"

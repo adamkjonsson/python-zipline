@@ -467,3 +467,37 @@ def test_a_break_leaves_a_hinted_transport_stream_alone():
                    payload=b"xyz", seq_start=1050),
     ]
     assert zpf.reassembly.record_ranges(participant, blocks) == ((0, 10), (49, 52))
+
+
+def test_units_surface_a_break_that_datagrams_hides():
+    """The offsets cannot betray an unknown-width break, so the marker must.
+
+    Both records sit at ``[0,3)`` and ``[3,11)`` either side of it — exactly
+    where they would sit with no break at all. A consumer honouring "MUST NOT
+    treat the records either side as contiguous" has nothing to go on unless
+    the break itself is yielded.
+    """
+    participant = zpf.Participant(session_id=7, participant_id=0)
+    blocks = [
+        _decoded(0, b"REQ"),
+        zpf.Discontinuity(session_id=7, participant_id=0, reason="tls-record-lost"),
+        _decoded(0, b"RESPONSE", ts=1),
+    ]
+    view = zpf.StreamView(participant, lambda: iter(blocks))
+    assert [(d.off_start, d.off_end) for d in view.datagrams()] == [(0, 3), (3, 11)]
+    units = list(view.units())
+    assert [type(unit).__name__ for unit in units] == ["Datagram", "Break", "Datagram"]
+    assert units[1] == zpf.Break(off_start=3, width=None, reason="tls-record-lost")
+
+
+def test_a_break_reports_the_width_it_declares():
+    participant = zpf.Participant(session_id=7, participant_id=0)
+    blocks = [
+        _decoded(0, b"REQ"),
+        zpf.Discontinuity(session_id=7, participant_id=0, width=25),
+        _decoded(0, b"RESPONSE", ts=1),
+    ]
+    view = zpf.StreamView(participant, lambda: iter(blocks))
+    units = list(view.units())
+    assert units[1] == zpf.Break(off_start=3, width=25, reason=None)
+    assert (units[2].off_start, units[2].off_end) == (28, 36)

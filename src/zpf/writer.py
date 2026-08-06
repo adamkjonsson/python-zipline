@@ -34,9 +34,11 @@ from zpf.blocks import (
     Block,
     Custom,
     Decoder,
+    Discontinuity,
     End,
     FileFlags,
     FileHeader,
+    InputExtent,
     NameResolution,
     Participant,
     Record,
@@ -211,6 +213,7 @@ class FileWriter:
         creator: str | None = None,
         produced_by: str | None = None,
         produced_at: int | datetime | None = None,
+        transform_params_digest: str | None = None,
         single_clock: bool = False,
         comment: str | None = None,
         face: Literal["binary", "jsonl"] = "binary",
@@ -238,6 +241,7 @@ class FileWriter:
             creator=creator,
             produced_by=produced_by,
             produced_at=None if produced_at is None else unix_seconds(produced_at),
+            transform_params_digest=transform_params_digest,
             flags=flags,
             comment=comment,
         )
@@ -345,6 +349,7 @@ class FileWriter:
         key: str | None = None,
         sequenced: bool = False,
         sequenced_basis: str | None = None,
+        external_session_id: bytes | None = None,
         comment: str | None = None,
         session_id: int | None = None,
     ) -> SessionWriter:
@@ -362,6 +367,11 @@ class FileWriter:
                 to set here even though hint-lessness is not settled until
                 the records are written: a producer names what it is
                 *relying on*, which it knows the moment it sets the flag.
+            external_session_id: An identity assigned outside this format
+                — a trace id, a capture orchestrator's UUID, a case
+                number. **Opaque bytes, not text**: nothing here
+                interprets it, and it projects as base64 rather than
+                being spelled out.
             comment: Free-text note.
             session_id: Explicit id (e.g. from a global monotonic
                 sequence); allocated automatically when omitted.
@@ -380,6 +390,7 @@ class FileWriter:
                 flow_key=key,
                 flags=flags,
                 sequenced_basis=sequenced_basis,
+                external_session_id=external_session_id,
                 comment=comment,
             )
         )
@@ -744,16 +755,83 @@ class SessionWriter:
             )
         )
 
-    def end(self, reason: str | None = None, *, comment: str | None = None) -> None:
+    def discontinuity(
+        self,
+        participant: ParticipantHandle | int,
+        *,
+        width: int | None = None,
+        reason: str | None = None,
+        comment: str | None = None,
+    ) -> None:
+        """Mark a break in this participant's own decoded output stream.
+
+        The records either side of it are **not contiguous**. Emit it at the
+        point in the stream where the break belongs: its meaning is
+        positional, so stored order — between the records it separates — is
+        the whole of what places it.
+
+        Decoded layers only. A raw file's offsets are true stream positions,
+        in which a hole is already the space between two ``seq_start``
+        values.
+
+        Args:
+            participant: The stream that breaks, as its handle or raw
+                ``participant_id``.
+            width: The gap's extent in this stream's offset space, when it
+                can be counted. **Leave it out when it cannot** — absent
+                means unknowable and contributes 0 to the positional
+                arithmetic, which is not the same as a declared ``0``. What
+                the block asserts is not a length; it is that the two sides
+                do not join.
+            reason: Why the stream breaks here — ``"tls-record-lost"``,
+                ``"decrypt-failed"``, ``"stream-gap"``, … (open vocabulary).
+            comment: Free-text note.
+
+        Example:
+            >>> session.discontinuity(client, reason="tls-record-lost")
+
+        """
+        pid = participant if isinstance(participant, int) else participant.pid
+        self._emit(
+            Discontinuity(
+                session_id=self.session_id,
+                participant_id=pid,
+                width=width,
+                reason=reason,
+                comment=comment,
+            )
+        )
+
+    def end(
+        self,
+        reason: str | None = None,
+        *,
+        input_extents: Sequence[InputExtent] | None = None,
+        comment: str | None = None,
+    ) -> None:
         """Declare the file holds nothing more for this session.
 
         Args:
             reason: How the session ended: ``"fin"``, ``"rst"``,
                 ``"timeout"``, ``"capture-end"``, … (open vocabulary).
+            input_extents: How long each input participant stream this
+                session drew on was, in that stream's own offset space —
+                derived files only. Declaring them is what lets a consumer
+                check the coverage guarantee **from this file alone**:
+                without a length, coverage that stops early is
+                indistinguishable from a stream that was that short. The
+                specification says a derived file SHOULD declare them.
             comment: Free-text note.
 
         """
-        self._emit(SessionEnd(session_id=self.session_id, reason=reason, comment=comment))
+        self._emit(
+            SessionEnd(
+                session_id=self.session_id,
+                reason=reason,
+                input_extents=() if input_extents is None else tuple(input_extents),
+                comment=comment,
+            )
+        )
         self._ended = True
 
 
@@ -765,6 +843,7 @@ def create(
     creator: str | None = None,
     produced_by: str | None = None,
     produced_at: int | datetime | None = None,
+    transform_params_digest: str | None = None,
     single_clock: bool = False,
     comment: str | None = None,
     face: Literal["binary", "jsonl"] = "binary",
@@ -786,6 +865,10 @@ def create(
         produced_at: Wall-clock build time (derived files); Unix seconds, or
             a timezone-aware :class:`~datetime.datetime` (see
             :func:`unix_seconds`).
+        transform_params_digest: Hash of the configuration of a transform
+            that produced records **without decoding** them — a filter, a
+            reordering stage, a merge. A decode stage records its
+            configuration on its Decoder instead.
         single_clock: Assert every record is stamped against one
             trustworthy clock (the SINGLE_CLOCK file flag).
         comment: Free-text note.
@@ -803,6 +886,7 @@ def create(
         creator=creator,
         produced_by=produced_by,
         produced_at=produced_at,
+        transform_params_digest=transform_params_digest,
         single_clock=single_clock,
         comment=comment,
         face=face,
