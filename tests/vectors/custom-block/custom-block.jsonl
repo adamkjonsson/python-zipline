@@ -1,0 +1,5 @@
+{"type":"file","format":"zipline-payload/0.14","tick_hz":1000000}
+{"type":"source","source_id":1,"kind":"capture","uri":"c.pcap"}
+{"type":"custom","pen":32473,"subtype":7,"payload":"AQIDBA=="}
+{"type":"session","session_id":7,"proto":"tcp"}
+{"type":"end"}

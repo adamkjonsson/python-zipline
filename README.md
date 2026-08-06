@@ -32,8 +32,11 @@ belongs to an unrelated project.
 
 - Complete 0.12 support: the binary container and the JSON-Lines projection,
   raw, decode-stage, and pass-through files, with lossless converters.
-- Verified against the specification's own 26 conformance vectors, vendored in
-  [`tests/vectors/`](tests/vectors/) and run by the test suite.
+- Verified against the specification's own conformance vectors, vendored in
+  [`tests/vectors/`](tests/vectors/) and run by the test suite. **The port to
+  0.14 is underway**, so the vendored tree is already that version's 39 vectors
+  while the library still reads and writes 0.12 — see
+  [SPEC-0.14-MIGRATION-PLAN.md](SPEC-0.14-MIGRATION-PLAN.md).
 - An ergonomic writer (`zpf.create`) that makes non-conformant files hard to
   write, and a session-first reader (`zpf.open`) with lazy record access.
 - Causal ordering: `session.timeline()` orders records by TCP seq/ack

@@ -1,0 +1,94 @@
+# isolate-extent-exceeds-coverage
+#
+# Generated from the same description as the .zpf -- never edited
+# by hand, so the annotation cannot drift from the bytes.
+
+0000  01 00                    type   = 0x0001  File Header
+0002  00 00                    reserved
+0004  30 00 00 00              length = 48
+0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
+000C  00 00                    version_major = 0
+000E  0E 00                    version_minor = 14
+0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
+0018  12 00 0E 00              option 0x0012 produced_by, len = 14
+001C  7A 70 66 2D 64 65 63 6F  "zpf-decode 0.4"
+0024  64 65 20 30 2E 34
+002A  00 00                    value padding
+002C  13 00 08 00              option 0x0013 produced_at, len = 8  (1719570000)
+0030  50 8E 7E 66 00 00 00 00
+
+0038  02 00                    type   = 0x0002  Source Descriptor
+003A  00 00                    reserved
+003C  20 00 00 00              length = 32
+0040  01 00                    source_id = 1
+0042  01                       kind = 1  (zpf-input)
+0043  00                       _reserved
+0044  20 00 07 00              option 0x0020 uri, len = 7
+0048  72 61 77 2E 7A 70 66     "raw.zpf"
+004F  00                       value padding
+0050  21 00 0B 00              option 0x0021 digest, len = 11
+0054  73 68 61 32 35 36 3A 39  "sha256:9f2c"
+005C  66 32 63
+005F  00                       value padding
+
+0060  03 00                    type   = 0x0003  Decoder Descriptor
+0062  00 00                    reserved
+0064  10 00 00 00              length = 16
+0068  01 00                    decoder_id = 1
+006A  00 00                    _reserved
+006C  41 00 08 00              option 0x0041 name, len = 8
+0070  68 74 74 70 2F 31 2E 31  "http/1.1"
+
+0078  10 00                    type   = 0x0010  Session Descriptor
+007A  00 00                    reserved
+007C  10 00 00 00              length = 16
+0080  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+0088  50 00 04 00              option 0x0050 proto, len = 4
+008C  68 74 74 70              "http"
+
+0090  11 00                    type   = 0x0011  Participant Descriptor
+0092  00 00                    reserved
+0094  20 00 00 00              length = 32
+0098  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+00A0  00 00                    participant_id = 0
+00A2  00 00                    _reserved
+00A4  60 00 0E 00              option 0x0060 endpoint, len = 14
+00A8  31 30 2E 30 2E 30 2E 31  "10.0.0.1:51000"
+00B0  3A 35 31 30 30 30
+00B6  00 00                    value padding
+
+00B8  20 00                    type   = 0x0020  Record
+00BA  00 00                    reserved
+00BC  48 00 00 00              length = 72
+00C0  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+00C8  00 00                    sender_pid = 0
+00CA  01 00                    source_id  = 1
+00CC  E8 03 00 00 00 00 00 00  timestamp  = 1000
+00D4  00 00                    _reserved  (u16 = 0)
+00D6  00 00                    flags      = 0x0000
+00D8  04 00 00 00              payload_len = 4
+00DC  70 61 72 74              "part"
+00E0  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
+00E4  01 00
+00E6  00 00                    value padding
+00E8  80 00 1C 00              option 0x0080 spans, len = 28  (1 entry/entries)
+00EC  01 00 00 00 07 00 00 00
+00F4  00 00 00 00 00 00 00 00
+00FC  00 00 00 00 14 00 00 00
+0104  00 00 00 00
+
+0108  12 00                    type   = 0x0012  Session End
+010A  00 00                    reserved
+010C  20 00 00 00              length = 32
+0110  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+0118  C1 00 14 00              option 0x00C1 input_extents, len = 20  (1 entry/entries)
+011C  01 00 00 00 07 00 00 00
+0124  00 00 00 00 28 00 00 00
+012C  00 00 00 00
+
+0130  41 00                    type   = 0x0041  End of file
+0132  00 00                    reserved
+0134  04 00 00 00              length = 4
+0138  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
+
+013C                           (end of file, 316 bytes)

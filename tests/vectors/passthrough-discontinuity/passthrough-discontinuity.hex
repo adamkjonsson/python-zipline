@@ -1,0 +1,157 @@
+# passthrough-discontinuity
+#
+# Generated from the same description as the .zpf -- never edited
+# by hand, so the annotation cannot drift from the bytes.
+
+0000  01 00                    type   = 0x0001  File Header
+0002  00 00                    reserved
+0004  30 00 00 00              length = 48
+0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
+000C  00 00                    version_major = 0
+000E  0E 00                    version_minor = 14
+0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
+0018  12 00 10 00              option 0x0012 produced_by, len = 16
+001C  7A 70 66 2D 61 6E 6E 6F  "zpf-annotate 0.2"
+0024  74 61 74 65 20 30 2E 32
+002C  13 00 08 00              option 0x0013 produced_at, len = 8  (1719610000)
+0030  90 2A 7F 66 00 00 00 00
+
+0038  02 00                    type   = 0x0002  Source Descriptor
+003A  00 00                    reserved
+003C  20 00 00 00              length = 32
+0040  01 00                    source_id = 1
+0042  01                       kind = 1  (zpf-input)
+0043  00                       _reserved
+0044  20 00 07 00              option 0x0020 uri, len = 7
+0048  72 61 77 2E 7A 70 66     "raw.zpf"
+004F  00                       value padding
+0050  21 00 0B 00              option 0x0021 digest, len = 11
+0054  73 68 61 32 35 36 3A 39  "sha256:9f2c"
+005C  66 32 63
+005F  00                       value padding
+
+0060  02 00                    type   = 0x0002  Source Descriptor
+0062  00 00                    reserved
+0064  28 00 00 00              length = 40
+0068  02 00                    source_id = 2
+006A  01                       kind = 1  (zpf-input)
+006B  00                       _reserved
+006C  20 00 0F 00              option 0x0020 uri, len = 15
+0070  74 6C 73 2D 72 65 63 6F  "tls-records.zpf"
+0078  72 64 73 2E 7A 70 66
+007F  00                       value padding
+0080  21 00 0B 00              option 0x0021 digest, len = 11
+0084  73 68 61 32 35 36 3A 38  "sha256:8b3a"
+008C  62 33 61
+008F  00                       value padding
+
+0090  03 00                    type   = 0x0003  Decoder Descriptor
+0092  00 00                    reserved
+0094  1C 00 00 00              length = 28
+0098  01 00                    decoder_id = 1
+009A  00 00                    _reserved
+009C  41 00 0B 00              option 0x0041 name, len = 11
+00A0  74 6C 73 2D 72 65 63 6F  "tls-records"
+00A8  72 64 73
+00AB  00                       value padding
+00AC  42 00 03 00              option 0x0042 version, len = 3
+00B0  30 2E 32                 "0.2"
+00B3  00                       value padding
+
+00B4  10 00                    type   = 0x0010  Session Descriptor
+00B6  00 00                    reserved
+00B8  10 00 00 00              length = 16
+00BC  2A 00 00 00 00 00 00 00  session_id = 42  (u64)
+00C4  50 00 03 00              option 0x0050 proto, len = 3
+00C8  74 6C 73                 "tls"
+00CB  00                       value padding
+
+00CC  11 00                    type   = 0x0011  Participant Descriptor
+00CE  00 00                    reserved
+00D0  30 00 00 00              length = 48
+00D4  2A 00 00 00 00 00 00 00  session_id = 42  (u64)
+00DC  01 00                    participant_id = 1
+00DE  00 00                    _reserved
+00E0  60 00 0E 00              option 0x0060 endpoint, len = 14
+00E4  31 30 2E 30 2E 30 2E 31  "10.0.0.1:51000"
+00EC  3A 35 31 30 30 30
+00F2  00 00                    value padding
+00F4  64 00 0C 00              option 0x0064 origin, len = 12  (source 2, pid 0, session 7)
+00F8  02 00 00 00 07 00 00 00
+0100  00 00 00 00
+
+0104  20 00                    type   = 0x0020  Record
+0106  00 00                    reserved
+0108  58 00 00 00              length = 88
+010C  2A 00 00 00 00 00 00 00  session_id = 42  (u64)
+0114  01 00                    sender_pid = 1
+0116  02 00                    source_id  = 2
+0118  E8 03 00 00 00 00 00 00  timestamp  = 1000
+0120  00 00                    _reserved  (u16 = 0)
+0122  00 00                    flags      = 0x0000
+0124  32 00 00 00              payload_len = 50
+0128  41 41 41 41 41 41 41 41  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+0130  41 41 41 41 41 41 41 41
+0138  41 41 41 41 41 41 41 41
+0140  41 41 41 41 41 41 41 41
+0148  41 41 41 41 41 41 41 41
+0150  41 41 41 41 41 41 41 41
+0158  41 41
+015A  00 00                    payload padding
+015C  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
+0160  01 00
+0162  00 00                    value padding
+
+0164  21 00                    type   = 0x0021  Undecoded
+0166  00 00                    reserved
+0168  2C 00 00 00              length = 44
+016C  01 00                    source_id = 1  (in the input's namespace)
+016E  00 00                    participant_id = 0
+0170  07 00 00 00 00 00 00 00  session_id = 7
+0178  64 00 00 00 00 00 00 00  off_start = 100
+0180  8B 00 00 00 00 00 00 00  off_end   = 139
+0188  A0 00 03 00              option 0x00A0 reason, len = 3
+018C  67 61 70                 "gap"
+018F  00                       value padding
+0190  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
+0194  01 00
+0196  00 00                    value padding
+
+0198  22 00                    type   = 0x0022  Discontinuity
+019A  00 00                    reserved
+019C  2C 00 00 00              length = 44
+01A0  2A 00 00 00 00 00 00 00  session_id = 42  (in THIS file)
+01A8  01 00                    participant_id = 1  (in THIS file)
+01AA  00 00                    _reserved
+01AC  D0 00 08 00              option 0x00D0 width, len = 8  (25)
+01B0  19 00 00 00 00 00 00 00
+01B8  D1 00 0F 00              option 0x00D1 reason, len = 15
+01BC  74 6C 73 2D 72 65 63 6F  "tls-record-lost"
+01C4  72 64 2D 6C 6F 73 74
+01CB  00                       value padding
+
+01CC  20 00                    type   = 0x0020  Record
+01CE  00 00                    reserved
+01D0  44 00 00 00              length = 68
+01D4  2A 00 00 00 00 00 00 00  session_id = 42  (u64)
+01DC  01 00                    sender_pid = 1
+01DE  02 00                    source_id  = 2
+01E0  4C 04 00 00 00 00 00 00  timestamp  = 1100
+01E8  00 00                    _reserved  (u16 = 0)
+01EA  00 00                    flags      = 0x0000
+01EC  1E 00 00 00              payload_len = 30
+01F0  42 42 42 42 42 42 42 42  "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+01F8  42 42 42 42 42 42 42 42
+0200  42 42 42 42 42 42 42 42
+0208  42 42 42 42 42 42
+020E  00 00                    payload padding
+0210  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
+0214  01 00
+0216  00 00                    value padding
+
+0218  41 00                    type   = 0x0041  End of file
+021A  00 00                    reserved
+021C  04 00 00 00              length = 4
+0220  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
+
+0224                           (end of file, 548 bytes)

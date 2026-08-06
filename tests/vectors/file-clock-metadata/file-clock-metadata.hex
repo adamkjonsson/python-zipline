@@ -1,0 +1,70 @@
+# file-clock-metadata
+#
+# Generated from the same description as the .zpf -- never edited
+# by hand, so the annotation cannot drift from the bytes.
+
+0000  01 00                    type   = 0x0001  File Header
+0002  00 00                    reserved
+0004  38 00 00 00              length = 56
+0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
+000C  00 00                    version_major = 0
+000E  0E 00                    version_minor = 14
+0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
+0018  10 00 08 00              option 0x0010 time_epoch, len = 8  (1719500000000000)
+001C  00 F8 B0 4A E0 1B 06 00
+0024  14 00 02 00              option 0x0014 flags, len = 2  (0x0001)
+0028  01 00
+002A  00 00                    value padding
+002C  11 00 0F 00              option 0x0011 creator, len = 15
+0030  7A 70 66 2D 63 61 70 74  "zpf-capture 2.1"
+0038  75 72 65 20 32 2E 31
+003F  00                       value padding
+
+0040  02 00                    type   = 0x0002  Source Descriptor
+0042  00 00                    reserved
+0044  10 00 00 00              length = 16
+0048  01 00                    source_id = 1
+004A  00                       kind = 0  (capture)
+004B  00                       _reserved
+004C  20 00 06 00              option 0x0020 uri, len = 6
+0050  63 2E 70 63 61 70        "c.pcap"
+0056  00 00                    value padding
+
+0058  10 00                    type   = 0x0010  Session Descriptor
+005A  00 00                    reserved
+005C  10 00 00 00              length = 16
+0060  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+0068  50 00 03 00              option 0x0050 proto, len = 3
+006C  74 63 70                 "tcp"
+006F  00                       value padding
+
+0070  11 00                    type   = 0x0011  Participant Descriptor
+0072  00 00                    reserved
+0074  20 00 00 00              length = 32
+0078  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+0080  00 00                    participant_id = 0
+0082  00 00                    _reserved
+0084  60 00 0E 00              option 0x0060 endpoint, len = 14
+0088  31 30 2E 30 2E 30 2E 31  "10.0.0.1:51000"
+0090  3A 35 31 30 30 30
+0096  00 00                    value padding
+
+0098  20 00                    type   = 0x0020  Record
+009A  00 00                    reserved
+009C  20 00 00 00              length = 32
+00A0  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+00A8  00 00                    sender_pid = 0
+00AA  01 00                    source_id  = 1
+00AC  E8 03 00 00 00 00 00 00  timestamp  = 1000
+00B4  00 00                    _reserved  (u16 = 0)
+00B6  00 00                    flags      = 0x0000
+00B8  02 00 00 00              payload_len = 2
+00BC  68 69                    "hi"
+00BE  00 00                    payload padding
+
+00C0  41 00                    type   = 0x0041  End of file
+00C2  00 00                    reserved
+00C4  04 00 00 00              length = 4
+00C8  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
+
+00CC                           (end of file, 204 bytes)

@@ -5,73 +5,79 @@
 
 0000  01 00                    type   = 0x0001  File Header
 0002  00 00                    reserved
-0004  10 00 00 00              length = 16
+0004  30 00 00 00              length = 48
 0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
 000C  00 00                    version_major = 0
-000E  0C 00                    version_minor = 12
+000E  0E 00                    version_minor = 14
 0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
+0018  12 00 0E 00              option 0x0012 produced_by, len = 14
+001C  7A 70 66 2D 64 65 63 6F  "zpf-decode 0.4"
+0024  64 65 20 30 2E 34
+002A  00 00                    value padding
+002C  13 00 08 00              option 0x0013 produced_at, len = 8  (1719550000)
+0030  30 40 7E 66 00 00 00 00
 
-0018  02 00                    type   = 0x0002  Source Descriptor
-001A  00 00                    reserved
-001C  20 00 00 00              length = 32
-0020  01 00                    source_id = 1
-0022  01                       kind = 1  (zpf-input)
-0023  00                       _reserved
-0024  20 00 07 00              option 0x0020 uri, len = 7
-0028  72 61 77 2E 7A 70 66     "raw.zpf"
-002F  00                       value padding
-0030  21 00 0B 00              option 0x0021 digest, len = 11
-0034  73 68 61 32 35 36 3A 39  "sha256:9f2c"
-003C  66 32 63
-003F  00                       value padding
+0038  02 00                    type   = 0x0002  Source Descriptor
+003A  00 00                    reserved
+003C  20 00 00 00              length = 32
+0040  01 00                    source_id = 1
+0042  01                       kind = 1  (zpf-input)
+0043  00                       _reserved
+0044  20 00 07 00              option 0x0020 uri, len = 7
+0048  72 61 77 2E 7A 70 66     "raw.zpf"
+004F  00                       value padding
+0050  21 00 0B 00              option 0x0021 digest, len = 11
+0054  73 68 61 32 35 36 3A 39  "sha256:9f2c"
+005C  66 32 63
+005F  00                       value padding
 
-0040  03 00                    type   = 0x0003  Decoder Descriptor
-0042  00 00                    reserved
-0044  10 00 00 00              length = 16
-0048  01 00                    decoder_id = 1
-004A  00 00                    _reserved
-004C  41 00 08 00              option 0x0041 name, len = 8
-0050  68 74 74 70 2F 31 2E 31  "http/1.1"
+0060  03 00                    type   = 0x0003  Decoder Descriptor
+0062  00 00                    reserved
+0064  10 00 00 00              length = 16
+0068  01 00                    decoder_id = 1
+006A  00 00                    _reserved
+006C  41 00 08 00              option 0x0041 name, len = 8
+0070  68 74 74 70 2F 31 2E 31  "http/1.1"
 
-0058  10 00                    type   = 0x0010  Session Descriptor
-005A  00 00                    reserved
-005C  10 00 00 00              length = 16
-0060  07 00 00 00 00 00 00 00  session_id = 7  (u64)
-0068  50 00 04 00              option 0x0050 proto, len = 4
-006C  68 74 74 70              "http"
+0078  10 00                    type   = 0x0010  Session Descriptor
+007A  00 00                    reserved
+007C  10 00 00 00              length = 16
+0080  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+0088  50 00 04 00              option 0x0050 proto, len = 4
+008C  68 74 74 70              "http"
 
-0070  11 00                    type   = 0x0011  Participant Descriptor
-0072  00 00                    reserved
-0074  20 00 00 00              length = 32
-0078  07 00 00 00 00 00 00 00  session_id = 7  (u64)
-0080  00 00                    participant_id = 0
-0082  00 00                    _reserved
-0084  60 00 0E 00              option 0x0060 endpoint, len = 14
-0088  31 30 2E 30 2E 30 2E 31  "10.0.0.1:51000"
-0090  3A 35 31 30 30 30
-0096  00 00                    value padding
+0090  11 00                    type   = 0x0011  Participant Descriptor
+0092  00 00                    reserved
+0094  20 00 00 00              length = 32
+0098  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+00A0  00 00                    participant_id = 0
+00A2  00 00                    _reserved
+00A4  60 00 0E 00              option 0x0060 endpoint, len = 14
+00A8  31 30 2E 30 2E 30 2E 31  "10.0.0.1:51000"
+00B0  3A 35 31 30 30 30
+00B6  00 00                    value padding
 
-0098  21 00                    type   = 0x0021  Undecoded
-009A  00 00                    reserved
-009C  3C 00 00 00              length = 60
-00A0  01 00                    source_id = 1  (in the input's namespace)
-00A2  00 00                    participant_id = 0
-00A4  07 00 00 00 00 00 00 00  session_id = 7
-00AC  00 00 00 00 00 00 00 00  off_start = 0
-00B4  28 00 00 00 00 00 00 00  off_end   = 40
-00BC  A0 00 0B 00              option 0x00A0 reason, len = 11
-00C0  72 74 70 2D 73 65 71 2D  "rtp-seq-gap"
-00C8  67 61 70
-00CB  00                       value padding
-00CC  A1 00 04 00              option 0x00A1 reason_class, len = 4
-00D0  68 6F 6C 65              "hole"
-00D4  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
-00D8  01 00
-00DA  00 00                    value padding
+00B8  21 00                    type   = 0x0021  Undecoded
+00BA  00 00                    reserved
+00BC  3C 00 00 00              length = 60
+00C0  01 00                    source_id = 1  (in the input's namespace)
+00C2  00 00                    participant_id = 0
+00C4  07 00 00 00 00 00 00 00  session_id = 7
+00CC  00 00 00 00 00 00 00 00  off_start = 0
+00D4  28 00 00 00 00 00 00 00  off_end   = 40
+00DC  A0 00 0B 00              option 0x00A0 reason, len = 11
+00E0  72 74 70 2D 73 65 71 2D  "rtp-seq-gap"
+00E8  67 61 70
+00EB  00                       value padding
+00EC  A1 00 04 00              option 0x00A1 reason_class, len = 4
+00F0  68 6F 6C 65              "hole"
+00F4  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
+00F8  01 00
+00FA  00 00                    value padding
 
-00DC  41 00                    type   = 0x0041  End of file
-00DE  00 00                    reserved
-00E0  04 00 00 00              length = 4
-00E4  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
+00FC  41 00                    type   = 0x0041  End of file
+00FE  00 00                    reserved
+0100  04 00 00 00              length = 4
+0104  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
 
-00E8                           (end of file, 232 bytes)
+0108                           (end of file, 264 bytes)

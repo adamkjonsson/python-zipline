@@ -1,0 +1,14 @@
+{"type":"file","format":"zipline-payload/0.14","tick_hz":1000000,"produced_by":"zpf-demux 0.1","produced_at":1719620000}
+{"type":"source","source_id":1,"kind":"zpf-input","uri":"tls.zpf","digest":"sha256:5c7e"}
+{"type":"decoder","decoder_id":1,"name":"h2-demux","version":"0.1"}
+{"type":"session","session_id":100,"proto":"http"}
+{"type":"participant","session_id":100,"pid":0,"endpoint":["10.0.0.1:51000"]}
+{"type":"session","session_id":101,"proto":"http"}
+{"type":"participant","session_id":101,"pid":0,"endpoint":["10.0.0.1:51000"]}
+{"type":"record","session_id":100,"sender_pid":0,"source_id":1,"ts":1000,"payload":"UzEwMC1h","decoder_id":1,"spans":[{"source_id":1,"session_id":7,"pid":0,"off_start":0,"off_end":80}]}
+{"type":"record","session_id":101,"sender_pid":0,"source_id":1,"ts":1010,"payload":"UzEwMS1h","decoder_id":1,"spans":[{"source_id":1,"session_id":7,"pid":0,"off_start":0,"off_end":80}]}
+{"type":"record","session_id":100,"sender_pid":0,"source_id":1,"ts":1100,"payload":"UzEwMC1i","decoder_id":1,"spans":[{"source_id":1,"session_id":7,"pid":0,"off_start":80,"off_end":140}]}
+{"type":"record","session_id":101,"sender_pid":0,"source_id":1,"ts":1200,"payload":"UzEwMS1i","decoder_id":1,"spans":[{"source_id":1,"session_id":7,"pid":0,"off_start":140,"off_end":200}]}
+{"type":"session_end","session_id":100,"input_extents":[{"source_id":1,"session_id":7,"pid":0,"extent":200}]}
+{"type":"session_end","session_id":101,"input_extents":[{"source_id":1,"session_id":7,"pid":0,"extent":200}]}
+{"type":"end"}

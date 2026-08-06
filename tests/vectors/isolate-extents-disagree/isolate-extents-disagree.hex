@@ -1,0 +1,146 @@
+# isolate-extents-disagree
+#
+# Generated from the same description as the .zpf -- never edited
+# by hand, so the annotation cannot drift from the bytes.
+
+0000  01 00                    type   = 0x0001  File Header
+0002  00 00                    reserved
+0004  30 00 00 00              length = 48
+0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
+000C  00 00                    version_major = 0
+000E  0E 00                    version_minor = 14
+0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
+0018  12 00 0D 00              option 0x0012 produced_by, len = 13
+001C  7A 70 66 2D 64 65 6D 75  "zpf-demux 0.1"
+0024  78 20 30 2E 31
+0029  00 00 00                 value padding
+002C  13 00 08 00              option 0x0013 produced_at, len = 8  (1719630000)
+0030  B0 78 7F 66 00 00 00 00
+
+0038  02 00                    type   = 0x0002  Source Descriptor
+003A  00 00                    reserved
+003C  20 00 00 00              length = 32
+0040  01 00                    source_id = 1
+0042  01                       kind = 1  (zpf-input)
+0043  00                       _reserved
+0044  20 00 07 00              option 0x0020 uri, len = 7
+0048  74 6C 73 2E 7A 70 66     "tls.zpf"
+004F  00                       value padding
+0050  21 00 0B 00              option 0x0021 digest, len = 11
+0054  73 68 61 32 35 36 3A 35  "sha256:5c7e"
+005C  63 37 65
+005F  00                       value padding
+
+0060  03 00                    type   = 0x0003  Decoder Descriptor
+0062  00 00                    reserved
+0064  18 00 00 00              length = 24
+0068  01 00                    decoder_id = 1
+006A  00 00                    _reserved
+006C  41 00 08 00              option 0x0041 name, len = 8
+0070  68 32 2D 64 65 6D 75 78  "h2-demux"
+0078  42 00 03 00              option 0x0042 version, len = 3
+007C  30 2E 31                 "0.1"
+007F  00                       value padding
+
+0080  10 00                    type   = 0x0010  Session Descriptor
+0082  00 00                    reserved
+0084  10 00 00 00              length = 16
+0088  64 00 00 00 00 00 00 00  session_id = 100  (u64)
+0090  50 00 04 00              option 0x0050 proto, len = 4
+0094  68 74 74 70              "http"
+
+0098  11 00                    type   = 0x0011  Participant Descriptor
+009A  00 00                    reserved
+009C  20 00 00 00              length = 32
+00A0  64 00 00 00 00 00 00 00  session_id = 100  (u64)
+00A8  00 00                    participant_id = 0
+00AA  00 00                    _reserved
+00AC  60 00 0E 00              option 0x0060 endpoint, len = 14
+00B0  31 30 2E 30 2E 30 2E 31  "10.0.0.1:51000"
+00B8  3A 35 31 30 30 30
+00BE  00 00                    value padding
+
+00C0  10 00                    type   = 0x0010  Session Descriptor
+00C2  00 00                    reserved
+00C4  10 00 00 00              length = 16
+00C8  65 00 00 00 00 00 00 00  session_id = 101  (u64)
+00D0  50 00 04 00              option 0x0050 proto, len = 4
+00D4  68 74 74 70              "http"
+
+00D8  11 00                    type   = 0x0011  Participant Descriptor
+00DA  00 00                    reserved
+00DC  20 00 00 00              length = 32
+00E0  65 00 00 00 00 00 00 00  session_id = 101  (u64)
+00E8  00 00                    participant_id = 0
+00EA  00 00                    _reserved
+00EC  60 00 0E 00              option 0x0060 endpoint, len = 14
+00F0  31 30 2E 30 2E 30 2E 31  "10.0.0.1:51000"
+00F8  3A 35 31 30 30 30
+00FE  00 00                    value padding
+
+0100  20 00                    type   = 0x0020  Record
+0102  00 00                    reserved
+0104  48 00 00 00              length = 72
+0108  64 00 00 00 00 00 00 00  session_id = 100  (u64)
+0110  00 00                    sender_pid = 0
+0112  01 00                    source_id  = 1
+0114  E8 03 00 00 00 00 00 00  timestamp  = 1000
+011C  00 00                    _reserved  (u16 = 0)
+011E  00 00                    flags      = 0x0000
+0120  01 00 00 00              payload_len = 1
+0124  61                       "a"
+0125  00 00 00                 payload padding
+0128  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
+012C  01 00
+012E  00 00                    value padding
+0130  80 00 1C 00              option 0x0080 spans, len = 28  (1 entry/entries)
+0134  01 00 00 00 07 00 00 00
+013C  00 00 00 00 00 00 00 00
+0144  00 00 00 00 64 00 00 00
+014C  00 00 00 00
+
+0150  20 00                    type   = 0x0020  Record
+0152  00 00                    reserved
+0154  48 00 00 00              length = 72
+0158  65 00 00 00 00 00 00 00  session_id = 101  (u64)
+0160  00 00                    sender_pid = 0
+0162  01 00                    source_id  = 1
+0164  4C 04 00 00 00 00 00 00  timestamp  = 1100
+016C  00 00                    _reserved  (u16 = 0)
+016E  00 00                    flags      = 0x0000
+0170  01 00 00 00              payload_len = 1
+0174  62                       "b"
+0175  00 00 00                 payload padding
+0178  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
+017C  01 00
+017E  00 00                    value padding
+0180  80 00 1C 00              option 0x0080 spans, len = 28  (1 entry/entries)
+0184  01 00 00 00 07 00 00 00
+018C  00 00 00 00 64 00 00 00
+0194  00 00 00 00 C8 00 00 00
+019C  00 00 00 00
+
+01A0  12 00                    type   = 0x0012  Session End
+01A2  00 00                    reserved
+01A4  20 00 00 00              length = 32
+01A8  64 00 00 00 00 00 00 00  session_id = 100  (u64)
+01B0  C1 00 14 00              option 0x00C1 input_extents, len = 20  (1 entry/entries)
+01B4  01 00 00 00 07 00 00 00
+01BC  00 00 00 00 C8 00 00 00
+01C4  00 00 00 00
+
+01C8  12 00                    type   = 0x0012  Session End
+01CA  00 00                    reserved
+01CC  20 00 00 00              length = 32
+01D0  65 00 00 00 00 00 00 00  session_id = 101  (u64)
+01D8  C1 00 14 00              option 0x00C1 input_extents, len = 20  (1 entry/entries)
+01DC  01 00 00 00 07 00 00 00
+01E4  00 00 00 00 A0 00 00 00
+01EC  00 00 00 00
+
+01F0  41 00                    type   = 0x0041  End of file
+01F2  00 00                    reserved
+01F4  04 00 00 00              length = 4
+01F8  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
+
+01FC                           (end of file, 508 bytes)

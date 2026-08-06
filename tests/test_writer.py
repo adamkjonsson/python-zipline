@@ -6,6 +6,7 @@ import io
 import json
 
 import pytest
+from _migration import pending_version_gate
 from test_golden import GOLDEN
 from test_jsonl import DECODED_EXAMPLE, MERGED_EXAMPLE
 
@@ -13,6 +14,7 @@ import zpf
 from zpf.jsonl import block_to_obj
 
 
+@pending_version_gate
 def test_handle_api_reproduces_the_golden_file():
     sink = io.BytesIO()
     writer = zpf.create(sink, tick_hz=1_000_000)

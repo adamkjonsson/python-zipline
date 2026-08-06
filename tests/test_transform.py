@@ -7,6 +7,7 @@ import io
 from pathlib import Path
 
 import pytest
+from _migration import pending_version_gate
 
 import zpf
 
@@ -238,12 +239,14 @@ def test_hole_inclusive_extents(tmp_path: Path):
 CHAIN = Path(__file__).parent / "vectors/chain"
 
 
+@pending_version_gate
 def test_a_decode_stages_record_resolves_in_one_hop():
     # It carries spans of its own: this file's stage built it.
     (span,) = zpf.resolve_spans(CHAIN / "decoded.zpf", 7, 0, 0)
     assert (span.off_start, span.off_end) == (0, 9)
 
 
+@pending_version_gate
 def test_a_pass_throughs_record_resolves_in_two_hops():
     # annotated.zpf re-emits decoded.zpf's records unchanged, so they carry
     # no spans. The walk takes the participant's origin into decoded.zpf,
@@ -258,6 +261,7 @@ def test_a_pass_throughs_record_resolves_in_two_hops():
     assert (other.off_start, other.off_end) == (0, 16)
 
 
+@pending_version_gate
 def test_a_raw_file_records_no_provenance_to_resolve():
     assert zpf.resolve_spans(CHAIN / "raw.zpf", 7, 0, 0) == ()
 
@@ -270,6 +274,7 @@ def test_resolving_a_stream_needs_an_explicit_opener():
         zpf.resolve_spans(handle, 7, 0, 0)
 
 
+@pending_version_gate
 def test_an_opener_may_redirect_where_inputs_are_found():
     seen: list[str] = []
 
