@@ -79,7 +79,13 @@ from zpf.reassembly import (
     record_ranges,
     stream_extent,
 )
-from zpf.transform import check_coverage, merge_files, resolve_spans, rewrite_decoded
+from zpf.transform import (
+    check_coverage,
+    check_extents,
+    merge_files,
+    resolve_spans,
+    rewrite_decoded,
+)
 from zpf.writer import (
     DecoderHandle,
     DerivedInput,
@@ -154,6 +160,7 @@ __all__ = [
     "binary_to_jsonl",
     "causal_merge",
     "check_coverage",
+    "check_extents",
     "create",
     "decode_prim",
     "decode_stage",

@@ -487,3 +487,186 @@ def test_writers_still_refuse_an_advisory_violation():
         sender = session.participant("a")
         with pytest.raises(zpf.AdvisoryError, match="not a legal prim: token"):
             session.record(sender, ts=0, payload=b"abcd", content_type="prim:u128")
+
+
+# --- Blocks a raw file may not carry (0.13/0.14) ------------------------------
+
+
+def test_a_raw_file_may_not_carry_a_discontinuity():
+    """The block marks a break in a decoded stream this file produced.
+
+    A raw capture's offsets are true stream positions, in which a hole is
+    already the space between two ``seq_start``s — there is nothing for the
+    block to add and no decoded space for it to speak about.
+    """
+    reject(
+        HEADER, CAP, SESS, PART,
+        raw_record(),
+        zpf.Discontinuity(session_id=5, participant_id=0, width=25),
+        match="Discontinuity",
+    )
+
+
+def test_a_raw_file_may_not_declare_input_extents():
+    """They measure an input stream, which a raw capture has not got."""
+    reject(
+        HEADER, CAP, SESS, PART,
+        raw_record(),
+        zpf.SessionEnd(
+            session_id=5,
+            input_extents=(
+                zpf.InputExtent(source_id=2, session_id=7, participant_id=0, extent=100),
+            ),
+        ),
+        match="input_extents",
+    )
+
+
+def test_a_raw_file_may_not_carry_a_transform_params_digest():
+    """It names the configuration of a transform that produced the records."""
+    reject(
+        zpf.FileHeader(tick_hz=1, transform_params_digest="sha256:abcd"),
+        CAP, SESS, PART,
+        raw_record(),
+        match="transform_params_digest",
+    )
+
+
+def test_a_discontinuity_is_fine_in_a_decode_stage():
+    checker = accept(
+        DERIVED_HEADER, INP, DEC, SESS, PART,
+        zpf.Record(
+            session_id=5, sender_pid=0, source_id=2, timestamp=0, payload=b"x",
+            decoder_id=3, spans=(Span(source_id=2, session_id=7, participant_id=0,
+                                      off_start=0, off_end=1),),
+        ),
+        zpf.Discontinuity(session_id=5, participant_id=0, width=25),
+    )
+    assert checker.file_kind == "decode-stage"
+
+
+def test_a_discontinuity_names_a_participant_of_its_own_file():
+    reject(
+        DERIVED_HEADER, INP, DEC, SESS, PART,
+        zpf.Discontinuity(session_id=5, participant_id=9),
+        match="undeclared participant",
+    )
+
+
+
+def reject_at_end(*blocks: zpf.Block, match: str) -> None:
+    """Assert the stream's first *end-of-stream* finding matches.
+
+    The coverage guarantee is settled only by ``finish``: nothing about a
+    hole is knowable until every block has been seen, so ``reject`` — which
+    stops at ``check`` — would find nothing here.
+    """
+    with pytest.raises(zpf.SemanticError, match=match):
+        finished(*blocks)
+
+
+# --- Coverage and extents, from the file alone --------------------------------
+
+
+def _decode_stage(*tail: zpf.Block) -> tuple[zpf.Block, ...]:
+    """Return a minimal decode stage, plus whatever the case appends."""
+    return (DERIVED_HEADER, INP, DEC, SESS, PART, *tail)
+
+
+def _cite(off_start: int, off_end: int, *, pid: int = 0) -> zpf.Record:
+    return zpf.Record(
+        session_id=5, sender_pid=0, source_id=2, timestamp=0, payload=b"x", decoder_id=3,
+        spans=(Span(source_id=2, session_id=7, participant_id=pid,
+                    off_start=off_start, off_end=off_end),),
+    )
+
+
+def test_an_interior_hole_is_caught_without_any_declared_extent():
+    """A hole *between* covered ranges needs no input file and no extent.
+
+    This is what distinguishes it from a trailing gap, which is invisible
+    until something declares how long the stream was.
+    """
+    reject_at_end(
+        *_decode_stage(
+            _cite(0, 10),
+            zpf.Undecoded(source_id=2, session_id=7, participant_id=0,
+                          off_start=20, off_end=50, reason="undecodable"),
+        ),
+        match=r"\[10, 20\) is neither decoded nor marked",
+    )
+
+
+def test_a_trailing_gap_is_invisible_until_an_extent_declares_it():
+    # Same shape, minus the interior hole: coverage simply stops, which is
+    # indistinguishable from a stream that was that short.
+    finished(*_decode_stage(_cite(0, 20), zpf.SessionEnd(session_id=5)))
+    reject_at_end(
+        *_decode_stage(
+            _cite(0, 20),
+            zpf.SessionEnd(
+                session_id=5,
+                input_extents=(
+                    zpf.InputExtent(source_id=2, session_id=7, participant_id=0, extent=40),
+                ),
+            ),
+        ),
+        match="declared extent 40",
+    )
+
+
+def test_a_declared_extent_its_own_spans_overshoot_is_a_contradiction():
+    reject_at_end(
+        *_decode_stage(
+            _cite(0, 100),
+            zpf.SessionEnd(
+                session_id=5,
+                input_extents=(
+                    zpf.InputExtent(source_id=2, session_id=7, participant_id=0, extent=60),
+                ),
+            ),
+        ),
+        match="declared extent 60",
+    )
+
+
+def test_span_on_span_overlap_is_legal():
+    """Coverage is *at least* once, so two records may cite the same bytes.
+
+    The case that makes it necessary: one input record's framing can feed an
+    inner unit in each of two output sessions. Only span-against-Undecoded is
+    a contradiction — that says the same bytes were both decoded and not.
+    """
+    checker = accept(
+        *_decode_stage(
+            _cite(0, 80),
+            _cite(0, 80),
+            zpf.SessionEnd(
+                session_id=5,
+                input_extents=(
+                    zpf.InputExtent(source_id=2, session_id=7, participant_id=0, extent=80),
+                ),
+            ),
+        )
+    )
+    assert checker.coverage_findings() == []
+
+
+def test_a_pass_through_is_not_held_to_the_coverage_guarantee():
+    """It re-emits records rather than citing them, so it has no spans.
+
+    Holding it to a decode stage's obligation would read the space before its
+    inherited Undecoded blocks as an unaccounted hole — which is how three
+    conformant vectors would fail.
+    """
+    origin = Origin(source_id=2, session_id=7, participant_id=0)
+    checker = accept(
+        DERIVED_HEADER, INP, DEC, SESS,
+        zpf.Participant(session_id=5, participant_id=0, origin=origin),
+        zpf.Record(session_id=5, sender_pid=0, source_id=2, timestamp=0,
+                   payload=b"x", decoder_id=3),
+        zpf.Undecoded(source_id=2, session_id=7, participant_id=0,
+                      off_start=100, off_end=139, reason="undecodable"),
+    )
+    assert checker.file_kind == "pass-through"
+    assert checker.coverage_findings() == []

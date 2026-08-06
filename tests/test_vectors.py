@@ -39,42 +39,44 @@ VECTORS = Path(__file__).parent / "vectors"
 #: Vector cases that MUST pass. Grow it as phases land; never remove a name,
 #: because that is the regression guard.
 #:
-#: Phase 2: **every** ``accept`` vector in the suite. The eight that Phase 1's
-#: syntax work could not move needed only the projection — each of them already
-#: read with no diagnostics, so the JSONL face was the whole of the remainder.
+#: Phase 4: every vector but one pair. The four ``isolate-*`` added here are
+#: whole-file properties — a raw file carrying a block only a derived one may,
+#: and three ways a derived file can contradict itself about an input stream —
+#: so each is settled at end-of-stream rather than when a block is read.
 #:
-#: The six still absent are all negative, and no amount of syntax reaches them:
-#: four ``isolate-*`` want semantic rules (Phase 4), and the two ``splice/``
-#: members are individually clean, so only a pairwise check sees the violation
-#: (Phase 5).
+#: Only ``splice/`` remains. Its two files are individually clean, so no test
+#: that looks at one file can see the violation: it belongs to the pair, and
+#: needs the checker Phase 5 brings.
 KNOWN_PASSING: frozenset[str] = frozenset(
     {
         "annotator-decoded",
         "broken-chain",
-        "decoded-basic",
-        "discontinuity-known-width",
-        "discontinuity-unknown-width",
-        "external-session-id",
-        "passthrough-discontinuity",
-        "reordered-decoded",
-        "session-fan-out",
         "chain/annotated",
         "chain/decoded",
         "chain/raw",
         "custom-block",
+        "decoded-basic",
         "descriptive-metadata",
+        "discontinuity-known-width",
+        "discontinuity-unknown-width",
         "escape-reserved-flag-bit",
         "escape-unknown-block",
         "escape-unknown-enum",
         "escape-unknown-option",
+        "external-session-id",
         "file-clock-metadata",
         "hintless-merge-backwards-ts",
+        "isolate-coverage-gap",
+        "isolate-discontinuity-in-raw",
         "isolate-duplicate-id",
+        "isolate-extent-exceeds-coverage",
+        "isolate-extents-disagree",
         "isolate-sequenced-no-basis",
         "isolate-undeclared-session",
         "isolate-unknown-source-kind",
         "merge-timestamp-tie",
         "partially-hinted-sequenced",
+        "passthrough-discontinuity",
         "passthrough-transport",
         "raw-minimal",
         "reject-bad-magic",
@@ -82,7 +84,9 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "reject-payload-len-overrun",
         "reject-unknown-major",
         "reject-unknown-minor",
+        "reordered-decoded",
         "sequenced-basis",
+        "session-fan-out",
         "undecoded-reason-class",
         "undecoded-skipped",
     }
@@ -120,15 +124,17 @@ _REJECT_REASONS: dict[str, str] = {
 #: one violation per negative vector, but that says the fixtures are right — not
 #: that we detected the right thing.
 #:
-#: The three ``isolate`` vectors new in 0.13/0.14 are absent until the phase that
-#: implements them: their wording is not decided yet, and a case with no entry
-#: here xfails before the lookup.
+#: The ``splice/`` pair is absent because its violation belongs to neither file
+#: on its own; a case with no entry here xfails before the lookup.
 _ISOLATE_REASONS: dict[str, str] = {
-    "isolate-coverage-gap": "coverage",
+    "isolate-coverage-gap": "neither decoded nor marked",
+    "isolate-discontinuity-in-raw": "discontinuity",
     "isolate-duplicate-id": "twice",
+    "isolate-extent-exceeds-coverage": "declared extent",
+    "isolate-extents-disagree": "disagree",
+    "isolate-sequenced-no-basis": "sequenced_basis",
     "isolate-undeclared-session": "undeclared session",
     "isolate-unknown-source-kind": "unknown kind",
-    "isolate-sequenced-no-basis": "sequenced_basis",
 }
 
 #: Syntax new in 0.13/0.14, by the option id carrying it. Each must be parsed
