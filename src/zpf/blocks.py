@@ -1,4 +1,4 @@
-"""Typed block model for the Zipline Payload Format v0.12.
+"""Typed block model for the Zipline Payload Format v0.14.
 
 One frozen dataclass per block type, mirroring the specification's normative
 binary encoding. Each class knows how to serialize itself (:meth:`Block.to_bytes`)
@@ -39,7 +39,7 @@ _SWAPPED_MAGIC = 0x4650495A
 #: ``(version_major, version_minor)``. A writer stamps the version it
 #: implements; there is no obligation to compute the lowest version whose
 #: features a file happens to use.
-SPEC_VERSION: tuple[int, int] = (0, 12)
+SPEC_VERSION: tuple[int, int] = (0, 14)
 
 
 #: The canonical :class:`Undecoded` ``reason`` values, mapped to their

@@ -5,13 +5,13 @@ normative text (see ``tests/vectors/VENDORED.md``). They are the acceptance
 criteria for the 0.12 → 0.14 migration: each phase of the port is done when the
 vectors it targets pass.
 
-**The ratchet.** This library implements 0.12, so almost every vector fails
-today — a 0.14 file is refused at the version gate. Rather than leave the suite
-red for the duration of the migration, a vector case is a hard requirement only
-once its name is added to :data:`KNOWN_PASSING`; every other case is
-``xfail(strict=False)``. A case that starts passing shows up as ``XPASS`` — that
-is the progress signal — and is then promoted into :data:`KNOWN_PASSING` so it
-can never silently regress.
+**The ratchet.** A vector case is a hard requirement only once its name is added
+to :data:`KNOWN_PASSING`; every other case is ``xfail(strict=False)``. That keeps
+the suite green across a migration that starts with every file unreadable — until
+the version gate moves, a 0.14 file is refused whatever else is implemented. A
+case that starts passing shows up as ``XPASS`` — that is the progress signal —
+and is then promoted into :data:`KNOWN_PASSING` so it can never silently
+regress.
 
 So the migration invariant is: ``KNOWN_PASSING`` only ever grows, and the suite
 is green at every step.
@@ -38,16 +38,47 @@ VECTORS = Path(__file__).parent / "vectors"
 #: Vector cases that MUST pass. Grow it as phases land; never remove a name,
 #: because that is the regression guard.
 #:
-#: Phase 0: the three refused before the version gate is reached, or by it.
-#: ``reject-length-misaligned`` and ``reject-payload-len-overrun`` are *not*
-#: here — they stamp 0/14, so today they are refused for their minor rather
-#: than for the framing defect each exists to test, and :data:`_REJECT_REASONS`
-#: catches that. They return at Phase 1.
+#: Phase 1: every vector built only from syntax 0.12 already had. The version
+#: gate was the whole of what stood between this library and them — 25 cases
+#: joined here on the one-line bump, including the two ``reject`` vectors that
+#: had been refused for their minor rather than for the framing defect each
+#: exists to test.
+#:
+#: The 14 still absent are the ones carrying syntax new in 0.13/0.14, plus
+#: ``isolate-coverage-gap``. None of them turns on Phase 1's block and option
+#: work alone: every remaining ``accept`` vector ships a ``.jsonl`` this
+#: compares, so they arrive with the projection in Phase 2, the semantic rules
+#: in Phase 4, and the pairwise splice check in Phase 5.
 KNOWN_PASSING: frozenset[str] = frozenset(
     {
+        "annotator-decoded",
+        "chain/annotated",
+        "chain/decoded",
+        "chain/raw",
+        "custom-block",
+        "descriptive-metadata",
+        "escape-reserved-flag-bit",
+        "escape-unknown-block",
+        "escape-unknown-enum",
+        "escape-unknown-option",
+        "file-clock-metadata",
+        "hintless-merge-backwards-ts",
+        "isolate-duplicate-id",
+        "isolate-sequenced-no-basis",
+        "isolate-undeclared-session",
+        "isolate-unknown-source-kind",
+        "merge-timestamp-tie",
+        "partially-hinted-sequenced",
+        "passthrough-transport",
+        "raw-minimal",
         "reject-bad-magic",
+        "reject-length-misaligned",
+        "reject-payload-len-overrun",
         "reject-unknown-major",
         "reject-unknown-minor",
+        "sequenced-basis",
+        "undecoded-reason-class",
+        "undecoded-skipped",
     }
 )
 
@@ -64,8 +95,9 @@ DEFECTIVE: dict[str, str] = {}
 #: exception escaped is not enough: while the version gate is behind the
 #: vectors, a file is refused for its stamped version long before the check it
 #: actually exercises is reached. That is exactly the state at Phase 0 of each
-#: port — three of these passed for the wrong reason at 0.12's, and two would at
-#: 0.14's. Matched case-insensitively against the error message.
+#: port — three of these passed for the wrong reason at 0.12's, and two did at
+#: 0.14's, held out of :data:`KNOWN_PASSING` until the gate moved in Phase 1.
+#: Matched case-insensitively against the error message.
 _REJECT_REASONS: dict[str, str] = {
     "reject-bad-magic": "magic",
     "reject-unknown-major": "version_major",
@@ -278,7 +310,7 @@ def test_reject(case: Case) -> None:
     """Structural corruption is refused, and refused for the right reason.
 
     The reason matters as much as the refusal. A reader whose version gate
-    rejects every 0.12 file passes this tier wholesale without ever
+    rejects every 0.14 file passes this tier wholesale without ever
     exercising the framing checks the vectors are testing.
     """
     with pytest.raises(zpf.StructuralError) as caught, zpf.open(case.path) as reader:
