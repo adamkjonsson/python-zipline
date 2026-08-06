@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING
 
 from zpf._intervals import complement, intersections
-from zpf.blocks import Origin, SourceKind, Span
+from zpf.blocks import Discontinuity, Origin, Record, SourceKind, Span
 from zpf.conformance import CoverageLedger
 from zpf.errors import Diagnostic, ZpfError
 from zpf.order import causal_merge
@@ -50,6 +50,25 @@ if TYPE_CHECKING:
 
     from zpf.blocks import Record, Source
 
+@dataclasses.dataclass(frozen=True)
+class InputRef:
+    """How a transform's output should describe the input it derived from.
+
+    The two values a ``zpf-input`` Source carries about the file it names.
+    Grouped because they travel together and are almost always both left to
+    default — the URI to the path the input was opened from, the digest to
+    SHA-256 of its bytes.
+
+    Attributes:
+        uri: Where the input lives; the opened path when ``None``.
+        digest: Content hash of the input; computed when ``None``.
+
+    """
+
+    uri: str | None = None
+    digest: str | None = None
+
+
 # One input participant stream, and its cited [start, end) offset ranges.
 _StreamKey = tuple[int, int]  # (session_id, pid), in the input's namespace
 _Intervals = dict[_StreamKey, list[tuple[int, int]]]
@@ -62,6 +81,7 @@ def merge_files(
     *,
     produced_by: str,
     produced_at: int | None = None,
+    transform_params_digest: str | None = None,
     creator: str | None = None,
 ) -> None:
     """Merge two single-direction raw captures into one sequenced file.
@@ -84,6 +104,10 @@ def merge_files(
             provenance, required for derived files).
         produced_at: Wall-clock build time in Unix seconds; defaults to
             now.
+        transform_params_digest: Hash of this merge's configuration. A
+            merge decodes nothing, so it has no Decoder to record its
+            parameters on; this is the File Header option 0.14 added for
+            exactly that case.
         creator: Optional File Header ``creator``.
 
     Raises:
@@ -106,6 +130,7 @@ def merge_files(
             creator=creator,
             produced_by=produced_by,
             produced_at=int(time.time()) if produced_at is None else produced_at,
+            transform_params_digest=transform_params_digest,
         )
         with writer:
             source_a = writer.add_source(
@@ -449,6 +474,115 @@ def _sibling_opener(
     return open_input
 
 
+def _break_positions(stage1: FileReader) -> dict[tuple[int, int], list[tuple[int, int]]]:
+    """Locate every declared break in stage 1's **own output** offset space.
+
+    Returns:
+        Per ``(session_id, pid)``, each break as ``(position, width)`` — the
+        position being where it sits once the preceding payloads and widths
+        are summed, and the width 0 when undeclared.
+
+    """
+    breaks: dict[tuple[int, int], list[tuple[int, int]]] = {}
+    for session in stage1.sessions():
+        for participant in session.participants:
+            pid = participant.participant_id
+            cursor = 0
+            found: list[tuple[int, int]] = []
+            for block in session.stream_blocks(pid):
+                if isinstance(block, Discontinuity):
+                    found.append((cursor, block.width or 0))
+                    cursor += block.width or 0
+                else:
+                    cursor += len(block.payload)
+            if found:
+                breaks[(session.session_id, pid)] = found
+    return breaks
+
+
+def check_splice(
+    stage2: str | os.PathLike[str] | IO[bytes] | IO[str],
+    stage1: str | os.PathLike[str] | IO[bytes] | IO[str],
+) -> list[Diagnostic]:
+    """Check that a stage does not splice across its input's declared breaks.
+
+    The duty is a property of a **pair** of files, which is why it needs its
+    own function: stage 1 declares the break, stage 2's ``spans`` cross it,
+    and *neither file is wrong on its own*. A harness that checks files
+    individually passes both.
+
+    Per the specification, a decode stage reading an input carrying a
+    :class:`~zpf.blocks.Discontinuity` MUST NOT emit a unit whose ``spans``
+    cross it without emitting a Discontinuity of its own in the
+    corresponding position of its output. For a single unit straddling the
+    break that position falls *inside* the unit, so the escape is
+    unavailable — a stage that cannot express the break "has to leave the
+    crossing undone". Hence the check: a stage-2 record violates the rule
+    exactly when the ranges it cites in stage 1's output have bytes on both
+    sides of a break.
+
+    Args:
+        stage2: The downstream file, whose spans cite ``stage1``.
+        stage1: The file it decodes, whose breaks are at issue.
+
+    Returns:
+        The violations found, empty when none — category
+        ``"discontinuity-splice"``. ``Diagnostic.offset`` is the break's
+        position in stage 1's output space.
+
+    Raises:
+        ZpfError: If ``stage2`` does not cite exactly one identifiable
+            ``zpf-input`` Source.
+
+    Example:
+        >>> zpf.check_splice("http.zpf", "tls-records.zpf")
+
+    """
+    with FileReader(stage2) as downstream, FileReader(stage1) as upstream:
+        source_id = _input_source_id(downstream, stage1)
+        breaks = _break_positions(upstream)
+        if not breaks:
+            return []
+        findings: list[Diagnostic] = []
+        for session in downstream.sessions():
+            for index, record in enumerate(session.records()):
+                findings.extend(_crossings(record, index, source_id, breaks))
+        return findings
+
+
+def _crossings(
+    record: Record,
+    index: int,
+    source_id: int,
+    breaks: dict[tuple[int, int], list[tuple[int, int]]],
+) -> list[Diagnostic]:
+    """Report each input break this one record's cited ranges straddle."""
+    cited: dict[tuple[int, int], list[tuple[int, int]]] = {}
+    for span in record.spans:
+        if span.source_id == source_id and span.off_start < span.off_end:
+            cited.setdefault((span.session_id, span.participant_id), []).append(
+                (span.off_start, span.off_end)
+            )
+    findings: list[Diagnostic] = []
+    for key, ranges in sorted(cited.items()):
+        session_id, pid = key
+        low = min(start for start, _ in ranges)
+        high = max(end for _, end in ranges)
+        for position, width in breaks.get(key, []):
+            if low < position and high > position + width:
+                findings.append(
+                    Diagnostic(
+                        position,
+                        "discontinuity-splice",
+                        f"record {index} of session {record.session_id} spans "
+                        f"[{low}, {high}) of input stream (session {session_id}, pid {pid}), "
+                        f"crossing the Discontinuity it declares at {position} — the two "
+                        "sides do not join, and this unit welds them",
+                    )
+                )
+    return findings
+
+
 def _input_source_id(decoded: FileReader, raw: object) -> int:
     """Find the zpf-input Source of ``decoded`` that cites the raw file."""
     inputs = [
@@ -547,8 +681,9 @@ def rewrite_decoded(
     reorder: Callable[[Sequence[Record]], Sequence[Record]] | None = None,
     produced_by: str,
     produced_at: int | datetime,
-    uri: str | None = None,
-    digest: str | None = None,
+    transform_params_digest: str | None = None,
+    mark_gaps: bool = True,
+    input_ref: InputRef | None = None,
     comment: str | None = None,
 ) -> None:
     """Filter and/or reorder a decoded file's records into a new stage.
@@ -572,10 +707,30 @@ def rewrite_decoded(
     expected: coverage depends on which ranges are covered, not on the order
     they appear in.
 
-    Known gap, inherited from the format: a transform that produces records
-    without decoding them has no ``params_digest`` to record its own
-    configuration in, so the output states *what* it came from but not
-    *how*. A merge has the same gap.
+    **``mark_gaps`` goes beyond ``0.14``, deliberately.** Two duties are the
+    standard's: this stage reads an input that may carry Discontinuity
+    blocks, so it carries every one forward rather than dropping it, and it
+    never welds records the input said do not join. What the standard does
+    *not* say is what a **filter** owes at a drop point. Dropping a record
+    leaves its two surviving neighbours adjacent in the output offset space
+    when they were not adjacent in the input's — precisely the shape of the
+    defect the Discontinuity block exists to prevent, one hop along — but no
+    rule requires a block there, because the MUST NOT is written about spans
+    crossing an *input's* break and a filter's spans cross nothing.
+
+    So this emits one anyway, at every drop point and wherever a reorder
+    separates records that adjoined. The alternative is a filtered file whose
+    consumer splices two messages that never adjoined, with this library
+    having had the information and said nothing. Pass ``mark_gaps=False`` for
+    output that claims no more than ``0.14`` obliges. Reported upstream as
+    `zipline#78 <https://github.com/adamkjonsson/zipline/issues/78>`_, open at
+    the time of writing; if it lands, this stops being an extension.
+
+    That gap is closed. Through ``0.12`` a transform producing records
+    without decoding them had no ``params_digest`` to record its own
+    configuration in, so the output stated *what* it came from but not
+    *how*; ``0.14`` adds ``transform_params_digest`` to the File Header for
+    precisely this case, and :func:`merge_files` takes it too.
 
     Args:
         source: The decoded input ``.zpf`` — a path, a seekable stream, or
@@ -588,8 +743,15 @@ def rewrite_decoded(
             order alone.
         produced_by: Tool + version running the transform.
         produced_at: Build time; Unix seconds or a tz-aware datetime.
-        uri: Where the input lives; defaults to the path it was opened from.
-        digest: Content hash of the input; SHA-256 of it when omitted.
+        transform_params_digest: Hash of this stage's configuration — the
+            filter predicate, the ordering, whatever decides the output.
+            Recording it is what makes the rewrite reproducible.
+        mark_gaps: Emit a Discontinuity wherever this stage makes two
+            records adjacent that did not adjoin in the input — at every
+            drop point, and wherever a reorder separates neighbours.
+            **This exceeds what 0.14 requires**; see the note below.
+        input_ref: How to describe the input in the output's Source — see
+            :class:`InputRef`. Both halves default.
         comment: Free-text note for the File Header.
 
     Raises:
@@ -614,10 +776,12 @@ def rewrite_decoded(
             time_epoch=header.time_epoch,
             produced_by=produced_by,
             produced_at=produced_at,
+            transform_params_digest=transform_params_digest,
             comment=comment,
         )
         with writer:
-            derived = writer.derive_from(reader, uri=uri, digest=digest)
+            ref = input_ref or InputRef()
+            derived = writer.derive_from(reader, uri=ref.uri, digest=ref.digest)
             decoders = {
                 decoder_id: writer.add_decoder(
                     decoder.name or "",
@@ -632,7 +796,7 @@ def rewrite_decoded(
                 for participant in session.participants:
                     _rewrite_stream(
                         session, participant.participant_id, writer, out, derived,
-                        decoders, keep=keep, reorder=reorder,
+                        decoders, keep=keep, reorder=reorder, mark_gaps=mark_gaps,
                     )
                 out.end()
     finally:
@@ -660,16 +824,48 @@ def _rewrite_stream(
     *,
     keep: Callable[[Record], bool] | None,
     reorder: Callable[[Sequence[Record]], Sequence[Record]] | None,
+    mark_gaps: bool,
 ) -> None:
     """Emit one participant's surviving records, and skip-mark the rest."""
     handle = derived.participants[(session.session_id, pid)]
-    records = list(session.stream(pid))
+    blocks = list(session.stream_blocks(pid))
+    records = [block for block in blocks if isinstance(block, Record)]
     ranges = session.ranges(pid)
     cited = {id(record): span for record, span in zip(records, ranges, strict=True)}
+    # The input's breaks, as ranges of its offset space that hold no bytes.
+    # They are holes in the space, not regions this stage declined: marking
+    # them Undecoded would claim bytes exist upstream to go and fetch.
+    holes: list[tuple[int, int]] = []
+    cursor = 0
+    for block in blocks:
+        if isinstance(block, Discontinuity):
+            holes.append((cursor, cursor + (block.width or 0)))
+            cursor += block.width or 0
+        else:
+            cursor += len(block.payload)
     survivors = [record for record in records if keep is None or keep(record)]
     if reorder is not None:
         survivors = list(reorder(survivors))
+    kept_set = {id(record) for record in survivors}
+    # Duty 1 of the specification's MUST NOT: this stage reads an input that
+    # may carry breaks, so it may not emit a unit spanning one without
+    # emitting its own. It re-emits records rather than merging them, so it
+    # satisfies that by carrying every input break forward.
+    inherited = _inherited_breaks(blocks, kept_set)
+    previous: Record | None = None
     for record in survivors:
+        for break_block in inherited.get(id(record), ()):
+            out.discontinuity(
+                handle, width=break_block.width, reason=break_block.reason,
+                comment=break_block.comment,
+            )
+        if mark_gaps and previous is not None and not _adjoined(previous, record, cited):
+            out.discontinuity(
+                handle,
+                reason="filtered",
+                comment="records that did not adjoin in the input are adjacent here",
+            )
+        previous = record
         off_start, off_end = cited[id(record)]
         out.record(
             handle,
@@ -689,9 +885,54 @@ def _rewrite_stream(
                 ),
             ),
         )
-    kept = sorted(cited[id(record)] for record in survivors)
+    # A declared width is a range of the input's offset space that holds no
+    # bytes at all. Coverage still has to account for it — the guarantee is
+    # about the whole stream — but not as `skipped`, whose class is `bytes`
+    # and would send a consumer upstream after bytes that were never there.
+    # `gap` is the "hole" class: nothing exists here to go and fetch.
+    for start, end in holes:
+        if start < end:
+            writer.undecoded(
+                derived.source, session.session_id, pid, start, end, reason="gap"
+            )
+    kept = sorted([cited[id(record)] for record in survivors] + holes)
     extent = ranges[-1][1] if ranges else 0
     for start, end in complement(kept, extent):
         writer.undecoded(
             derived.source, session.session_id, pid, start, end, reason="skipped"
         )
+
+
+def _inherited_breaks(
+    blocks: Sequence[Record | Discontinuity], kept: set[int]
+) -> dict[int, list[Discontinuity]]:
+    """Attach each input break to the surviving record that follows it.
+
+    Carrying a break forward means putting it back between the same two
+    units. When the record that followed it was dropped, the break travels
+    to the next survivor: the join it denies is still a join being made.
+
+    Args:
+        blocks: One participant's records and breaks, in stored order.
+        kept: ``id()`` of every record that survived.
+
+    Returns:
+        Per surviving record's ``id()``, the breaks to emit before it.
+
+    """
+    attached: dict[int, list[Discontinuity]] = {}
+    pending: list[Discontinuity] = []
+    for block in blocks:
+        if isinstance(block, Discontinuity):
+            pending.append(block)
+        elif id(block) in kept and pending:
+            attached[id(block)] = pending
+            pending = []
+    return attached
+
+
+def _adjoined(
+    previous: Record, current: Record, cited: dict[int, tuple[int, int]]
+) -> bool:
+    """Return whether two records were adjacent in the input's offset space."""
+    return cited[id(previous)][1] == cited[id(current)][0]

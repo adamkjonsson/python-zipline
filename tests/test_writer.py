@@ -250,3 +250,83 @@ def test_closed_writer_refuses_use():
     assert writer.closed
     with pytest.raises(zpf.ZpfError, match="closed"):
         writer.add_source("capture")
+
+
+# --- 0.13/0.14 write surface -------------------------------------------------
+
+
+def decoded_stage_bytes(**session_kwargs: object) -> bytes:
+    """Write a minimal decode stage, letting the caller extend the session."""
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1, produced_by="t 1", produced_at=1, **session_kwargs) as w:
+        source = w.add_source("zpf-input", uri="raw.zpf")
+        decoder = w.add_decoder("tls")
+        with w.begin_session(session_id=7, external_session_id=b"case-1") as s:
+            client = s.participant("a")
+            s.record(
+                client, ts=0, payload=b"A" * 50, source=source, decoder=decoder,
+                spans=(zpf.Span(source_id=source.source_id, session_id=7,
+                                participant_id=0, off_start=0, off_end=100),),
+            )
+            s.discontinuity(client, reason="tls-record-lost")
+            s.record(
+                client, ts=1, payload=b"B" * 30, source=source, decoder=decoder,
+                spans=(zpf.Span(source_id=source.source_id, session_id=7,
+                                participant_id=0, off_start=139, off_end=200),),
+            )
+            w.undecoded(source, 7, 0, 100, 139, reason="gap")
+            s.end(input_extents=[
+                zpf.InputExtent(source_id=source.source_id, session_id=7,
+                                participant_id=0, extent=200)
+            ])
+    return sink.getvalue()
+
+
+def test_the_write_surface_produces_a_conformant_break():
+    data = decoded_stage_bytes(transform_params_digest="sha256:abcd")
+    with zpf.open(io.BytesIO(data)) as f:
+        for session in f.sessions():
+            list(session.records())
+        assert f.diagnostics == []
+        assert f.header.transform_params_digest == "sha256:abcd"
+        session = f.session(7)
+        assert session.descriptor.external_session_id == b"case-1"
+        # The break carries no width, so it contributes 0 and the records
+        # stay where the payload concatenation puts them.
+        assert session.ranges(0) == ((0, 50), (50, 80))
+        assert session.end is not None
+        assert session.end.input_extents[0].extent == 200
+
+
+def test_a_written_break_is_checkable_from_the_file_alone():
+    data = decoded_stage_bytes()
+    path = io.BytesIO(data)
+    assert zpf.check_extents(path) == []
+
+
+def test_discontinuity_accepts_a_raw_participant_id():
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1, produced_by="t", produced_at=1) as w:
+        source = w.add_source("zpf-input", uri="raw.zpf")
+        decoder = w.add_decoder("tls")
+        with w.begin_session(session_id=7) as s:
+            client = s.participant("a")
+            s.record(client, ts=0, payload=b"x", source=source, decoder=decoder,
+                     spans=(zpf.Span(source_id=source.source_id, session_id=7,
+                                     participant_id=0, off_start=0, off_end=1),))
+            s.discontinuity(0, width=8)  # the pid rather than the handle
+    with zpf.open(io.BytesIO(sink.getvalue())) as f:
+        (block,) = [b for b in f.blocks() if isinstance(b, zpf.Discontinuity)]
+        assert (block.participant_id, block.width) == (0, 8)
+
+
+def test_the_writer_refuses_a_break_in_a_raw_file():
+    sink = io.BytesIO()
+    with pytest.raises(zpf.SemanticError, match="Discontinuity"), zpf.create(
+        sink, tick_hz=1
+    ) as w:
+        w.add_source("capture", uri="t.pcap")
+        with w.begin_session(proto="tcp", session_id=7) as s:
+            client = s.participant("a")
+            s.record(client, ts=0, payload=b"x")
+            s.discontinuity(client)

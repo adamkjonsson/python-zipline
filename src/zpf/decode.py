@@ -35,7 +35,7 @@ from __future__ import annotations
 from typing import IO, TYPE_CHECKING
 
 from zpf._intervals import complement, intersections
-from zpf.blocks import Span
+from zpf.blocks import InputExtent, Span
 from zpf.errors import ZpfError
 from zpf.reader import FileReader
 from zpf.reassembly import Gap
@@ -303,6 +303,44 @@ class DecodeStage:
             comment=comment,
         )
 
+    def discontinuity(
+        self,
+        stream: DecodeStream,
+        *,
+        width: int | None = None,
+        reason: str | None = None,
+        comment: str | None = None,
+    ) -> None:
+        """Mark a break in **this stage's own output** for ``stream``.
+
+        The mirror image of :meth:`undecoded`, and the pair are easy to
+        confuse. An Undecoded block is about the *input*: bytes over there
+        this stage did not decode. This is about the output: the units
+        either side of it do not join, whatever their offsets say.
+
+        Emit it at the point in the output where the break belongs — stored
+        order is what places it — and note that it discharges **no** coverage
+        obligation. A stage that both fails to decode an input region and
+        breaks its output owes an Undecoded block *and* this.
+
+        Args:
+            stream: The input stream whose output participant breaks. The
+                block is written against this stage's own ids.
+            width: The break's extent in the output's offset space, when it
+                can be counted; leave it out when it cannot. Absent means
+                unknowable, which is not a declared ``0``.
+            reason: ``"tls-record-lost"``, ``"decrypt-failed"``,
+                ``"stream-gap"``, … (open vocabulary).
+            comment: Free-text note.
+
+        """
+        self.derived.sessions[stream.session_id].discontinuity(
+            self.derived.participants[(stream.session_id, stream.pid)],
+            width=width,
+            reason=reason,
+            comment=comment,
+        )
+
     def close(self, *, end: bool = True) -> None:
         """Close the output, then the input if this stage opened it.
 
@@ -332,6 +370,8 @@ class DecodeStage:
                 except BaseException:
                     self.writer.close(end=False)  # failed stage: no End block
                     raise
+            if end:
+                self._declare_extents()
             self.writer.close(end=end)
         finally:
             if self._owns_reader:
@@ -349,6 +389,33 @@ class DecodeStage:
                 into.setdefault((span.session_id, span.participant_id), []).append(
                     (span.off_start, span.off_end)
                 )
+
+    def _declare_extents(self) -> None:
+        """End each output session, declaring how long its inputs were.
+
+        The stage knows every input stream's extent by the time it closes,
+        and the specification says a derived file SHOULD declare them: they
+        are what lets a consumer check the coverage guarantee from the output
+        alone, without opening the input to measure it. A trailing gap is
+        invisible without them — coverage that stops early looks exactly like
+        a stream that was that short.
+
+        Measured with the same rule the coverage check uses, so the two
+        cannot disagree.
+        """
+        by_session: dict[int, list[InputExtent]] = {}
+        for stream in self.streams():
+            extent, _gaps = _extent_and_gaps(stream.view)
+            by_session.setdefault(stream.session_id, []).append(
+                InputExtent(
+                    source_id=self.derived.source.source_id,
+                    session_id=stream.session_id,
+                    participant_id=stream.pid,
+                    extent=extent,
+                )
+            )
+        for session_id, out in self.derived.sessions.items():
+            out.end(input_extents=by_session.get(session_id, []))
 
     def _autofill(self) -> None:
         """Mark every uncovered input offset as Undecoded, gaps included."""
