@@ -1,0 +1,6 @@
+{"type":"file","format":"zipline-payload/0.14","tick_hz":1000000,"time_epoch":1719500000000000,"single_clock":true,"creator":"zpf-capture 2.1"}
+{"type":"source","source_id":1,"kind":"capture","uri":"c.pcap"}
+{"type":"session","session_id":7,"proto":"tcp"}
+{"type":"participant","session_id":7,"pid":0,"endpoint":["10.0.0.1:51000"]}
+{"type":"record","session_id":7,"sender_pid":0,"source_id":1,"ts":1000,"payload":"aGk="}
+{"type":"end"}

@@ -1,0 +1,45 @@
+# custom-block
+#
+# Generated from the same description as the .zpf -- never edited
+# by hand, so the annotation cannot drift from the bytes.
+
+0000  01 00                    type   = 0x0001  File Header
+0002  00 00                    reserved
+0004  10 00 00 00              length = 16
+0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
+000C  00 00                    version_major = 0
+000E  0E 00                    version_minor = 14
+0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
+
+0018  02 00                    type   = 0x0002  Source Descriptor
+001A  00 00                    reserved
+001C  10 00 00 00              length = 16
+0020  01 00                    source_id = 1
+0022  00                       kind = 0  (capture)
+0023  00                       _reserved
+0024  20 00 06 00              option 0x0020 uri, len = 6
+0028  63 2E 70 63 61 70        "c.pcap"
+002E  00 00                    value padding
+
+0030  FF 00                    type   = 0x00FF  Custom
+0032  00 00                    reserved
+0034  0C 00 00 00              length = 12
+0038  D9 7E 00 00              pen = 32473  (IANA Private Enterprise Number)
+003C  07 00                    subtype = 7  (vendor-defined)
+003E  00 00                    _reserved
+0040  01 02 03 04
+
+0044  10 00                    type   = 0x0010  Session Descriptor
+0046  00 00                    reserved
+0048  10 00 00 00              length = 16
+004C  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+0054  50 00 03 00              option 0x0050 proto, len = 3
+0058  74 63 70                 "tcp"
+005B  00                       value padding
+
+005C  41 00                    type   = 0x0041  End of file
+005E  00 00                    reserved
+0060  04 00 00 00              length = 4
+0064  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
+
+0068                           (end of file, 104 bytes)

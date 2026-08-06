@@ -1,14 +1,26 @@
 # Defects in the 0.12 conformance vectors
 
-A running list, to be reported to the
-[zipline](https://github.com/adamkjonsson/zipline) project in one batch when the
-0.9 → 0.12 port is finished. Found while implementing against
-`vectors/` at tag `v0.12` (commit `c291afc`).
+**Closed. Both defects were reported upstream and both were fixed; this file is
+the record, not a work list.** Nothing here applies to the vectors now vendored
+in [`tests/vectors/`](tests/vectors/), which are `v0.14`.
 
-**Status: 2 defects, affecting 3 vectors and the vectors README.** Appended to as
-later migration phases exercise more of the tree — the `accept` tier's
-projections are not fully compared until Phase 2, so this list is not yet
-complete.
+Found while implementing against `vectors/` at tag `v0.12` (commit `c291afc`),
+during the 0.9 → 0.12 port.
+
+| | Defect | Fixed in | Where |
+|---|---|---|---|
+| 1 | Three decode-stage vectors omit `produced_by`/`produced_at` | `0.13` | CHANGELOG *Fixed*; all three now carry both options |
+| 2 | `vectors/README.md` contradicts the spec on the `isolate` tier | `0.14` | The README, which now reads "Rejecting an `isolate` vector, with a diagnostic, **is conformant**" |
+
+Defect 1 also generalised upstream. The principle this file drew out of it — **a
+negative vector must carry exactly one violation** — is now stated in the vectors
+README and *enforced*: every manifest entry declares a `violations` count, and
+`check.py` requires it to agree with the tier. Declaring it is mandatory, so a
+vector cannot be written without confronting the number.
+
+The rest of this file is as it was filed.
+
+---
 
 Nothing here challenges the *normative text*. Per the vectors' own ground rule
 2, a vector that disagrees with the specification is the thing that is wrong,

@@ -96,7 +96,7 @@ v0.12 does not belong in the `ConformanceChecker`.
 
 ## Conformance vectors
 
-The specification ships 26 hand-built vectors, vendored verbatim into
+The specification ships 39 hand-built vectors, vendored verbatim into
 [`tests/vectors/`](https://github.com/adamkjonsson/python-zipline/tree/main/tests/vectors)
 and run by `tests/test_vectors.py` across the three tiers — `accept` (a
 conformant file, with its expected JSONL projection), `reject` (structural
@@ -104,12 +104,14 @@ corruption), and `isolate` (a semantic violation the reader must not pass
 silently).
 
 Two habits keep them honest. The harness asserts what each negative vector is
-refused or diagnosed *for*, not merely that something was raised — at one point
-three `reject` vectors were passing because the version gate fired before the
-check each was testing. And a vector is never edited to make a test pass: they
-are subordinate to the normative text, so a vector that looks wrong is a
-question for the spec repository. Three are known-defective upstream and are
-marked as such in the harness.
+refused or diagnosed *for*, not merely that something was raised — which matters
+most at the start of a port, when the version gate is still behind the vectors
+and fires before the check each one is testing. Three `reject` vectors passed for
+that wrong reason during the 0.12 port, and two do again today. And a vector is
+never edited to make a test pass: they are subordinate to the normative text, so
+a vector that looks wrong is a question for the spec repository. Two that were
+defective upstream have since been fixed there; `VECTOR-DEFECTS.md` is the closed
+record.
 
 ## Where to go next
 

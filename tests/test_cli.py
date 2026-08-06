@@ -6,6 +6,7 @@ import io
 from typing import TYPE_CHECKING
 
 import pytest
+from _migration import pending_version_gate
 from test_golden import GOLDEN
 from test_transform import write_raw, write_side_a, write_side_b
 
@@ -23,6 +24,7 @@ def golden_path(tmp_path: Path) -> Path:
     return path
 
 
+@pending_version_gate
 def test_info(golden_path: Path, capsys: pytest.CaptureFixture[str]):
     assert main(["info", str(golden_path)]) == 0
     out = capsys.readouterr().out
@@ -33,6 +35,7 @@ def test_info(golden_path: Path, capsys: pytest.CaptureFixture[str]):
     assert "participants=[10.0.0.1:51000] records=1" in out
 
 
+@pending_version_gate
 def test_cat_matches_the_converter(golden_path: Path, capsys: pytest.CaptureFixture[str]):
     assert main(["cat", str(golden_path)]) == 0
     out = capsys.readouterr().out
@@ -41,6 +44,7 @@ def test_cat_matches_the_converter(golden_path: Path, capsys: pytest.CaptureFixt
     assert out == expected.getvalue()
 
 
+@pending_version_gate
 def test_convert_round_trips(golden_path: Path, tmp_path: Path):
     jsonl_path = tmp_path / "golden.zpf.jsonl"
     binary_path = tmp_path / "back.zpf"
@@ -50,6 +54,7 @@ def test_convert_round_trips(golden_path: Path, tmp_path: Path):
     assert binary_path.read_bytes() == GOLDEN  # canonical in, canonical out
 
 
+@pending_version_gate
 def test_validate_clean_file(golden_path: Path, capsys: pytest.CaptureFixture[str]):
     assert main(["validate", str(golden_path)]) == 0
     assert "OK" in capsys.readouterr().err

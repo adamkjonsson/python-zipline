@@ -1,19 +1,24 @@
-"""Conformance-vector harness for the upstream 0.12 vectors.
+"""Conformance-vector harness for the upstream 0.14 vectors.
 
 The vectors in ``tests/vectors/`` are hand-built from the specification's
 normative text (see ``tests/vectors/VENDORED.md``). They are the acceptance
-criteria for the 0.9 → 0.12 migration: each phase of the port is done when the
+criteria for the 0.12 → 0.14 migration: each phase of the port is done when the
 vectors it targets pass.
 
-**The ratchet.** This library implements 0.9, so almost every vector fails
-today. Rather than leave the suite red for the duration of the migration, a
-vector case is a hard requirement only once its name is added to
-:data:`KNOWN_PASSING`; every other case is ``xfail(strict=False)``. A case that
-starts passing shows up as ``XPASS`` — that is the progress signal — and is then
-promoted into :data:`KNOWN_PASSING` so it can never silently regress.
+**The ratchet.** This library implements 0.12, so almost every vector fails
+today — a 0.14 file is refused at the version gate. Rather than leave the suite
+red for the duration of the migration, a vector case is a hard requirement only
+once its name is added to :data:`KNOWN_PASSING`; every other case is
+``xfail(strict=False)``. A case that starts passing shows up as ``XPASS`` — that
+is the progress signal — and is then promoted into :data:`KNOWN_PASSING` so it
+can never silently regress.
 
 So the migration invariant is: ``KNOWN_PASSING`` only ever grows, and the suite
 is green at every step.
+
+The ratchet was reset at Phase 0 of the 0.14 port, when the tree was re-vendored.
+It is not a record of what this library once passed — under 0.12 it passed 25 of
+the 26 vectors then shipped — only of what it passes against *these* files.
 """
 
 from __future__ import annotations
@@ -33,35 +38,16 @@ VECTORS = Path(__file__).parent / "vectors"
 #: Vector cases that MUST pass. Grow it as phases land; never remove a name,
 #: because that is the regression guard.
 #:
-#: Phase 5: every vector this library can pass. The only three left are
-#: blocked upstream — see :data:`DEFECTIVE`.
+#: Phase 0: the three refused before the version gate is reached, or by it.
+#: ``reject-length-misaligned`` and ``reject-payload-len-overrun`` are *not*
+#: here — they stamp 0/14, so today they are refused for their minor rather
+#: than for the framing defect each exists to test, and :data:`_REJECT_REASONS`
+#: catches that. They return at Phase 1.
 KNOWN_PASSING: frozenset[str] = frozenset(
     {
-        "annotator-decoded",
-        "chain/annotated",
-        "chain/decoded",
-        "chain/raw",
-        "decoded-basic",
-        "escape-reserved-flag-bit",
-        "escape-unknown-block",
-        "escape-unknown-enum",
-        "escape-unknown-option",
-        "hintless-merge-backwards-ts",
-        "isolate-duplicate-id",
-        "isolate-sequenced-no-basis",
-        "isolate-undeclared-session",
-        "isolate-unknown-source-kind",
-        "merge-timestamp-tie",
-        "partially-hinted-sequenced",
-        "passthrough-transport",
-        "raw-minimal",
         "reject-bad-magic",
-        "reject-length-misaligned",
-        "reject-payload-len-overrun",
         "reject-unknown-major",
         "reject-unknown-minor",
-        "reordered-decoded",
-        "sequenced-basis",
     }
 )
 
@@ -69,17 +55,17 @@ KNOWN_PASSING: frozenset[str] = frozenset(
 #: in ``VECTOR-DEFECTS.md``. Kept distinct from the not-yet-ported xfails so
 #: that nobody bends this implementation to match a broken fixture: if one of
 #: these starts passing, the vector was fixed — or we got it wrong.
-DEFECTIVE: dict[str, str] = {
-    "undecoded-skipped": "defect 1: decode stage with no produced_by/produced_at",
-    "undecoded-reason-class": "defect 1: decode stage with no produced_by/produced_at",
-    "isolate-coverage-gap": "defect 1: second violation masks the coverage gap",
-}
+#:
+#: Empty at ``v0.14``: both defects filed against the 0.12 vectors were fixed
+#: upstream. The mechanism stays for the next one.
+DEFECTIVE: dict[str, str] = {}
 
 #: What each ``reject`` vector must be refused *for*. Asserting only that some
-#: exception escaped is not enough: while the version gate is wrong, a 0.12
-#: vector is refused for its ``version_major`` long before the check it actually
-#: exercises is reached, so three of these passed for the wrong reason at
-#: Phase 0. Matched case-insensitively against the error message.
+#: exception escaped is not enough: while the version gate is behind the
+#: vectors, a file is refused for its stamped version long before the check it
+#: actually exercises is reached. That is exactly the state at Phase 0 of each
+#: port — three of these passed for the wrong reason at 0.12's, and two would at
+#: 0.14's. Matched case-insensitively against the error message.
 _REJECT_REASONS: dict[str, str] = {
     "reject-bad-magic": "magic",
     "reject-unknown-major": "version_major",
@@ -89,10 +75,16 @@ _REJECT_REASONS: dict[str, str] = {
 }
 
 #: What each ``isolate`` vector must be diagnosed *for*. Same discipline as
-#: ``_REJECT_REASONS``, and it earns its keep: ``isolate-coverage-gap`` is
-#: isolated today for a missing ``produced_by`` rather than for the coverage
-#: gap it exists to test, so without this it would pass with the coverage
-#: check unimplemented.
+#: ``_REJECT_REASONS``, and it earned its keep against the 0.12 vectors:
+#: ``isolate-coverage-gap`` carried a second violation, so it was isolated for a
+#: missing ``produced_by`` rather than for the coverage gap it exists to test and
+#: would have passed with the coverage check unimplemented. Upstream now enforces
+#: one violation per negative vector, but that says the fixtures are right — not
+#: that we detected the right thing.
+#:
+#: The three ``isolate`` vectors new in 0.13/0.14 are absent until the phase that
+#: implements them: their wording is not decided yet, and a case with no entry
+#: here xfails before the lookup.
 _ISOLATE_REASONS: dict[str, str] = {
     "isolate-coverage-gap": "coverage",
     "isolate-duplicate-id": "twice",
@@ -188,7 +180,7 @@ def _params(tier: str) -> list[Any]:
         if case.name in KNOWN_PASSING:
             marks: tuple[Any, ...] = ()
         else:
-            reason = DEFECTIVE.get(case.name, "not yet ported to 0.12")
+            reason = DEFECTIVE.get(case.name, "not yet ported to 0.14")
             marks = (pytest.mark.xfail(reason=reason, strict=False),)
         params.append(pytest.param(case, id=case.name, marks=marks))
     return params
@@ -255,8 +247,13 @@ def test_manifest_covers_the_tree() -> None:
 
 
 def test_every_case_has_a_file() -> None:
-    """The manifest expands to at least one file per declared vector."""
-    assert len(CASES) >= 26
+    """The manifest expands to exactly the files `v0.14` ships.
+
+    The count is exact rather than a floor, so a half-copied re-vendoring
+    fails here instead of quietly shrinking the suite: 39 manifest entries,
+    of which ``chain`` expands to three files and ``splice`` to two.
+    """
+    assert len(CASES) == 42
     for case in CASES:
         assert case.path.exists(), case.name
 

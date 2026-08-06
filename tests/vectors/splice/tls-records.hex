@@ -1,0 +1,157 @@
+# splice/tls-records
+#
+# Generated from the same description as the .zpf -- never edited
+# by hand, so the annotation cannot drift from the bytes.
+
+0000  01 00                    type   = 0x0001  File Header
+0002  00 00                    reserved
+0004  2C 00 00 00              length = 44
+0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
+000C  00 00                    version_major = 0
+000E  0E 00                    version_minor = 14
+0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
+0018  12 00 0B 00              option 0x0012 produced_by, len = 11
+001C  7A 70 66 2D 74 6C 73 20  "zpf-tls 0.2"
+0024  30 2E 32
+0027  00                       value padding
+0028  13 00 08 00              option 0x0013 produced_at, len = 8  (1719640000)
+002C  C0 9F 7F 66 00 00 00 00
+
+0034  02 00                    type   = 0x0002  Source Descriptor
+0036  00 00                    reserved
+0038  20 00 00 00              length = 32
+003C  01 00                    source_id = 1
+003E  01                       kind = 1  (zpf-input)
+003F  00                       _reserved
+0040  20 00 07 00              option 0x0020 uri, len = 7
+0044  72 61 77 2E 7A 70 66     "raw.zpf"
+004B  00                       value padding
+004C  21 00 0B 00              option 0x0021 digest, len = 11
+0050  73 68 61 32 35 36 3A 39  "sha256:9f2c"
+0058  66 32 63
+005B  00                       value padding
+
+005C  03 00                    type   = 0x0003  Decoder Descriptor
+005E  00 00                    reserved
+0060  1C 00 00 00              length = 28
+0064  01 00                    decoder_id = 1
+0066  00 00                    _reserved
+0068  41 00 0B 00              option 0x0041 name, len = 11
+006C  74 6C 73 2D 72 65 63 6F  "tls-records"
+0074  72 64 73
+0077  00                       value padding
+0078  42 00 03 00              option 0x0042 version, len = 3
+007C  30 2E 32                 "0.2"
+007F  00                       value padding
+
+0080  10 00                    type   = 0x0010  Session Descriptor
+0082  00 00                    reserved
+0084  10 00 00 00              length = 16
+0088  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+0090  50 00 03 00              option 0x0050 proto, len = 3
+0094  74 6C 73                 "tls"
+0097  00                       value padding
+
+0098  11 00                    type   = 0x0011  Participant Descriptor
+009A  00 00                    reserved
+009C  20 00 00 00              length = 32
+00A0  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+00A8  00 00                    participant_id = 0
+00AA  00 00                    _reserved
+00AC  60 00 0E 00              option 0x0060 endpoint, len = 14
+00B0  31 30 2E 30 2E 30 2E 31  "10.0.0.1:51000"
+00B8  3A 35 31 30 30 30
+00BE  00 00                    value padding
+
+00C0  20 00                    type   = 0x0020  Record
+00C2  00 00                    reserved
+00C4  78 00 00 00              length = 120
+00C8  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+00D0  00 00                    sender_pid = 0
+00D2  01 00                    source_id  = 1
+00D4  E8 03 00 00 00 00 00 00  timestamp  = 1000
+00DC  00 00                    _reserved  (u16 = 0)
+00DE  00 00                    flags      = 0x0000
+00E0  32 00 00 00              payload_len = 50
+00E4  41 41 41 41 41 41 41 41  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+00EC  41 41 41 41 41 41 41 41
+00F4  41 41 41 41 41 41 41 41
+00FC  41 41 41 41 41 41 41 41
+0104  41 41 41 41 41 41 41 41
+010C  41 41 41 41 41 41 41 41
+0114  41 41
+0116  00 00                    payload padding
+0118  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
+011C  01 00
+011E  00 00                    value padding
+0120  80 00 1C 00              option 0x0080 spans, len = 28  (1 entry/entries)
+0124  01 00 00 00 07 00 00 00
+012C  00 00 00 00 00 00 00 00
+0134  00 00 00 00 64 00 00 00
+013C  00 00 00 00
+
+0140  21 00                    type   = 0x0021  Undecoded
+0142  00 00                    reserved
+0144  2C 00 00 00              length = 44
+0148  01 00                    source_id = 1  (in the input's namespace)
+014A  00 00                    participant_id = 0
+014C  07 00 00 00 00 00 00 00  session_id = 7
+0154  64 00 00 00 00 00 00 00  off_start = 100
+015C  8B 00 00 00 00 00 00 00  off_end   = 139
+0164  A0 00 03 00              option 0x00A0 reason, len = 3
+0168  67 61 70                 "gap"
+016B  00                       value padding
+016C  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
+0170  01 00
+0172  00 00                    value padding
+
+0174  22 00                    type   = 0x0022  Discontinuity
+0176  00 00                    reserved
+0178  20 00 00 00              length = 32
+017C  07 00 00 00 00 00 00 00  session_id = 7  (in THIS file)
+0184  00 00                    participant_id = 0  (in THIS file)
+0186  00 00                    _reserved
+0188  D1 00 0F 00              option 0x00D1 reason, len = 15
+018C  74 6C 73 2D 72 65 63 6F  "tls-record-lost"
+0194  72 64 2D 6C 6F 73 74
+019B  00                       value padding
+
+019C  20 00                    type   = 0x0020  Record
+019E  00 00                    reserved
+01A0  64 00 00 00              length = 100
+01A4  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+01AC  00 00                    sender_pid = 0
+01AE  01 00                    source_id  = 1
+01B0  4C 04 00 00 00 00 00 00  timestamp  = 1100
+01B8  00 00                    _reserved  (u16 = 0)
+01BA  00 00                    flags      = 0x0000
+01BC  1E 00 00 00              payload_len = 30
+01C0  42 42 42 42 42 42 42 42  "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+01C8  42 42 42 42 42 42 42 42
+01D0  42 42 42 42 42 42 42 42
+01D8  42 42 42 42 42 42
+01DE  00 00                    payload padding
+01E0  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
+01E4  01 00
+01E6  00 00                    value padding
+01E8  80 00 1C 00              option 0x0080 spans, len = 28  (1 entry/entries)
+01EC  01 00 00 00 07 00 00 00
+01F4  00 00 00 00 8B 00 00 00
+01FC  00 00 00 00 C8 00 00 00
+0204  00 00 00 00
+
+0208  12 00                    type   = 0x0012  Session End
+020A  00 00                    reserved
+020C  20 00 00 00              length = 32
+0210  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+0218  C1 00 14 00              option 0x00C1 input_extents, len = 20  (1 entry/entries)
+021C  01 00 00 00 07 00 00 00
+0224  00 00 00 00 C8 00 00 00
+022C  00 00 00 00
+
+0230  41 00                    type   = 0x0041  End of file
+0232  00 00                    reserved
+0234  04 00 00 00              length = 4
+0238  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
+
+023C                           (end of file, 572 bytes)

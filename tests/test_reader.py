@@ -9,6 +9,7 @@ import pathlib
 from typing import TYPE_CHECKING
 
 import pytest
+from _migration import pending_version_gate
 from test_golden import GOLDEN, GOLDEN_BLOCKS
 from test_jsonl import CHAT_EXAMPLE, DECODED_EXAMPLE, MERGED_EXAMPLE
 
@@ -30,6 +31,7 @@ def open_text(text: str, **kwargs: object) -> zpf.FileReader:
 # --- Golden file and spec examples ------------------------------------------------
 
 
+@pending_version_gate
 def test_open_the_golden_file():
     with open_bytes(GOLDEN) as f:
         assert f.face == "binary"
@@ -51,6 +53,7 @@ def test_open_the_golden_file():
         assert record == GOLDEN_BLOCKS[-1]
 
 
+@pending_version_gate
 def test_open_the_golden_file_from_a_path(tmp_path: Path):
     path = tmp_path / "golden.zpf"
     path.write_bytes(GOLDEN)
@@ -179,6 +182,7 @@ def test_stream_of_an_unknown_pid_raises():
         list(f.sessions()[0].stream(9))
 
 
+@pending_version_gate
 def test_blocks_rewalk_matches_the_original():
     with open_bytes(GOLDEN) as f:
         assert list(f.blocks()) == GOLDEN_BLOCKS
@@ -211,6 +215,7 @@ def test_jsonl_from_a_binary_stream_left_open():
     assert raw.read(1) == b"{"
 
 
+@pending_version_gate
 def test_explicit_face_override_and_errors():
     with open_bytes(GOLDEN, face="binary") as f:
         assert f.face == "binary"
@@ -553,6 +558,7 @@ def test_index_offsets_are_exact():
 VECTORS = pathlib.Path(__file__).parent / "vectors"
 
 
+@pending_version_gate
 def test_ranges_place_a_decoded_record_positionally():
     # A Record block carries no offset field, so a decoded record's place in
     # its own stream is implied by the concatenation of the preceding
@@ -570,6 +576,7 @@ def test_ranges_place_a_decoded_record_positionally():
                 cursor = end
 
 
+@pending_version_gate
 def test_ranges_are_cached_across_session_views():
     # SessionReader is rebuilt per call, so the table has to live on the
     # index or the first pass would be paid again on every lookup.
@@ -578,6 +585,7 @@ def test_ranges_are_cached_across_session_views():
         assert f.session(7).ranges(0) is first
 
 
+@pending_version_gate
 def test_ranges_agree_with_a_naive_datagram_walk():
     with zpf.open(VECTORS / "chain/decoded.zpf") as f:
         session = f.session(7)
@@ -587,6 +595,7 @@ def test_ranges_agree_with_a_naive_datagram_walk():
             assert list(session.ranges(pid)) == walked
 
 
+@pending_version_gate
 def test_a_raw_stream_is_not_a_decoded_one():
     with zpf.open(VECTORS / "chain/raw.zpf") as f:
         session = f.session(7)

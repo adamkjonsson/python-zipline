@@ -1,0 +1,11 @@
+{"type":"file","format":"zipline-payload/0.14","tick_hz":1000000,"produced_by":"zpf-tls 0.2","produced_at":1719640000}
+{"type":"source","source_id":1,"kind":"zpf-input","uri":"raw.zpf","digest":"sha256:9f2c"}
+{"type":"decoder","decoder_id":1,"name":"tls-records","version":"0.2"}
+{"type":"session","session_id":7,"proto":"tls"}
+{"type":"participant","session_id":7,"pid":0,"endpoint":["10.0.0.1:51000"]}
+{"type":"record","session_id":7,"sender_pid":0,"source_id":1,"ts":1000,"payload":"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=","decoder_id":1,"spans":[{"source_id":1,"session_id":7,"pid":0,"off_start":0,"off_end":100}]}
+{"type":"undecoded","source_id":1,"session_id":7,"pid":0,"off_start":100,"off_end":139,"reason":"gap","decoder_id":1}
+{"type":"discontinuity","session_id":7,"pid":0,"reason":"tls-record-lost"}
+{"type":"record","session_id":7,"sender_pid":0,"source_id":1,"ts":1100,"payload":"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJC","decoder_id":1,"spans":[{"source_id":1,"session_id":7,"pid":0,"off_start":139,"off_end":200}]}
+{"type":"session_end","session_id":7,"input_extents":[{"source_id":1,"session_id":7,"pid":0,"extent":200}]}
+{"type":"end"}

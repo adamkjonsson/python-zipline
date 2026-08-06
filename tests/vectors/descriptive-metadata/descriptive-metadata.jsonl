@@ -1,0 +1,6 @@
+{"type":"file","format":"zipline-payload/0.14","tick_hz":1000000}
+{"type":"source","source_id":1,"kind":"capture","uri":"c.pcap","link_type":1}
+{"type":"session","session_id":7,"proto":"tcp","key":"10.0.0.1:51000 <-> 93.184.216.34:80"}
+{"type":"participant","session_id":7,"pid":0,"endpoint":["10.0.0.1:51000"],"identity":"alice@example.com"}
+{"type":"record","session_id":7,"sender_pid":0,"source_id":1,"ts":1100,"payload":"aGk=","ts_first":1000}
+{"type":"end"}

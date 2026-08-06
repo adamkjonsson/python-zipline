@@ -1,0 +1,8 @@
+{"type":"file","format":"zipline-payload/0.14","tick_hz":1000000,"produced_by":"zpf-http 0.4","produced_at":1719650000}
+{"type":"source","source_id":1,"kind":"zpf-input","uri":"tls-records.zpf","digest":"sha256:95dc42c533da4e57572d7fbdeab3f290aeed2a72780aea1cf506f8d6b557bda3"}
+{"type":"decoder","decoder_id":1,"name":"http/1.1","version":"0.4"}
+{"type":"session","session_id":7,"proto":"http"}
+{"type":"participant","session_id":7,"pid":0,"endpoint":["10.0.0.1:51000"]}
+{"type":"record","session_id":7,"sender_pid":0,"source_id":1,"ts":1000,"payload":"R0VUIC9zcGxpY2Vk","decoder_id":1,"spans":[{"source_id":1,"session_id":7,"pid":0,"off_start":0,"off_end":80}],"content_type":"dec:request"}
+{"type":"session_end","session_id":7,"input_extents":[{"source_id":1,"session_id":7,"pid":0,"extent":80}]}
+{"type":"end"}
