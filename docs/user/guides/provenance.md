@@ -101,7 +101,19 @@ provenance **recurses**. `raw → tls-records → http` is two decode stages; a
 consumer holding an HTTP record follows its span into the TLS-record stream, and
 if that range is itself a derived file's output, follows *its* provenance one
 level further — until it reaches the capture-sourced raw file that holds the
-actual bytes. The `digest` at each hop confirms the link is still valid.
+bytes of the region it arrived at. The `digest` at each hop confirms the link
+is still valid.
+
+**Those need not be the bytes it set out to find.** Wherever the walk crosses a
+*transforming* stage, what it recovers is the corresponding input, not the same
+content in another file: chasing a plaintext HTTP region down through a TLS
+stage reaches ciphertext, and through a gzip stage, compressed bytes. That is
+the honest answer — the plaintext exists nowhere upstream, and re-deriving it
+means re-running the stage, which needs its `params_digest` configuration and,
+for a key-gated stage, its key. Reporting the recovered bytes as the region's
+*content* is the same mistake as reporting a broken chain as an empty region.
+Where every stage in the walk merely framed, the bytes are the same ones and
+the distinction costs nothing.
 
 This is what makes an `undecodable` marker useful rather than a dead end: the
 bytes are not in the decoded file, but the chain says exactly where they are. A
@@ -133,7 +145,24 @@ stream's offsets are true positions, so a hole counts as if its bytes were
 present. A **decoded** stream is a different object: its space is the
 concatenation of that participant's record payloads in stored order, and
 Undecoded regions name ranges in the *input's* space, so they contribute
-nothing. It is not hole-inclusive.
+nothing.
+
+It is hole-inclusive in exactly one place: where a
+{class}`~zpf.Discontinuity` block declares a `width`. That block marks a break
+in the file's **own** output — the records either side do not join — and a
+declared width is a term in the arithmetic, displacing every record after it.
+An **absent** width means the extent is unknowable (TLS lost a record, and the
+plaintext length it would have produced is not recoverable from the
+ciphertext); it contributes 0, so the records either side stay numerically
+adjacent even though they do not adjoin. Record *k* therefore occupies
+
+```
+[ Σ(preceding payload_len + preceding declared widths), + its own payload_len )
+```
+
+counting that participant's records **and** its Discontinuity blocks in stored
+order. A reader that skips the block, or reads it and ignores `width`,
+computes a different range for every record after it.
 
 A decoded record therefore carries no offset field at all — its place is
 implied by the records before it. {meth}`SessionReader.ranges
@@ -149,6 +178,25 @@ Resolving a single record costs O(k) on its face, so the whole participant's
 table is built on first use and kept — forward reading pays nothing, and random
 access is O(1) after.
 
+{meth}`~zpf.reader.SessionReader.stream` yields records only. To walk the
+sequence the offset space is *defined* by — records and breaks interleaved —
+use {meth}`~zpf.reader.SessionReader.stream_blocks`, and at the reassembly
+level {meth}`StreamView.units <zpf.reassembly.StreamView.units>`, which yields
+a {class}`~zpf.Break` where a stream discontinues:
+
+```python
+for unit in view.units():
+    if isinstance(unit, zpf.Break):
+        flush()          # whatever follows did not adjoin what came before
+    else:
+        feed(unit.data)
+```
+
+That distinction is not cosmetic. The specification forbids a consumer from
+treating the records either side of a break as contiguous, and with an unknown
+width their offsets are adjacent — so nothing but the marker itself says they
+do not join.
+
 ## See also
 
 - [Concepts: provenance](../concepts.md#provenance-spans-coverage-origins) — the
@@ -158,5 +206,6 @@ access is O(1) after.
 - [Decoding](decoding.md) — authoring spans and letting coverage auto-fill.
 - API reference: [`zpf.transform`](../../api/transform.md)
   ({func}`~zpf.check_coverage`, {func}`~zpf.resolve_spans`,
-  {func}`~zpf.merge_files`) and the
-  {class}`~zpf.Span` / {class}`~zpf.Undecoded` / {class}`~zpf.Origin` blocks.
+  {func}`~zpf.merge_files`, {func}`~zpf.check_splice`) and the
+  {class}`~zpf.Span` / {class}`~zpf.Undecoded` / {class}`~zpf.Origin` /
+  {class}`~zpf.Discontinuity` blocks.

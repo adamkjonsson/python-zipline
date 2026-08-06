@@ -157,9 +157,20 @@ Categories you will meet:
 | `truncated` | reader | The stream ended inside a block. |
 | `trailing-bytes` | reader | Bytes followed the End block. |
 | `nonconformant` | reader | A block violated a conformance rule — isolated, or kept when the finding was advisory. |
-| `coverage-gap` | {func}`zpf.check_coverage` | An input range neither decoded nor marked Undecoded. |
+| `coverage-gap` | reader, {func}`zpf.check_extents`, {func}`zpf.check_coverage` | An input range neither decoded nor marked Undecoded. |
 | `coverage-overlap` | {func}`zpf.check_coverage` | An input range both decoded and marked Undecoded. |
 | `coverage-excess` | {func}`zpf.check_coverage` | A cited range past the input stream's extent. |
+| `extent-exceeds-coverage` | reader, {func}`zpf.check_extents` | A declared `input_extents` reaches past what spans and Undecoded blocks account for — the silent-truncation case. |
+| `extent-below-coverage` | reader, {func}`zpf.check_extents` | A declared extent the file's own citations overshoot. |
+| `extents-disagree` | reader, {func}`zpf.check_extents` | Two sessions declare different lengths for one input stream. |
+| `extent-mismatch` | {func}`zpf.check_coverage` | A declared extent the opened input disagrees with. |
+| `discontinuity-splice` | {func}`zpf.check_splice` | A unit whose spans cross a break its input declared. |
+
+The four coverage and extent rows marked **reader** are reported by
+{func}`zpf.open` too, as `nonconformant` diagnostics: they are settled at
+end-of-stream rather than block by block, because a range is accounted for if
+*any* record cites it and the declared extents arrive last. `zpf.check_extents`
+returns the whole list where the reader raises the first.
 
 The `zpf validate` command is a thin wrapper over these diagnostics: it
 prints each one and turns their presence into exit code `1`. See the

@@ -1,7 +1,7 @@
 # zpf — Zipline Payload Format
 
-`zpf` is a Python implementation of version 0.12 of the
-[Zipline Payload Format](https://github.com/adamkjonsson/zipline/blob/v0.12/docs/zipline-payload-format.md) (`.zpf`):
+`zpf` is a Python implementation of version 0.14 of the
+[Zipline Payload Format](https://github.com/adamkjonsson/zipline/blob/v0.14/docs/zipline-payload-format.md) (`.zpf`):
 a file format for the payload of network traffic — the bytes exchanged
 between endpoints once packets have been reassembled into sessions, plus
 the metadata needed to consume them. Where a packet capture answers "what
@@ -13,7 +13,7 @@ The format is in `0.x`, where **every minor is a separate format**: a reader
 must reject a `version_minor` it does not implement, and no upgrade path
 between `0.x` versions is guaranteed. This library therefore implements
 exactly one version — {data}`zpf.SPEC_VERSION` — and rejects a file written
-against another rather than misreading it. Everything below describes 0.12.
+against another rather than misreading it. Everything below describes 0.14.
 ```
 
 The library has zero runtime dependencies, is fully type-annotated, and

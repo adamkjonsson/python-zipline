@@ -133,6 +133,38 @@ left and raises rather than overriding an explicit marker. Pass
 {func}`~zpf.check_coverage` then reports a `coverage-gap` for anything missed —
 with auto-fill on it returns `[]` by construction.
 
+On close the stage also ends each output session declaring `input_extents` —
+how long each input stream it drew on was. That is what lets a consumer check
+the guarantee **from your output alone**, with {func}`~zpf.check_extents` and
+without opening the input: a hole at the *end* of a stream is otherwise
+invisible, because coverage that stops early looks exactly like a stream that
+was that short.
+
+### Saying your own output breaks
+
+Coverage is about the *input*. When your **output** has a break — you emitted
+one unit, lost the next, and emitted the one after — say so with
+{meth}`~zpf.DecodeStage.discontinuity`:
+
+```python
+stage.record(stream, ts=..., payload=plaintext, spans=(stream.cite(0, 50),))
+stage.discontinuity(stream, reason="tls-record-lost")   # the two do not join
+stage.record(stream, ts=..., payload=more, spans=(stream.cite(139, 200),))
+```
+
+It is the mirror of {meth}`~zpf.DecodeStage.undecoded`, and the pair are easy
+to confuse: an Undecoded block says *there were bytes over there I did not
+decode*; a Discontinuity says *something is missing here, in what I produced*.
+It discharges **no** coverage obligation, so a stage that both failed to decode
+an input region and broke its output owes one of each.
+
+Give `width=` only when the gap can be counted. Omitting it means the extent is
+unknowable — which is not the same as `width=0`, and is the common case: a lost
+TLS record's plaintext length cannot be recovered from the ciphertext. An
+absent width contributes 0 to the offset arithmetic, so the records either side
+sit adjacent; what the block asserts is not a length but that they **do not
+join**.
+
 ## Reading payload content
 
 The write side above labelled each record with `content_type=` — a decoded
@@ -271,6 +303,7 @@ zpf.rewrite_decoded(
     "decoded.zpf", "requests.zpf",
     keep=lambda record: record.content_type == "dec:request",
     produced_by="zpf-filter 1.0", produced_at=datetime.now(tz=UTC),
+    transform_params_digest="sha256:…",     # what this stage was configured with
 )
 ```
 
@@ -287,9 +320,26 @@ ascend with stored order, because the output's own offsets are recomputed from
 the new order while the citations still point at where the bytes came from.
 Coverage depends on which ranges are covered, not the order they appear in.
 
-One gap is inherited from the format: such a transform has no `params_digest`
-to record its own configuration in, so the output states *what* it came from
-but not *how*. A merge has the same gap.
+That gap is closed. Through `0.12` such a transform had no `params_digest` to
+record its own configuration in, so the output stated *what* it came from but
+not *how*; `0.14` adds `transform_params_digest` to the File Header for exactly
+this case. Pass it to {func}`~zpf.rewrite_decoded` or {func}`~zpf.merge_files`.
+
+```{admonition} Beyond the standard
+:class: caution
+
+`mark_gaps=True` (the default) emits a `Discontinuity` wherever this stage
+makes two records adjacent that did not adjoin in the input — at every drop
+point, and wherever a reorder separates neighbours. **`0.14` does not require
+this.** Two duties *are* the standard's: the stage carries every break its
+input declared forward, and never welds records the input said do not join.
+What the standard leaves open is what a *filter* owes at a drop point, where
+the surviving neighbours become adjacent in the output when they were not in
+the input — the defect a Discontinuity exists to prevent, one hop along, and
+one no rule covers. Reported upstream as
+[zipline#78](https://github.com/adamkjonsson/zipline/issues/78). Pass
+`mark_gaps=False` for output that claims no more than `0.14` obliges.
+```
 
 ## See also
 

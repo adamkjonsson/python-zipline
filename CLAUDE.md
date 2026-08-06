@@ -2,13 +2,13 @@
 
 ## The product
 
-This code is a Python implementation of v0.12 of the Zipline Payload Format,
+This code is a Python implementation of v0.14 of the Zipline Payload Format,
 which is defined in
-`https://github.com/adamkjonsson/zipline/blob/v0.12/docs/zipline-payload-format.md`.
+`https://github.com/adamkjonsson/zipline/blob/v0.14/docs/zipline-payload-format.md`.
 It is a module that readers and writers of zpf-files use to access and create
 files.
 
-"The standard" in this file always means **0.12**, and `zpf.SPEC_VERSION` is the
+"The standard" in this file always means **0.14**, and `zpf.SPEC_VERSION` is the
 single source of truth for it in code. The format is in `0.x`, where **every
 minor is a separate format**: a reader must reject a `version_minor` it does not
 implement, and no upgrade path between `0.x` versions is guaranteed. So this is
@@ -18,16 +18,20 @@ path, and files written by earlier versions of this library are unreadable by it
 Two traps worth naming, because both look like bugs and are not:
 
 - A **0.9** file stamps `version_major = 1`, `version_minor = 0` — that version
-  was published as "1.0" and renumbered without rewriting its bytes. 0.12 stamps
-  `0`/`12`. A 0.9 file is correctly rejected at the version gate.
+  was published as "1.0" and renumbered without rewriting its bytes. 0.14 stamps
+  `0`/`14`. A 0.9 file is correctly rejected at the version gate.
 - `decoder_id` does **not** decide a file's kind. The discriminator between the
   two derived kinds is `spans` versus `origin`; a pass-through preserving a
   decoded layer carries inherited `decoder_id` values forward.
 
 The conformance vectors in `tests/vectors/` are vendored verbatim from the spec
 repository and are the acceptance criteria — do not edit them to make a test
-pass. Three are known-defective upstream (see `VECTOR-DEFECTS.md`) and are marked
-as such in the harness.
+pass. All 39 pass. `VECTOR-DEFECTS.md` is a closed record of two defects found
+against the 0.12 vectors, both since fixed upstream.
+
+One vector is judged as a **pair**: `splice` ships two files that are each
+conformant alone, so its violation is only visible to `zpf.check_splice`. The
+harness routes any multi-file vector in a negative tier that way.
 
 The API should be easy to use and feel logical. It must always follow the standard. The support for the standard should be complete. Always warn if a feature requires the code to go beyond the standard.
 

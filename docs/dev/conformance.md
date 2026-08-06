@@ -15,12 +15,29 @@ by the transform that owns them.
 | Semantic (single-pass) | declare-before-use, id uniqueness, session lifetime, per-participant `seq_start` order, file-kind purity | `conformance.py` (`ConformanceChecker`) | `SemanticError` — isolate or reject |
 | Semantic, writer-only | reserved flag bits, `prim:` payload widths and token vocabulary | `conformance.py` (`ConformanceChecker`) | `AdvisoryError` — report, but keep the block |
 | Sequenced order | a SEQUENCED session's stored order really is a causal linearization | `order.py` `verify_sequenced` / `SessionReader.verify()` | needs the merge algorithm |
-| Decode coverage | every input offset decoded or marked Undecoded, never both | `transform.py` `check_coverage` | whole-file property |
+| Coverage, from the file alone | an interior range neither decoded nor marked; a declared `input_extents` its own spans contradict | `conformance.py` (`CoverageLedger`), ruled on at `finish()` | end-of-stream property |
+| Coverage, against the input | every input offset decoded or marked Undecoded, never both; a declared extent the input disagrees with | `transform.py` `check_coverage` | needs a second file |
+| The splice duty | a unit whose spans cross an input's declared break | `transform.py` `check_splice` | needs a second file |
 
-The last two are deliberately **out of the single-pass checker's reach**: one
-needs the k-way merge to decide, the other is a property of the whole file
-against a second file. The `ConformanceChecker` docstring calls this boundary
-out explicitly.
+**Coverage is settled in two places, and the split is the point.** Some of it a
+file can be checked for alone: a hole *between* two covered ranges is visible
+without opening anything, and since `0.14` a Session End's `input_extents`
+makes a *trailing* hole visible too — without a declared length, coverage that
+stops early is indistinguishable from a stream that was that short. That much
+the `ConformanceChecker` gathers as it observes and rules on at `finish()`, so
+`zpf.open` reports it. The rest genuinely needs the input in hand, and stays in
+the transform helpers.
+
+Sequenced order remains **out of the single-pass checker's reach** entirely: it
+needs the k-way merge to decide. The `ConformanceChecker` docstring calls that
+boundary out explicitly.
+
+One guard is load-bearing enough to name here: the interior-hole check runs for
+a **decode stage** only. A pass-through re-emits records rather than citing
+them, so it carries no `spans` and its only covered ranges are the Undecoded
+blocks it inherited — everything before them would read as an unaccounted hole.
+The coverage guarantee is a decode stage's obligation, and applying it to a
+pass-through fails conformant files.
 
 ## The ConformanceChecker
 
@@ -88,11 +105,11 @@ subject, from the reader's side.
 ## Going beyond the standard
 
 Per `CLAUDE.md`, support must stay complete *and* must not silently exceed the
-v0.12 spec: any behavior beyond the standard has to be flagged to the user with
+v0.14 spec: any behavior beyond the standard has to be flagged to the user with
 an explicit callout. As of this version nothing does — the checker's rules are
 the spec's, and the two out-of-band checks (sequenced order, coverage) are
 spec requirements enforced elsewhere, not extensions. A new rule that isn't in
-v0.12 does not belong in the `ConformanceChecker`.
+v0.14 does not belong in the `ConformanceChecker`.
 
 ## Conformance vectors
 
@@ -107,11 +124,19 @@ Two habits keep them honest. The harness asserts what each negative vector is
 refused or diagnosed *for*, not merely that something was raised — which matters
 most at the start of a port, when the version gate is still behind the vectors
 and fires before the check each one is testing. Three `reject` vectors passed for
-that wrong reason during the 0.12 port, and two do again today. And a vector is
-never edited to make a test pass: they are subordinate to the normative text, so
-a vector that looks wrong is a question for the spec repository. Two that were
-defective upstream have since been fixed there; `VECTOR-DEFECTS.md` is the closed
-record.
+that wrong reason during the 0.12 port, and two did again at the start of the
+0.14 one — held out of the harness's known-passing set until the gate moved. And
+a vector is never edited to make a test pass: they are subordinate to the
+normative text, so a vector that looks wrong is a question for the spec
+repository. Two that were defective upstream have since been fixed there;
+`VECTOR-DEFECTS.md` is the closed record.
+
+One vector is judged as a **pair**. `splice` ships two files that are each
+individually conformant — stage 1 declares a break, stage 2 spans across it —
+so the violation belongs to neither on its own and a harness testing files
+individually passes it. The manifest's `files` key marks such a fixture, and
+the harness routes it to {func}`zpf.check_splice` instead of the per-file
+tiers.
 
 ## Where to go next
 

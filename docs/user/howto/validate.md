@@ -1,6 +1,6 @@
 # Validate a file
 
-Validation reads a file and reports where it departs from the v0.12
+Validation reads a file and reports where it departs from the v0.14
 specification. It answers three separable questions: is the file
 *conformant*, is a SEQUENCED session's stored order *actually* a valid
 ordering, and does a decode stage *cover* its input. This is the recipe; the
@@ -67,6 +67,33 @@ with zpf.open("merged.zpf") as reader:
             session.verify()   # raises SemanticError on a bad order
 ```
 
+### Without the input file
+
+{func}`zpf.check_extents` checks what a derived file claims *about itself* —
+an interior hole, and a declared `input_extents` its own spans contradict —
+without opening anything else:
+
+```python
+for finding in zpf.check_extents("decoded.zpf"):
+    print(finding.category, finding.message)
+```
+
+`zpf.open` already reports these as `nonconformant` diagnostics; this returns
+the whole list rather than the first, and needs no input file. It is the only
+coverage check available to a consumer handed one file.
+
+### Against a pair of files
+
+{func}`zpf.check_splice` takes two stages of a chain. The violation it finds
+belongs to **neither file alone** — stage 1 declares a break, stage 2 emits a
+unit spanning across it — so no single-file check can see it:
+
+```python
+zpf.check_splice("http.zpf", "tls-records.zpf")
+```
+
+### Against the input
+
 Check decode coverage with {func}`zpf.check_coverage`, which returns the
 violations (empty when the guarantee holds):
 
@@ -88,6 +115,11 @@ produces most:
 | `coverage-gap` | Input bytes neither decoded nor marked Undecoded. | Add a decoded span or an [Undecoded](decode_stage.md) marker. |
 | `coverage-overlap` | Input bytes both decoded and marked Undecoded. | Drop the redundant Undecoded marker. |
 | `coverage-excess` | A cited range runs past the input stream. | Correct the span's `off_end`. |
+| `extent-exceeds-coverage` | A declared `input_extents` reaches past what the file accounts for. | Cover the tail, or correct the declared extent. |
+| `extent-below-coverage` | A declared extent the file's own spans overshoot. | Correct the extent; the citations say the stream was longer. |
+| `extents-disagree` | Two sessions declare different lengths for one input stream. | An input stream has one length — fix the producer. |
+| `extent-mismatch` | A declared extent the opened input disagrees with. | Re-measure against the real input. |
+| `discontinuity-splice` | A unit spans across a break its input declared. | Split the unit and emit your own Discontinuity between the halves. |
 
 ## Where to go next
 
