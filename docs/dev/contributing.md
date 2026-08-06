@@ -63,7 +63,7 @@ The rules in `CLAUDE.md` and `ruff.toml` are enforced, not aspirational:
   genuine exceptions (standard-library names, which would otherwise need a
   network-dependent intersphinx fetch); don't add to it to silence a real
   break.
-- Never document behavior beyond the v0.12 spec without an explicit callout
+- Never document behavior beyond the v0.14 spec without an explicit callout
   saying so (see [Conformance strategy](conformance.md#going-beyond-the-standard)).
 - Tutorial and how-to code examples are checked into `docs/user/examples/` and
   run by `test_tutorial_examples.py` — extend that test when you add one, so

@@ -4,7 +4,7 @@ This page is the mental model behind the Zipline Payload Format and this
 library. The [tutorial](tutorial.md) walks you through the API; this page
 explains *why* the format looks the way it does, and defines the vocabulary
 the rest of the documentation uses. Deep links go to the
-[v0.12 specification](https://github.com/adamkjonsson/zipline/blob/v0.12/docs/zipline-payload-format.md),
+[v0.14 specification](https://github.com/adamkjonsson/zipline/blob/v0.14/docs/zipline-payload-format.md),
 which is normative for this library.
 
 ## What a `.zpf` file holds
@@ -240,23 +240,45 @@ Each input `.zpf` is declared as a source of kind `zpf-input`, with a
 content `digest` — the dependency edge that lets a consumer confirm the
 derived file still matches its input.
 
-A decoded record cites its input bytes as a **span set**: references of the
-form `{source_id, session_id, pid, off_start, off_end}` into the input's
-participant streams. Offsets are **logical stream offsets** — 0-based
-positions in the reassembled application stream, counting missing bytes
-(gaps) as if present — not record ids and not TCP sequence numbers. Byte 0
-is the stream's first application byte (anchored at `isn + 1` when the TCP
-handshake was seen). A decoder consumes those streams through
+A decoded record cites where its bytes came from as a **span set**:
+references of the form `{source_id, session_id, pid, off_start, off_end}`
+into the input's participant streams. Offsets are **logical stream
+offsets** — 0-based positions in the reassembled application stream,
+counting missing bytes (gaps) as if present — not record ids and not TCP
+sequence numbers. Byte 0 is the stream's first application byte (anchored
+at `isn + 1` when the TCP handshake was seen). A decoder consumes those
+streams through
 {meth}`SessionReader.reassemble <zpf.reader.SessionReader.reassemble>`,
 which works in these offsets directly and can {meth}`cite
 <zpf.reassembly.StreamView.cite>` a range without the arithmetic.
 
+**What a span asserts is correspondence, not identity.** It names the input
+region the record's bytes were *computed from*; it does not promise that
+region holds those bytes, nor that it is the same length. A record of 8
+bytes may span 16, or 16 000. That is what makes transforming decoders —
+gzip, HPACK, any decryption — expressible at all, and the stricter reading
+is unimplementable: deflate is stateful, so a byte mid-stream depends on the
+whole preceding window. The workable rule is narrower than "fed": a region
+is cited by the unit **whose emission it completed**, so each region is
+named once rather than by every later unit it influenced.
+
 What a decoder could *not* parse it must say out loud: an **Undecoded**
-block names an input range and a reason (`undecodable`, `gap`,
+block names an input range and a reason (`undecodable`, `skipped`, `gap`,
 `truncated`) instead of silently dropping it. Together this yields the
-**coverage guarantee**: every offset of every input stream is either covered
-by some decoded record's spans or marked Undecoded — checkable with
-{func}`zpf.check_coverage <zpf.transform.check_coverage>`.
+**coverage guarantee**: every offset of every input stream is covered **at
+least once** by some decoded record's spans or marked Undecoded — never
+both, and never neither. Two records may legitimately cite the same bytes:
+one input record's framing can feed an inner unit in each of two output
+sessions. Checkable with {func}`zpf.check_coverage
+<zpf.transform.check_coverage>` when the input is at hand, and with
+{func}`zpf.check_extents <zpf.transform.check_extents>` from the derived
+file alone.
+
+A decoded stream may also declare a **Discontinuity**: a break in the file's
+*own* output, saying the records either side do not join. It is the mirror
+of an Undecoded block — that one is about the input, this one about what
+was produced — and it discharges no coverage obligation. See
+[provenance](guides/provenance.md#each-layer-has-its-own-offset-space).
 
 Pass-through files carry no spans; instead every participant maps back to
 its input stream with a single **origin** reference, and offset preservation

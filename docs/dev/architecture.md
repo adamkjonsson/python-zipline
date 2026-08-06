@@ -29,10 +29,10 @@ Layer 1 │ blocks                blocks.py    _frame.py │
 | `jsonl.py` | 2 | The JSON-Lines projection: `JsonlReader`/`JsonlWriter` and the lossless `binary_to_jsonl`/`jsonl_to_binary` converters, using the same dataclasses. |
 | `reader.py` | 3 | The session-first reader: `open`, `FileReader`, `SessionReader`; one indexing pass, then lazy per-record access. |
 | `writer.py` | 3 | The ergonomic, always-conformant writer: `create` and its handle objects (`SessionWriter`, `ParticipantHandle`, …). |
-| `transform.py` | 4 | File→file transforms: `merge_files` (two directions → one sequenced pass-through) and `check_coverage` (the decode-stage coverage validator). |
+| `transform.py` | 4 | File→file transforms: `merge_files` (two directions → one sequenced pass-through), `rewrite_decoded` (filter/reorder), and the validators — `check_coverage` against the input, `check_extents` from the derived file alone, `check_splice` across a pair of stages. |
 | `cli.py` | 4 | The `zpf` console script: `info`, `cat`, `convert`, `validate`, `merge`. |
 | `order.py` | support | RFC 1982 serial arithmetic and the streaming causal merge, used by the reader's `timeline()`, the writer's order check, and the merge transform. |
-| `conformance.py` | support | `ConformanceChecker` — the semantic tier as a single-pass observer, used by the writer (always) and available standalone. |
+| `conformance.py` | support | `ConformanceChecker` — the semantic tier as a single-pass observer, used by the writer (always) and available standalone; plus `CoverageLedger`, which gathers what a file says about each input stream and rules on it at end-of-stream. |
 
 Everything is re-exported at the package top level: consumers write
 `zpf.open`, `zpf.Record`, `zpf.merge_files`, and never import a submodule.
