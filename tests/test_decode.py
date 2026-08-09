@@ -443,8 +443,16 @@ def test_a_decode_stage_record_must_cite_its_input():
     # spans are what identify a record as built by *this* stage, and what
     # the coverage guarantee is checked against. An uncited record claims to
     # have been re-emitted unchanged, which a decode stage cannot mean.
+    #
+    # The checker no longer catches this and should not: since 0.16 the
+    # created-versus-preserved discriminator binds per participant, and this
+    # participant's first record carries spans, so the stream is well formed.
+    # Only the stage API knows every record it emits was created.
     sink = io.BytesIO()
-    with pytest.raises(zpf.SemanticError, match="exactly one kind"), stage_for(sink) as dec:
+    with (
+        pytest.raises(zpf.SemanticError, match="must cite the input range"),
+        stage_for(sink) as dec,
+    ):
         stream = dec.streams()[0]
         dec.record(stream, b"a", ts=1, cites=(0, 4))
         dec.record(stream, b"b", ts=2)  # no citation at all

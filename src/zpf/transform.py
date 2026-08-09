@@ -37,7 +37,7 @@ from typing import IO, TYPE_CHECKING
 
 from zpf._intervals import complement, intersections
 from zpf.blocks import Discontinuity, Origin, OutputLayer, Record, SourceKind, Span
-from zpf.conformance import ConformanceChecker, CoverageLedger
+from zpf.conformance import CoverageLedger
 from zpf.errors import Diagnostic, ZpfError
 from zpf.order import causal_merge
 from zpf.reader import FileReader, SessionReader
@@ -371,18 +371,15 @@ def check_extents(
 
     """
     ledger = CoverageLedger()
-    checker = ConformanceChecker()
     with FileReader(derived) as reader:
         for block in reader.blocks():
             ledger.observe(block)
-            checker.observe(block)
-    # The ledger still needs the file-wide kind to know whether coverage
-    # binds at all. Phase 4 replaces that with per-participant
-    # classification and this argument goes; running our own checker rather
-    # than reaching into the reader's keeps the coupling visible until then.
+    # No file-wide kind to pass any more: the ledger decides per input
+    # stream whether this file is answerable for it, by whether any record's
+    # spans cited it.
     return [
         Diagnostic(offset, category, message)
-        for offset, category, message in ledger.findings(checker.file_kind)
+        for offset, category, message in ledger.findings()
     ]
 
 

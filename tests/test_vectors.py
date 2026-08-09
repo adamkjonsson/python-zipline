@@ -47,18 +47,17 @@ VECTORS = Path(__file__).parent / "vectors"
 #: Vector cases that MUST pass. Grow it as phases land; never remove a name,
 #: because that is the regression guard.
 #:
-#: Phase 3: the two capture-sourced shapes 0.15 legalised. ``proxy-decoded``
-#: is a decoded stream with no predecessor file; ``reassembler-declared`` is a
-#: head-of-pipeline reassembler naming itself with ``output_layer =
-#: transport``. Both were being diagnosed by one retired rule — "a decoded
-#: record must reference a zpf-input source" — which inferred the layer from
-#: ``decoder_id`` and the provenance from the layer.
+#: Phase 4: per-participant classification, replacing file purity.
+#: ``mixed-derivation`` is the shape the old file-wide rule could not express
+#: — one file decoding one session while passing another through. The three
+#: ``isolate`` vectors are rules that had nowhere to live until the unit was
+#: the stream: a participant resolving to two layers, a ``zpf``-sourced
+#: participant bound to no input, and a decoder declaring a layer this
+#: version does not define.
 #:
-#: Six still out, and each names its phase: ``mixed-derivation`` against
-#: file-purity and the four ``isolate`` vectors for rules not yet written
-#: (Phases 4 and 6), and ``undecoded-in-capture`` with
-#: ``isolate-hole-against-capture`` against the bar on an Undecoded block
-#: naming a ``capture`` Source (Phase 5).
+#: Two still out, both Phase 5, and both the same rule: an Undecoded block
+#: naming a ``capture`` Source. ``undecoded-in-capture`` is the conformant
+#: case and ``isolate-hole-against-capture`` the barred one.
 #:
 #: ``splice`` is one name for two files, because its violation belongs to
 #: neither of them — 52 names for 59 files, which is the honest arithmetic.
@@ -90,10 +89,14 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "isolate-duplicate-id",
         "isolate-extent-exceeds-coverage",
         "isolate-extents-disagree",
+        "isolate-mixed-layer-participant",
         "isolate-sequenced-no-basis",
+        "isolate-unbound-zpf-stream",
         "isolate-undeclared-session",
+        "isolate-unknown-output-layer",
         "isolate-unknown-source-kind",
         "merge-timestamp-tie",
+        "mixed-derivation",
         "partially-hinted-sequenced",
         "passthrough-discontinuity",
         "passthrough-transport",
@@ -171,7 +174,10 @@ _ISOLATE_REASONS: dict[str, str] = {
     "isolate-duplicate-id": "twice",
     "isolate-extent-exceeds-coverage": "declared extent",
     "isolate-extents-disagree": "disagree",
+    "isolate-mixed-layer-participant": "resolves to two layers",
     "isolate-sequenced-no-basis": "sequenced_basis",
+    "isolate-unbound-zpf-stream": "neither origin nor records with spans",
+    "isolate-unknown-output-layer": "does not define",
     "isolate-undeclared-session": "undeclared session",
     "isolate-unknown-source-kind": "unknown kind",
 }
