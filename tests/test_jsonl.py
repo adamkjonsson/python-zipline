@@ -77,8 +77,8 @@ DECODED_EXAMPLE = "\n".join(
         '{"type":"file","format":"zipline-payload/0.16","tick_hz":1000000,'
         '"produced_by":"zpf-decode 0.4","produced_at":1719500000}',
         '{"type":"source","source_id":1,"kind":"zpf-input","uri":"raw.zpf","digest":"sha256:9f2c…"}',
-        '{"type":"decoder","decoder_id":1,"name":"http/1.1","version":"0.4",'
-        '"params_digest":"sha256:00ab…"}',
+        '{"type":"decoder","decoder_id":1,"output_layer":"decoded","name":"http/1.1",'
+        '"version":"0.4","params_digest":"sha256:00ab…"}',
         '{"type":"session","session_id":7,"proto":"http"}',
         '{"type":"participant","session_id":7,"pid":0,"endpoint":["10.0.0.1:51000"]}',
         '{"type":"participant","session_id":7,"pid":1,"endpoint":["93.184.216.34:80"]}',
@@ -404,6 +404,44 @@ def test_numeric_source_kind_round_trips():
     obj = block_to_obj(source)
     assert obj["kind"] == 9
     assert loads_block(dumps_block(source)) == source
+
+
+@pytest.mark.parametrize(
+    ("layer", "label"),
+    [(zpf.OutputLayer.DECODED, "decoded"), (zpf.OutputLayer.TRANSPORT, "transport")],
+)
+def test_output_layer_renders_as_its_label_both_ways(layer: zpf.OutputLayer, label: str):
+    decoder = zpf.Decoder(decoder_id=1, output_layer=layer, name="x")
+    assert block_to_obj(decoder)["output_layer"] == label
+    assert loads_block(dumps_block(decoder)) == decoder
+
+
+def test_output_layer_is_always_written():
+    """A body field has no absent case, so the line always carries it.
+
+    That is the difference from an option, and it is why a reader may take
+    the key as given rather than defining what its absence would mean.
+    """
+    assert block_to_obj(zpf.Decoder(decoder_id=1))["output_layer"] == "decoded"
+
+
+def test_a_decoder_line_without_an_output_layer_is_rejected():
+    line = '{"type":"decoder","decoder_id":1,"name":"http/1.1"}'
+    with pytest.raises(ValueError, match="output_layer"):
+        loads_block(line)
+
+
+def test_numeric_output_layer_round_trips():
+    """Load-bearing, so the raw number survives and is not resolved.
+
+    Rendering it as a number rather than dropping the key is what keeps the
+    escape honest: a consumer sees a value it cannot act on, which is the
+    true statement, instead of a plausible label or a silent default.
+    """
+    decoder = zpf.Decoder(decoder_id=1, output_layer=9)
+    obj = block_to_obj(decoder)
+    assert obj["output_layer"] == 9
+    assert loads_block(dumps_block(decoder)) == decoder
 
 
 def test_unknown_binary_block_escapes_as_a_hex_type():

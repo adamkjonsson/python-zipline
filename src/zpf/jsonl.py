@@ -50,6 +50,7 @@ from zpf.blocks import (
     InputExtent,
     NameResolution,
     Origin,
+    OutputLayer,
     Participant,
     Record,
     RecordFlags,
@@ -96,6 +97,9 @@ _LABEL_TO_TCP_ROLE = {label: role for role, label in _TCP_ROLE_LABELS.items()}
 
 _KIND_LABELS = {SourceKind.CAPTURE: "capture", SourceKind.ZPF_INPUT: "zpf-input"}
 _LABEL_TO_KIND = {label: kind for kind, label in _KIND_LABELS.items()}
+
+_LAYER_LABELS = {OutputLayer.DECODED: "decoded", OutputLayer.TRANSPORT: "transport"}
+_LABEL_TO_LAYER = {label: layer for layer, label in _LAYER_LABELS.items()}
 
 
 def _ignore_issue(message: str) -> None:
@@ -379,7 +383,15 @@ def _enc_source(block: Source, on_issue: Callable[[str], None]) -> dict[str, Any
 
 def _enc_decoder(block: Decoder, on_issue: Callable[[str], None]) -> dict[str, Any]:
     del on_issue
-    obj: dict[str, Any] = {"type": "decoder", "decoder_id": block.decoder_id}
+    # Always present: output_layer is a body field, so there is no absent
+    # case to render. An unrecognized value goes out as its raw number,
+    # which preserves the byte and asserts nothing about what it means.
+    layer = _LAYER_LABELS.get(block.output_layer, int(block.output_layer))
+    obj: dict[str, Any] = {
+        "type": "decoder",
+        "decoder_id": block.decoder_id,
+        "output_layer": layer,
+    }
     _put(obj, "name", block.name)
     _put(obj, "version", block.version)
     _put(obj, "params_digest", block.params_digest)
@@ -634,8 +646,17 @@ def _dec_source(reader: _ObjReader) -> Source:
 
 
 def _dec_decoder(reader: _ObjReader) -> Decoder:
+    raw_layer = reader.require("output_layer")
+    if isinstance(raw_layer, str):
+        if raw_layer not in _LABEL_TO_LAYER:
+            msg = f"unknown decoder output_layer {raw_layer!r}"
+            raise ValueError(msg)
+        layer: OutputLayer | int = _LABEL_TO_LAYER[raw_layer]
+    else:
+        layer = _dec_int(raw_layer, "output_layer")
     return Decoder(
         decoder_id=reader.require_int("decoder_id"),
+        output_layer=layer,
         name=reader.take_str("name"),
         version=reader.take_str("version"),
         params_digest=reader.take_str("params_digest"),

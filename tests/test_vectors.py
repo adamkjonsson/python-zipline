@@ -23,9 +23,10 @@ vectors then shipped — only of what it passes against *these* files.
 **Three tests here are not ratchet-gated**, because they are parametrized over
 every readable case rather than over a tier: the escape-contract test, the
 JSONL → binary direction, and the canonical re-encode. Phase 0 held them behind
-a version-gate mark; Phase 1 moved the gate and retired it. What is left is
-:data:`_PENDING_JSONL_OUTPUT_LAYER`, five named vectors in the JSONL → binary
-direction alone.
+a version-gate mark, Phase 1 moved the gate and retired it, and Phase 2 emptied
+what remained. All three now run unmarked against every vector except the
+:data:`DEFECTIVE` ones — so a regression in either face shows up as a failure
+rather than as a silently missing XPASS.
 """
 
 from __future__ import annotations
@@ -46,18 +47,19 @@ VECTORS = Path(__file__).parent / "vectors"
 #: Vector cases that MUST pass. Grow it as phases land; never remove a name,
 #: because that is the regression guard.
 #:
-#: Phase 1: everything the version gate alone unblocks — every vector whose
-#: file carries **no Decoder Descriptor**, plus the two framing rejects that
-#: were previously refused for their minor rather than for the defect each
-#: exists to test.
+#: Phase 2: every vector whose **projection** was the only thing standing in
+#: the way — the JSONL face now reads and writes ``output_layer``, so all 17
+#: remaining Decoder-carrying accept cases turned green at once, ``tunnel/``
+#: included for the two members defect 4 does not touch.
 #:
-#: The 23 accept cases still out are, with two exceptions, exactly the ones
-#: holding a Decoder: their ``decoder`` line wants ``output_layer`` and the
-#: JSONL face does not write it yet, so the projection compare in
-#: :func:`test_accept` fails while the file itself reads cleanly. Phase 2.
-#: The exceptions are ``undecoded-in-capture``, which needs Phase 5's rule for
-#: an Undecoded block against a ``capture`` Source, and ``tunnel/outer``, which
-#: is :data:`DEFECTIVE`.
+#: The eight still out are all **semantics**, and each names its phase. Six are
+#: the ``isolate`` vectors for rules not yet written (Phases 4–6). The other
+#: two pairs are accept cases whose files read and project correctly and are
+#: then *diagnosed* by a rule 0.15 retired: ``mixed-derivation`` against
+#: file-purity, ``proxy-decoded`` and ``reassembler-declared`` against
+#: "a decoded record must reference a zpf-input source" — which is the layer
+#: rule being computed from ``decoder_id`` alone (Phases 3–4) — and
+#: ``undecoded-in-capture`` against the bar on Undecoded there (Phase 5).
 #:
 #: ``splice`` is one name for two files, because its violation belongs to
 #: neither of them — 52 names for 59 files, which is the honest arithmetic.
@@ -65,15 +67,24 @@ VECTORS = Path(__file__).parent / "vectors"
 #: the per-file tiers skip it.
 KNOWN_PASSING: frozenset[str] = frozenset(
     {
+        "advisory-transport-content-type",
+        "annotator-decoded",
+        "broken-chain",
+        "chain/annotated",
+        "chain/decoded",
         "chain/raw",
         "custom-block",
+        "decoded-basic",
         "descriptive-metadata",
+        "discontinuity-known-width",
+        "discontinuity-unknown-width",
         "escape-reserved-flag-bit",
         "escape-unknown-block",
         "escape-unknown-enum",
         "escape-unknown-option",
         "external-session-id",
         "file-clock-metadata",
+        "filtered-decoded",
         "hintless-merge-backwards-ts",
         "isolate-coverage-gap",
         "isolate-discontinuity-in-raw",
@@ -85,6 +96,7 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "isolate-unknown-source-kind",
         "merge-timestamp-tie",
         "partially-hinted-sequenced",
+        "passthrough-discontinuity",
         "passthrough-transport",
         "raw-minimal",
         "reject-bad-magic",
@@ -92,8 +104,15 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "reject-payload-len-overrun",
         "reject-unknown-major",
         "reject-unknown-minor",
+        "reordered-decoded",
         "sequenced-basis",
+        "session-fan-out",
+        "sessionization-stage",
         "splice",
+        "tunnel/http",
+        "tunnel/packets",
+        "undecoded-reason-class",
+        "undecoded-skipped",
     }
 )
 
@@ -285,33 +304,13 @@ def _readable_params() -> list[Any]:
     return [pytest.param(case, id=case.name) for case in CASES if case.tier != "reject"]
 
 
-#: The vectors whose JSONL → binary direction waits on Phase 2, and the whole
-#: of the reason: each declares a decoder emitting **transport**, so its
-#: ``decoder`` line carries ``"output_layer":"transport"`` and the JSONL face
-#: does not read it yet.
-#:
-#: That this list is five names rather than forty is the ``output_layer``
-#: byte-compatibility property showing up as a test result. Every other
-#: projected vector round-trips through a face that knows nothing about the
-#: field, because ``decoded`` is ``0`` — the value a pre-0.15 writer already
-#: wrote, and the one :class:`zpf.OutputLayer` defaults to. Phase 2 empties
-#: this set; nothing else in the harness is behind it.
-_PENDING_JSONL_OUTPUT_LAYER: frozenset[str] = frozenset(
-    {
-        "advisory-transport-content-type",
-        "reassembler-declared",
-        "sessionization-stage",
-        "tunnel/inner",
-        "tunnel/outer",
-    }
-)
-
-
 def _projected_params() -> list[Any]:
     """Build params for every vector shipping an expected projection.
 
-    Marked only where :data:`_PENDING_JSONL_OUTPUT_LAYER` says the face
-    cannot rebuild the binary yet.
+    Phase 2 emptied the port's own gate here: the JSONL face reads and
+    writes ``output_layer``, so every projected vector rebuilds its binary.
+    What is left is :data:`DEFECTIVE`, which is upstream's to fix and not a
+    phase to wait for.
 
     Returns:
         One param per case with a ``.jsonl`` beside it, in name order.
@@ -322,13 +321,8 @@ def _projected_params() -> list[Any]:
         if case.expected_jsonl is None:
             continue
         marks: tuple[Any, ...] = ()
-        if case.name in _PENDING_JSONL_OUTPUT_LAYER:
-            marks = (
-                pytest.mark.xfail(
-                    reason="transport output_layer on the decoder line — unblocks at Phase 2",
-                    strict=False,
-                ),
-            )
+        if case.name in DEFECTIVE:
+            marks = (pytest.mark.xfail(reason=DEFECTIVE[case.name], strict=False),)
         params.append(pytest.param(case, id=case.name, marks=marks))
     return params
 
