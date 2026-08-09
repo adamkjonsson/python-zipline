@@ -59,7 +59,7 @@ def _run(script: str, cwd: Path) -> subprocess.CompletedProcess[str]:
         (
             ("05_rest_raw_input.py", "06_write_decoder.py"),
             (
-                "file_kind: decode-stage",
+                "stream 0:  zpf_input decoded",
                 "dec:http-request",
                 "dec:http-response",
                 "check_coverage: []",  # every input byte accounted for

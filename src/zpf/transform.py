@@ -36,12 +36,12 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING
 
 from zpf._intervals import complement, intersections
-from zpf.blocks import Discontinuity, Origin, Record, SourceKind, Span
-from zpf.conformance import CoverageLedger
+from zpf.blocks import Discontinuity, Origin, OutputLayer, Record, SourceKind, Span
+from zpf.conformance import ConformanceChecker, CoverageLedger
 from zpf.errors import Diagnostic, ZpfError
 from zpf.order import causal_merge
 from zpf.reader import FileReader, SessionReader
-from zpf.reassembly import stream_extent
+from zpf.reassembly import layer_name, stream_extent
 from zpf.writer import DecoderHandle, DerivedInput, FileWriter, ParticipantHandle, SessionWriter
 
 if TYPE_CHECKING:
@@ -156,11 +156,29 @@ def merge_files(
 
 
 def _require_mergeable(reader_a: FileReader, reader_b: FileReader) -> None:
-    """Check both inputs have the canonical one-direction shape."""
+    """Check both inputs have the canonical one-direction shape.
+
+    The bar is on the **layer**, not on how the file was produced. What the
+    merge needs is that its inputs' offsets are hole-inclusive true
+    positions, so re-emitting their records preserves the space — and that
+    is what ``transport`` means. It used to test ``file_kind == "raw"``,
+    which was a proxy for the same thing and stopped being one when 0.15
+    made the axes independent: a sessionization stage's output is
+    ``zpf``-sourced and transport-shaped, and mergeable for exactly the
+    reason a capture's reassembled stream is.
+    """
     for name, reader in (("side_a", reader_a), ("side_b", reader_b)):
-        if reader.file_kind not in (None, "raw"):
-            msg = f"{name} is a {reader.file_kind} file; the merge takes raw captures"
-            raise ZpfError(msg)
+        for session in reader.sessions():
+            for participant in session.participants:
+                layer = session.layer(participant.participant_id)
+                if layer is not OutputLayer.TRANSPORT:
+                    msg = (
+                        f"{name} session {session.session_id} participant "
+                        f"{participant.participant_id} is at the "
+                        f"{layer_name(layer)} layer; the merge preserves its inputs' "
+                        f"offsets, which only a transport stream's survive"
+                    )
+                    raise ZpfError(msg)
         sessions = reader.sessions()
         if len(sessions) != 1:
             msg = f"{name} holds {len(sessions)} sessions; the merge takes exactly one"
@@ -353,13 +371,18 @@ def check_extents(
 
     """
     ledger = CoverageLedger()
+    checker = ConformanceChecker()
     with FileReader(derived) as reader:
         for block in reader.blocks():
             ledger.observe(block)
-        kind = reader.file_kind
+            checker.observe(block)
+    # The ledger still needs the file-wide kind to know whether coverage
+    # binds at all. Phase 4 replaces that with per-participant
+    # classification and this argument goes; running our own checker rather
+    # than reaching into the reader's keeps the coupling visible until then.
     return [
         Diagnostic(offset, category, message)
-        for offset, category, message in ledger.findings(kind)
+        for offset, category, message in ledger.findings(checker.file_kind)
     ]
 
 
@@ -623,7 +646,7 @@ def _stream_extents(raw: FileReader) -> dict[tuple[int, int], int]:
         for participant in session.participants:
             pid = participant.participant_id
             extents[(session.session_id, pid)] = stream_extent(
-                participant, list(session.stream_blocks(pid))
+                participant, list(session.stream_blocks(pid)), session.layer(pid)
             )
     return extents
 

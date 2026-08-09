@@ -33,7 +33,7 @@ def open_text(text: str, **kwargs: object) -> zpf.FileReader:
 def test_open_the_golden_file():
     with open_bytes(GOLDEN) as f:
         assert f.face == "binary"
-        assert f.file_kind == "raw"
+        assert f.stream_kind(7, 0) == (zpf.SourceKind.CAPTURE, zpf.OutputLayer.TRANSPORT)
         assert not f.complete  # the worked example has no End block
         assert not f.truncated
         assert f.diagnostics == []
@@ -62,7 +62,7 @@ def test_open_the_golden_file_from_a_path(tmp_path: Path):
 def test_open_the_merged_example_jsonl():
     with open_text(MERGED_EXAMPLE) as f:
         assert f.face == "jsonl"
-        assert f.file_kind == "pass-through"
+        assert f.stream_kind(1, 0) == (zpf.SourceKind.ZPF_INPUT, zpf.OutputLayer.TRANSPORT)
         session = f.session(1)
         assert session.sequenced
         assert session.key == "10.0.0.1:51000 <-> 93.184.216.34:80"
@@ -74,7 +74,7 @@ def test_open_the_merged_example_jsonl():
 
 def test_open_the_decoded_example_jsonl():
     with open_text(DECODED_EXAMPLE) as f:
-        assert f.file_kind == "decode-stage"
+        assert f.stream_kind(7, 0) == (zpf.SourceKind.ZPF_INPUT, zpf.OutputLayer.DECODED)
         assert f.decoders[1].name == "http/1.1"
         (undecoded,) = f.undecoded
         assert (undecoded.off_start, undecoded.off_end) == (100, 139)
@@ -328,7 +328,7 @@ def test_reserved_flag_bits_cost_the_reader_nothing():
     # it semantically, keeps it byte-faithfully, and says nothing about it.
     with open_bytes(reserved_flag_bits_file()) as f:
         assert f.header is not None
-        assert f.file_kind == "raw"
+        assert f.stream_kind(0, 0) == (zpf.SourceKind.CAPTURE, zpf.OutputLayer.TRANSPORT)
         (session,) = f.sessions()
         assert session.proto == "tcp"
         assert len(session.participants) == 1
@@ -559,7 +559,7 @@ def test_ranges_place_a_decoded_record_positionally():
     # payloads. ranges() is the only way to recover it.
     with zpf.open(VECTORS / "chain/decoded.zpf") as f:
         session = f.session(7)
-        assert session.is_decoded_stream(0)
+        assert session.layer(0) is zpf.OutputLayer.DECODED
         for pid in (0, 1):
             records = list(session.stream(pid))
             ranges = session.ranges(pid)
@@ -642,4 +642,52 @@ def test_a_break_is_indexed_but_kept_out_of_the_record_stream():
 def test_a_raw_stream_is_not_a_decoded_one():
     with zpf.open(VECTORS / "chain/raw.zpf") as f:
         session = f.session(7)
-        assert not session.is_decoded_stream(0)
+        assert session.layer(0) is zpf.OutputLayer.TRANSPORT
+
+
+def test_stream_kind_reports_both_axes_independently():
+    """The table the two-axis model exists to make expressible.
+
+    ``proxy-decoded`` is the cell that had no honest encoding before 0.15: a
+    decoded stream whose records reference a *capture* Source, because a
+    TLS-terminating proxy has no predecessor `.zpf` and never will.
+    ``reassembler-declared`` is capture-sourced and transport, with a
+    Decoder — the shape a reader that infers the layer from `decoder_id`
+    gets wrong.
+    """
+    cases = {
+        "raw-minimal": (zpf.SourceKind.CAPTURE, zpf.OutputLayer.TRANSPORT),
+        "proxy-decoded": (zpf.SourceKind.CAPTURE, zpf.OutputLayer.DECODED),
+        "reassembler-declared": (zpf.SourceKind.CAPTURE, zpf.OutputLayer.TRANSPORT),
+        "sessionization-stage": (zpf.SourceKind.ZPF_INPUT, zpf.OutputLayer.TRANSPORT),
+        "decoded-basic": (zpf.SourceKind.ZPF_INPUT, zpf.OutputLayer.DECODED),
+    }
+    for name, expected in cases.items():
+        with zpf.open(VECTORS / name / f"{name}.zpf") as f:
+            session = f.sessions()[0]
+            pid = session.participants[0].participant_id
+            assert f.stream_kind(session.session_id, pid) == expected, name
+
+
+def test_one_file_may_hold_streams_at_different_positions():
+    """``tunnel/`` walks the chain, and no two hops agree on both axes."""
+    cases = {
+        "outer": (zpf.SourceKind.CAPTURE, zpf.OutputLayer.TRANSPORT),
+        "packets": (zpf.SourceKind.ZPF_INPUT, zpf.OutputLayer.DECODED),
+        "inner": (zpf.SourceKind.ZPF_INPUT, zpf.OutputLayer.TRANSPORT),
+        "http": (zpf.SourceKind.ZPF_INPUT, zpf.OutputLayer.DECODED),
+    }
+    for member, expected in cases.items():
+        with zpf.open(VECTORS / "tunnel" / f"{member}.zpf") as f:
+            session = f.sessions()[0]
+            pid = session.participants[0].participant_id
+            assert f.stream_kind(session.session_id, pid) == expected, member
+
+
+def test_the_layer_is_resolved_once_per_participant():
+    """The cache the per-participant consistency rule licenses."""
+    with zpf.open(VECTORS / "chain/decoded.zpf") as f:
+        session = f.session(7)
+        first = session.layer(0)
+        assert session.layer(0) is first
+        assert f._sessions[7].layers[0] is first

@@ -77,9 +77,9 @@ from zpf.reassembly import (
     Gap,
     Segment,
     StreamView,
-    is_decoded_stream,
     record_ranges,
     stream_extent,
+    stream_layer,
 )
 from zpf.transform import (
     InputRef,
@@ -174,7 +174,6 @@ __all__ = [
     "decode_stage",
     "detect_face",
     "dumps_block",
-    "is_decoded_stream",
     "jsonl_to_binary",
     "loads_block",
     "merge_files",
@@ -188,6 +187,7 @@ __all__ = [
     "seq_leq",
     "seq_lt",
     "stream_extent",
+    "stream_layer",
     "unix_seconds",
     "verify_sequenced",
 ]

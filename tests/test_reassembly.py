@@ -352,9 +352,12 @@ def test_a_decoded_stream_is_positional_never_hole_inclusive():
         zpf.Record(session_id=7, sender_pid=0, source_id=1, timestamp=1,
                    payload=b"RESPONSE", decoder_id=1),
     ]
-    assert zpf.reassembly.is_decoded_stream(records)
-    assert zpf.reassembly.record_ranges(participant, records) == ((0, 3), (3, 11))
-    assert zpf.reassembly.stream_extent(participant, records) == 11
+    decoders = {1: zpf.Decoder(decoder_id=1, name="http/1.1")}
+    assert zpf.reassembly.stream_layer(records, decoders) is zpf.OutputLayer.DECODED
+    assert (
+        zpf.reassembly.record_ranges(participant, records, zpf.OutputLayer.DECODED)
+    ) == ((0, 3), (3, 11))
+    assert zpf.reassembly.stream_extent(participant, records, zpf.OutputLayer.DECODED) == 11
 
 
 def test_the_layer_decides_the_space_not_the_presence_of_hints():
@@ -363,9 +366,13 @@ def test_the_layer_decides_the_space_not_the_presence_of_hints():
     participant = zpf.Participant(session_id=7, participant_id=0, isn=1000)
     hinted = zpf.Record(session_id=7, sender_pid=0, source_id=1, timestamp=0,
                         payload=b"abcd", seq_start=1101)
-    assert zpf.reassembly.record_ranges(participant, [hinted]) == ((100, 104),)
+    assert (
+        zpf.reassembly.record_ranges(participant, [hinted], zpf.OutputLayer.TRANSPORT)
+    ) == ((100, 104),)
     decoded = dataclasses.replace(hinted, decoder_id=1)
-    assert zpf.reassembly.record_ranges(participant, [decoded]) == ((0, 4),)
+    assert (
+        zpf.reassembly.record_ranges(participant, [decoded], zpf.OutputLayer.DECODED)
+    ) == ((0, 4),)
 
 
 def test_a_transport_stream_counts_its_holes():
@@ -378,8 +385,10 @@ def test_a_transport_stream_counts_its_holes():
         zpf.Record(session_id=7, sender_pid=0, source_id=1, timestamp=1,
                    payload=b"xyz", seq_start=1050),
     ]
-    assert zpf.reassembly.record_ranges(participant, records) == ((0, 10), (49, 52))
-    assert zpf.reassembly.stream_extent(participant, records) == 52
+    assert (
+        zpf.reassembly.record_ranges(participant, records, zpf.OutputLayer.TRANSPORT)
+    ) == ((0, 10), (49, 52))
+    assert zpf.reassembly.stream_extent(participant, records, zpf.OutputLayer.TRANSPORT) == 52
 
 
 # --- Discontinuity in the positional arithmetic (0.14) ------------------------
@@ -405,8 +414,10 @@ def test_a_declared_width_displaces_every_later_record():
         zpf.Discontinuity(session_id=7, participant_id=0, width=25, reason="stream-gap"),
         _decoded(0, b"RESPONSE", ts=1),
     ]
-    assert zpf.reassembly.record_ranges(participant, blocks) == ((0, 3), (28, 36))
-    assert zpf.reassembly.stream_extent(participant, blocks) == 36
+    assert (
+        zpf.reassembly.record_ranges(participant, blocks, zpf.OutputLayer.DECODED)
+    ) == ((0, 3), (28, 36))
+    assert zpf.reassembly.stream_extent(participant, blocks, zpf.OutputLayer.DECODED) == 36
 
 
 def test_an_unknown_width_contributes_nothing_to_the_arithmetic():
@@ -421,7 +432,9 @@ def test_an_unknown_width_contributes_nothing_to_the_arithmetic():
         zpf.Discontinuity(session_id=7, participant_id=0, reason="tls-record-lost"),
         _decoded(0, b"RESPONSE", ts=1),
     ]
-    assert zpf.reassembly.record_ranges(participant, blocks) == ((0, 3), (3, 11))
+    assert (
+        zpf.reassembly.record_ranges(participant, blocks, zpf.OutputLayer.DECODED)
+    ) == ((0, 3), (3, 11))
 
 
 def test_a_zero_width_break_is_read_as_zero_not_as_unknown():
@@ -434,7 +447,9 @@ def test_a_zero_width_break_is_read_as_zero_not_as_unknown():
         zpf.Discontinuity(session_id=7, participant_id=0, width=0),
         _decoded(0, b"RESPONSE", ts=1),
     ]
-    assert zpf.reassembly.record_ranges(participant, blocks) == ((0, 3), (3, 11))
+    assert (
+        zpf.reassembly.record_ranges(participant, blocks, zpf.OutputLayer.DECODED)
+    ) == ((0, 3), (3, 11))
 
 
 def test_a_break_after_the_last_record_does_not_extend_the_stream():
@@ -448,8 +463,8 @@ def test_a_break_after_the_last_record_does_not_extend_the_stream():
         _decoded(0, b"REQ"),
         zpf.Discontinuity(session_id=7, participant_id=0, width=25),
     ]
-    assert zpf.reassembly.record_ranges(participant, blocks) == ((0, 3),)
-    assert zpf.reassembly.stream_extent(participant, blocks) == 3
+    assert zpf.reassembly.record_ranges(participant, blocks, zpf.OutputLayer.DECODED) == ((0, 3),)
+    assert zpf.reassembly.stream_extent(participant, blocks, zpf.OutputLayer.DECODED) == 3
 
 
 def test_a_break_leaves_a_hinted_transport_stream_alone():
@@ -466,7 +481,9 @@ def test_a_break_leaves_a_hinted_transport_stream_alone():
         zpf.Record(session_id=7, sender_pid=0, source_id=1, timestamp=1,
                    payload=b"xyz", seq_start=1050),
     ]
-    assert zpf.reassembly.record_ranges(participant, blocks) == ((0, 10), (49, 52))
+    assert (
+        zpf.reassembly.record_ranges(participant, blocks, zpf.OutputLayer.TRANSPORT)
+    ) == ((0, 10), (49, 52))
 
 
 def test_units_surface_a_break_that_datagrams_hides():
@@ -501,3 +518,63 @@ def test_a_break_reports_the_width_it_declares():
     units = list(view.units())
     assert units[1] == zpf.Break(off_start=3, width=25, reason=None)
     assert (units[2].off_start, units[2].off_end) == (28, 36)
+
+
+# --- The layer rule (0.16) ------------------------------------------------------------
+
+
+def _rec(decoder_id: int | None = None) -> zpf.Record:
+    return zpf.Record(
+        session_id=7, sender_pid=0, source_id=1, timestamp=0,
+        payload=b"x", decoder_id=decoder_id,
+    )
+
+
+def test_a_decoder_less_stream_is_transport():
+    assert zpf.reassembly.stream_layer([_rec()], {}) is zpf.OutputLayer.TRANSPORT
+
+
+def test_a_reassembly_record_carries_a_decoder_id_and_is_still_transport():
+    """The trap a 0.14 reader walks into, and the reason the rule has two halves."""
+    decoders = {1: zpf.Decoder(decoder_id=1, output_layer=zpf.OutputLayer.TRANSPORT)}
+    assert zpf.reassembly.stream_layer([_rec(1)], decoders) is zpf.OutputLayer.TRANSPORT
+
+
+def test_an_empty_stream_is_transport():
+    # No records, so no decoder: the no-decoder answer, and nothing to place.
+    assert zpf.reassembly.stream_layer([], {}) is zpf.OutputLayer.TRANSPORT
+
+
+def test_an_unrecognised_output_layer_is_reported_not_guessed():
+    decoders = {1: zpf.Decoder(decoder_id=1, output_layer=9)}
+    assert zpf.reassembly.stream_layer([_rec(1)], decoders) == 9
+
+
+def test_an_unrecognised_layer_has_no_offset_space():
+    """Both spaces are wrong for a layer we cannot name, so neither is used."""
+    participant = zpf.Participant(session_id=7, participant_id=0)
+    with pytest.raises(zpf.SemanticError, match="not one this version defines"):
+        zpf.reassembly.record_ranges(participant, [_rec(1)], 9)
+
+
+def test_a_participant_mixing_layers_has_no_single_answer():
+    """A reader MUST NOT pick one: every later offset would be in the wrong space."""
+    decoders = {
+        1: zpf.Decoder(decoder_id=1, output_layer=zpf.OutputLayer.DECODED),
+        2: zpf.Decoder(decoder_id=2, output_layer=zpf.OutputLayer.TRANSPORT),
+    }
+    with pytest.raises(zpf.SemanticError, match="mixes layers"):
+        zpf.reassembly.stream_layer([_rec(1), _rec(2)], decoders)
+
+
+def test_a_decoder_less_record_beside_a_decoded_one_also_mixes():
+    # The other half of the rule: absence resolves to transport, which is a
+    # layer like any other, so this is the same violation.
+    decoders = {1: zpf.Decoder(decoder_id=1, output_layer=zpf.OutputLayer.DECODED)}
+    with pytest.raises(zpf.SemanticError, match="mixes layers"):
+        zpf.reassembly.stream_layer([_rec(), _rec(1)], decoders)
+
+
+def test_an_undeclared_decoder_leaves_the_layer_unresolvable():
+    with pytest.raises(zpf.SemanticError, match="undeclared decoder_id 4"):
+        zpf.reassembly.stream_layer([_rec(4)], {})

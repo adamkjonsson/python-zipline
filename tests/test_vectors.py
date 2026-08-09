@@ -47,19 +47,18 @@ VECTORS = Path(__file__).parent / "vectors"
 #: Vector cases that MUST pass. Grow it as phases land; never remove a name,
 #: because that is the regression guard.
 #:
-#: Phase 2: every vector whose **projection** was the only thing standing in
-#: the way — the JSONL face now reads and writes ``output_layer``, so all 17
-#: remaining Decoder-carrying accept cases turned green at once, ``tunnel/``
-#: included for the two members defect 4 does not touch.
+#: Phase 3: the two capture-sourced shapes 0.15 legalised. ``proxy-decoded``
+#: is a decoded stream with no predecessor file; ``reassembler-declared`` is a
+#: head-of-pipeline reassembler naming itself with ``output_layer =
+#: transport``. Both were being diagnosed by one retired rule — "a decoded
+#: record must reference a zpf-input source" — which inferred the layer from
+#: ``decoder_id`` and the provenance from the layer.
 #:
-#: The eight still out are all **semantics**, and each names its phase. Six are
-#: the ``isolate`` vectors for rules not yet written (Phases 4–6). The other
-#: two pairs are accept cases whose files read and project correctly and are
-#: then *diagnosed* by a rule 0.15 retired: ``mixed-derivation`` against
-#: file-purity, ``proxy-decoded`` and ``reassembler-declared`` against
-#: "a decoded record must reference a zpf-input source" — which is the layer
-#: rule being computed from ``decoder_id`` alone (Phases 3–4) — and
-#: ``undecoded-in-capture`` against the bar on Undecoded there (Phase 5).
+#: Six still out, and each names its phase: ``mixed-derivation`` against
+#: file-purity and the four ``isolate`` vectors for rules not yet written
+#: (Phases 4 and 6), and ``undecoded-in-capture`` with
+#: ``isolate-hole-against-capture`` against the bar on an Undecoded block
+#: naming a ``capture`` Source (Phase 5).
 #:
 #: ``splice`` is one name for two files, because its violation belongs to
 #: neither of them — 52 names for 59 files, which is the honest arithmetic.
@@ -98,7 +97,9 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "partially-hinted-sequenced",
         "passthrough-discontinuity",
         "passthrough-transport",
+        "proxy-decoded",
         "raw-minimal",
+        "reassembler-declared",
         "reject-bad-magic",
         "reject-length-misaligned",
         "reject-payload-len-overrun",

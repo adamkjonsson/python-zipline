@@ -15,6 +15,7 @@ Exit codes: 0 = success/clean, 1 = validation findings, 2 = error
 from __future__ import annotations
 
 import argparse
+import enum
 import sys
 from typing import IO, TYPE_CHECKING
 
@@ -98,7 +99,6 @@ def _cmd_info(args: argparse.Namespace) -> int:
     with zpf.open(args.file) as reader:
         header = reader.header
         print(f"face:      {reader.face}")
-        print(f"kind:      {reader.file_kind or 'no records'}")
         print(f"complete:  {reader.complete}" + ("  (truncated)" if reader.truncated else ""))
         ticks = f"{header.tick_hz} ticks/s"
         print(f"clock:     {ticks}" + ("  single-clock" if header.single_clock else ""))
@@ -119,13 +119,13 @@ def _cmd_info(args: argparse.Namespace) -> int:
         for decoder in reader.decoders.values():
             print(f"decoder {decoder.decoder_id}: {decoder.name} {decoder.version or ''}".rstrip())
         for session in reader.sessions():
-            _print_session(session)
+            _print_session(session, reader)
         for diagnostic in reader.diagnostics:
             print(f"note: {diagnostic.category}: {diagnostic.message}", file=sys.stderr)
     return 0
 
 
-def _print_session(session: SessionReader) -> None:
+def _print_session(session: SessionReader, reader: zpf.FileReader) -> None:
     endpoints = ", ".join(
         participant.endpoint or f"pid {participant.participant_id}"
         for participant in session.participants
@@ -137,6 +137,23 @@ def _print_session(session: SessionReader) -> None:
         f"session {session.session_id}: proto={session.proto or '?'}{key} "
         f"participants=[{endpoints}] records={session.record_count}{flags}{ended}"
     )
+    # One line per stream, because that is the unit both axes are about.
+    # There is no file-wide answer to print: one file may hold a decoded
+    # stream beside a transport one, and a captured stream beside a derived
+    # one.
+    for participant in session.participants:
+        pid = participant.participant_id
+        try:
+            provenance, layer = reader.stream_kind(session.session_id, pid)
+        except zpf.SemanticError as exc:
+            print(f"  stream {pid}: unresolvable — {exc}")
+            continue
+        print(f"  stream {pid}: {_axis_name(provenance)} {_axis_name(layer)}")
+
+
+def _axis_name(value: object) -> str:
+    """Name a provenance or layer, falling back to the raw number."""
+    return value.name.lower().replace("_", "-") if isinstance(value, enum.Enum) else str(value)
 
 
 def _cmd_cat(args: argparse.Namespace) -> int:

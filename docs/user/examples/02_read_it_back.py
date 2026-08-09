@@ -8,7 +8,7 @@ participants, and records, and prints what it finds.
 import zpf
 
 with zpf.open("session.zpf") as reader:
-    print(f"face: {reader.face}, kind: {reader.file_kind}, complete: {reader.complete}")
+    print(f"face: {reader.face}, complete: {reader.complete}")
 
     for session in reader.sessions():  # one Session block declared -> one entry
         print(f"session {session.session_id}: {session.proto} {session.key!r}")

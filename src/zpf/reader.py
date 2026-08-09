@@ -46,11 +46,13 @@ from zpf.blocks import (
     Discontinuity,
     FileHeader,
     NameResolution,
+    OutputLayer,
     Participant,
     Record,
     Session,
     SessionEnd,
     Source,
+    SourceKind,
     Undecoded,
     parse_block,
 )
@@ -59,10 +61,10 @@ from zpf.content import ContentRegistry, ContentType
 from zpf.errors import AdvisoryError, Diagnostic, SemanticError, StructuralError, ZpfError
 from zpf.jsonl import JsonlReader
 from zpf.order import causal_merge, verify_sequenced
-from zpf.reassembly import StreamView, is_decoded_stream, record_ranges
+from zpf.reassembly import StreamView, record_ranges, stream_layer
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterator, Mapping
     from types import TracebackType
     from typing import Self
 
@@ -89,6 +91,10 @@ class _SessionIndex:
     # index outlives the SessionReaders handed out for it, so the cost of a
     # first pass is paid once per file rather than once per view.
     ranges: dict[int, tuple[tuple[int, int], ...]] = field(default_factory=dict)
+    # Per-participant layer, resolved once. The specification licenses this
+    # cache directly: every record of a participant must resolve to the same
+    # layer, which is what makes "the stream's layer" well defined.
+    layers: dict[int, OutputLayer | int] = field(default_factory=dict)
 
 
 class SessionReader:
@@ -100,10 +106,17 @@ class SessionReader:
     """
 
     def __init__(
-        self, index: _SessionIndex, resolve: Callable[[int | Record], Record]
+        self,
+        index: _SessionIndex,
+        resolve: Callable[[int | Record], Record],
+        decoders: Mapping[int, Decoder],
     ) -> None:
         self._index = index
         self._resolve = resolve
+        # The reader's live mapping, not a copy: declare-on-first-use means
+        # a Decoder is always in it before a record references it, but a
+        # streaming reader may still be filling it as later sessions arrive.
+        self._decoders = decoders
         self.session_id = index.descriptor.session_id
 
     @property
@@ -208,20 +221,38 @@ class SessionReader:
         for locator in self._index.by_pid.get(pid, ()):
             yield locator if isinstance(locator, Discontinuity) else self._resolve(locator)
 
-    def is_decoded_stream(self, pid: int) -> bool:
-        """Return whether a participant's stream is a decoded layer.
+    def layer(self, pid: int) -> OutputLayer | int:
+        """Return the layer a participant's stream is at.
+
+        This replaced ``is_decoded_stream``, which answered from
+        ``decoder_id`` alone. Since a reassembler is a decoder that declares
+        ``output_layer = transport``, that question is now only half of the
+        rule — see :func:`zpf.reassembly.stream_layer`, which states it.
+
+        Resolved once per participant and kept, which the specification
+        licenses because every record of a participant must resolve to the
+        same layer.
 
         Args:
             pid: The participant to ask about.
 
         Returns:
-            True when its records carry a ``decoder_id``.
+            :attr:`~zpf.OutputLayer.DECODED` or
+            :attr:`~zpf.OutputLayer.TRANSPORT`, or the raw ``int`` for a
+            declared value this version does not define.
 
         Raises:
             KeyError: If the session has no such participant.
+            SemanticError: If the participant's records mix layers, or
+                reference an undeclared ``decoder_id``.
 
         """
-        return is_decoded_stream(list(self.stream(pid)))
+        self.participant(pid)  # raises KeyError for an unknown pid
+        cached = self._index.layers.get(pid)
+        if cached is None:
+            cached = stream_layer(list(self.stream(pid)), self._decoders)
+            self._index.layers[pid] = cached
+        return cached
 
     def ranges(self, pid: int) -> tuple[tuple[int, int], ...]:
         """Return the offset range each of a participant's records occupies.
@@ -262,7 +293,9 @@ class SessionReader:
         """
         cached = self._index.ranges.get(pid)
         if cached is None:
-            cached = record_ranges(self.participant(pid), list(self.stream_blocks(pid)))
+            cached = record_ranges(
+                self.participant(pid), list(self.stream_blocks(pid)), self.layer(pid)
+            )
             self._index.ranges[pid] = cached
         return cached
 
@@ -444,10 +477,53 @@ class FileReader:
         """The detected (or forced) face — ``"binary"`` or ``"jsonl"``."""
         return self._face
 
-    @property
-    def file_kind(self) -> str | None:
-        """The file's inferred kind — raw, decode-stage, pass-through, or None."""
-        return self._checker.file_kind
+    def stream_kind(self, session_id: int, pid: int) -> tuple[SourceKind | int, OutputLayer | int]:
+        """Return one stream's ``(provenance, layer)``.
+
+        This replaced ``file_kind``, and the replacement is per stream
+        because the question is. Provenance and layer are **independent
+        axes** — where a stream's bytes came from, and what shape they have
+        — and neither answers the other: a capture can be the direct source
+        of a decoded stream (a TLS-terminating proxy), and a stage over a
+        ``.zpf`` can emit a transport one (a sessionization stage). One file
+        may hold streams at different positions on both axes and needs no
+        syntax to say so, which is exactly what ``file_kind`` could not
+        express: its three words named a property of a *file*, and there is
+        no such property to name.
+
+        Args:
+            session_id: The session the stream belongs to.
+            pid: The participant whose stream to classify.
+
+        Returns:
+            ``(provenance, layer)``. Provenance is the
+            :class:`~zpf.SourceKind` of the Source its records reference,
+            and layer is what :meth:`SessionReader.layer` resolves. Either
+            may be a raw ``int`` for a value this version does not define; a
+            stream with no records is ``(CAPTURE, TRANSPORT)``, both being
+            the no-information answer.
+
+        Raises:
+            KeyError: If the file has no such session or participant.
+            SemanticError: If the participant's records disagree about
+                either axis — mixing layers, or referencing Sources of
+                differing ``kind``. Neither has a single answer to give, and
+                picking one would silently mis-resolve every offset or every
+                provenance walk from that stream.
+
+        Example:
+            >>> provenance, layer = reader.stream_kind(7, 0)
+
+        """
+        session = self.session(session_id)
+        records = list(session.stream(pid))
+        kinds = {self._sources[r.source_id].kind for r in records if r.source_id in self._sources}
+        if len(kinds) > 1:
+            named = ", ".join(sorted(str(kind) for kind in kinds))
+            msg = f"session {session_id} participant {pid} mixes source kinds ({named})"
+            raise SemanticError(msg)
+        provenance = kinds.pop() if kinds else SourceKind.CAPTURE
+        return provenance, session.layer(pid)
 
     @property
     def sources(self) -> dict[int, Source]:
@@ -473,7 +549,8 @@ class FileReader:
     def sessions(self) -> tuple[SessionReader, ...]:
         """Return the file's sessions, in declaration order."""
         return tuple(
-            SessionReader(index, self._resolve) for index in self._sessions.values()
+            SessionReader(index, self._resolve, self._decoders)
+            for index in self._sessions.values()
         )
 
     def session(self, session_id: int) -> SessionReader:
@@ -483,7 +560,7 @@ class FileReader:
             KeyError: If the file declares no such session.
 
         """
-        return SessionReader(self._sessions[session_id], self._resolve)
+        return SessionReader(self._sessions[session_id], self._resolve, self._decoders)
 
     def content(self, record: Record, *, strict: bool = False) -> Any:
         """Return a record's payload interpreted as its ``content_type`` says.

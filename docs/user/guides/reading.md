@@ -15,7 +15,8 @@ and auto-detects the face —
 
 ```python
 with zpf.open("cap.zpf") as reader:
-    print(reader.face, reader.file_kind)   # e.g. "binary", "raw"
+    print(reader.face)                       # e.g. "binary"
+    print(reader.stream_kind(7, 0))          # e.g. (SourceKind.CAPTURE, OutputLayer.TRANSPORT)
     print(reader.header.tick_hz)
 ```
 
