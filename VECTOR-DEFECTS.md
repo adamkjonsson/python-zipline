@@ -86,6 +86,14 @@ exactly this apart from the not-yet-ported xfails: nothing here bends the
 implementation to match a broken fixture, and if either starts passing, either
 the vector was fixed or we got the mapping wrong.
 
+Reporting it is Phase 8's job, with the rest of the port's findings — see the
+register in
+[`SPEC-0.16-MIGRATION-PLAN.md`](SPEC-0.16-MIGRATION-PLAN.md#phase-8--prose-and-the-upstream-report).
+Batched deliberately: a defect reported after the rule is implemented and the
+vectors pass is a report backed by a working reader rather than a guess about
+what the text means. This entry stays the record either way; the issue is the
+report.
+
 ---
 
 ## Defect 3 — `undecoded-in-capture` could not be parsed from the `0.15` text
