@@ -1,4 +1,4 @@
-{"type":"file","format":"zipline-payload/0.14","tick_hz":1000000,"produced_by":"zpf-merge 1.2","produced_at":1719510000}
+{"type":"file","format":"zipline-payload/0.16","tick_hz":1000000,"produced_by":"zpf-merge 1.2","produced_at":1719510000}
 {"type":"source","source_id":1,"kind":"zpf-input","uri":"sideA.zpf","digest":"sha256:11aa"}
 {"type":"session","session_id":1,"proto":"tcp","sequenced":true}
 {"type":"participant","session_id":1,"pid":0,"endpoint":["10.0.0.1:51000"],"isn":1000,"origin":{"source_id":1,"session_id":7,"pid":0}}

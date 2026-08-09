@@ -1,0 +1,8 @@
+{"type":"file","format":"zipline-payload/0.16","tick_hz":1000000,"produced_by":"ssl-tap 0.3","produced_at":1719600000}
+{"type":"source","source_id":1,"kind":"capture","uri":"sslkeylog-tap"}
+{"type":"decoder","decoder_id":1,"output_layer":"decoded","name":"http/1.1","version":"0.4"}
+{"type":"session","session_id":3,"proto":"http"}
+{"type":"participant","session_id":3,"pid":0,"endpoint":["10.0.0.1:51000"]}
+{"type":"record","session_id":3,"sender_pid":0,"source_id":1,"ts":2000,"payload":"R0VUIC9oZWFsdGggSFRUUC8xLjE=","decoder_id":1,"content_type":"dec:request"}
+{"type":"record","session_id":3,"sender_pid":0,"source_id":1,"ts":2100,"payload":"SFRUUC8xLjEgMjAwIE9L","decoder_id":1,"content_type":"dec:response"}
+{"type":"end"}

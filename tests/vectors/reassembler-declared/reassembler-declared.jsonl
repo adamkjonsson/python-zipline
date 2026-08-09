@@ -1,0 +1,7 @@
+{"type":"file","format":"zipline-payload/0.16","tick_hz":1000000,"creator":"zpf-write 2.0"}
+{"type":"source","source_id":1,"kind":"capture","uri":"sideA.pcap","link_type":1}
+{"type":"decoder","decoder_id":1,"output_layer":"transport","name":"tcp-reassembly","version":"1.1","params_digest":"sha256:2f60"}
+{"type":"session","session_id":7,"proto":"tcp"}
+{"type":"participant","session_id":7,"pid":0,"endpoint":["10.0.0.1:51000"],"isn":1000}
+{"type":"record","session_id":7,"sender_pid":0,"source_id":1,"ts":1000,"flags":["psh"],"payload":"R0VUIC8gSFRUUC8xLjENCg0K","decoder_id":1,"seq_start":1001}
+{"type":"end"}

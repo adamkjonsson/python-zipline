@@ -8,7 +8,7 @@
 0004  30 00 00 00              length = 48
 0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
 000C  00 00                    version_major = 0
-000E  0E 00                    version_minor = 14
+000E  10 00                    version_minor = 16
 0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
 0018  12 00 0E 00              option 0x0012 produced_by, len = 14
 001C  7A 70 66 2D 64 65 63 6F  "zpf-decode 0.4"
@@ -36,7 +36,8 @@
 0066  00 00                    reserved
 0068  18 00 00 00              length = 24
 006C  01 00                    decoder_id = 1
-006E  00 00                    _reserved
+006E  00                       output_layer = 0  (decoded)
+006F  00                       _reserved
 0070  41 00 08 00              option 0x0041 name, len = 8
 0074  68 74 74 70 2F 31 2E 31  "http/1.1"
 007C  42 00 03 00              option 0x0042 version, len = 3

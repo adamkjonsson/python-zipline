@@ -1,0 +1,11 @@
+{"type":"file","format":"zipline-payload/0.16","tick_hz":1000000,"produced_by":"zpf-decode 0.4","produced_at":1719610000,"transform_params_digest":"sha256:5e2f"}
+{"type":"source","source_id":1,"kind":"zpf-input","uri":"in.zpf","digest":"sha256:6a71"}
+{"type":"decoder","decoder_id":1,"output_layer":"decoded","name":"http/1.1","version":"0.4"}
+{"type":"session","session_id":10,"proto":"http"}
+{"type":"participant","session_id":10,"pid":0,"endpoint":["10.0.0.1:51000"]}
+{"type":"record","session_id":10,"sender_pid":0,"source_id":1,"ts":1000,"payload":"R0VUIC8=","decoder_id":1,"spans":[{"source_id":1,"session_id":7,"pid":0,"off_start":0,"off_end":40}],"content_type":"dec:request"}
+{"type":"session_end","session_id":10,"input_extents":[{"source_id":1,"session_id":7,"pid":0,"extent":40}]}
+{"type":"session","session_id":11,"proto":"smtp"}
+{"type":"participant","session_id":11,"pid":0,"endpoint":["10.0.0.2:25"],"isn":4000,"origin":{"source_id":1,"session_id":8,"pid":0}}
+{"type":"record","session_id":11,"sender_pid":0,"source_id":1,"ts":1100,"payload":"RUhMTyByZWxheQ==","seq_start":4001}
+{"type":"end"}

@@ -1,0 +1,96 @@
+# reassembler-declared
+#
+# Generated from the same description as the .zpf -- never edited
+# by hand, so the annotation cannot drift from the bytes.
+
+0000  01 00                    type   = 0x0001  File Header
+0002  00 00                    reserved
+0004  24 00 00 00              length = 36
+0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
+000C  00 00                    version_major = 0
+000E  10 00                    version_minor = 16
+0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
+0018  11 00 0D 00              option 0x0011 creator, len = 13
+001C  7A 70 66 2D 77 72 69 74  "zpf-write 2.0"
+0024  65 20 32 2E 30
+0029  00 00 00                 value padding
+
+002C  02 00                    type   = 0x0002  Source Descriptor
+002E  00 00                    reserved
+0030  1C 00 00 00              length = 28
+0034  01 00                    source_id = 1
+0036  00                       kind = 0  (capture)
+0037  00                       _reserved
+0038  20 00 0A 00              option 0x0020 uri, len = 10
+003C  73 69 64 65 41 2E 70 63  "sideA.pcap"
+0044  61 70
+0046  00 00                    value padding
+0048  22 00 02 00              option 0x0022 link_type, len = 2  (1)
+004C  01 00
+004E  00 00                    value padding
+
+0050  03 00                    type   = 0x0003  Decoder Descriptor
+0052  00 00                    reserved
+0054  30 00 00 00              length = 48
+0058  01 00                    decoder_id = 1
+005A  01                       output_layer = 1  (transport)
+005B  00                       _reserved
+005C  41 00 0E 00              option 0x0041 name, len = 14
+0060  74 63 70 2D 72 65 61 73  "tcp-reassembly"
+0068  73 65 6D 62 6C 79
+006E  00 00                    value padding
+0070  42 00 03 00              option 0x0042 version, len = 3
+0074  31 2E 31                 "1.1"
+0077  00                       value padding
+0078  43 00 0B 00              option 0x0043 params_digest, len = 11
+007C  73 68 61 32 35 36 3A 32  "sha256:2f60"
+0084  66 36 30
+0087  00                       value padding
+
+0088  10 00                    type   = 0x0010  Session Descriptor
+008A  00 00                    reserved
+008C  10 00 00 00              length = 16
+0090  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+0098  50 00 03 00              option 0x0050 proto, len = 3
+009C  74 63 70                 "tcp"
+009F  00                       value padding
+
+00A0  11 00                    type   = 0x0011  Participant Descriptor
+00A2  00 00                    reserved
+00A4  28 00 00 00              length = 40
+00A8  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+00B0  00 00                    participant_id = 0
+00B2  00 00                    _reserved
+00B4  60 00 0E 00              option 0x0060 endpoint, len = 14
+00B8  31 30 2E 30 2E 30 2E 31  "10.0.0.1:51000"
+00C0  3A 35 31 30 30 30
+00C6  00 00                    value padding
+00C8  61 00 04 00              option 0x0061 isn, len = 4  (1000)
+00CC  E8 03 00 00
+
+00D0  20 00                    type   = 0x0020  Record
+00D2  00 00                    reserved
+00D4  40 00 00 00              length = 64
+00D8  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+00E0  00 00                    sender_pid = 0
+00E2  01 00                    source_id  = 1
+00E4  E8 03 00 00 00 00 00 00  timestamp  = 1000
+00EC  00 00                    _reserved  (u16 = 0)
+00EE  01 00                    flags      = 0x0001
+00F0  12 00 00 00              payload_len = 18
+00F4  47 45 54 20 2F 20 48 54
+00FC  54 50 2F 31 2E 31 0D 0A
+0104  0D 0A
+0106  00 00                    payload padding
+0108  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
+010C  01 00
+010E  00 00                    value padding
+0110  70 00 04 00              option 0x0070 seq_start, len = 4  (1001)
+0114  E9 03 00 00
+
+0118  41 00                    type   = 0x0041  End of file
+011A  00 00                    reserved
+011C  04 00 00 00              length = 4
+0120  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
+
+0124                           (end of file, 292 bytes)

@@ -26,8 +26,17 @@ Two traps worth naming, because both look like bugs and are not:
 
 The conformance vectors in `tests/vectors/` are vendored verbatim from the spec
 repository and are the acceptance criteria — do not edit them to make a test
-pass. All 39 pass. `VECTOR-DEFECTS.md` is a closed record of two defects found
-against the 0.12 vectors, both since fixed upstream.
+pass. `VECTOR-DEFECTS.md` is a closed record of three defects found against the
+0.12 and 0.15 vectors, all since fixed upstream.
+
+**A port to 0.16 is in progress** (`SPEC-0.16-MIGRATION-PLAN.md`). The vectors
+are vendored at `v0.16` — 53 of them, 59 files — while the code still implements
+0.14, so most of the suite is behind the ratchet in `tests/test_vectors.py`:
+a vector is a hard requirement only once its name is in `KNOWN_PASSING`, which
+only ever grows. `tests/_migration.py` holds the marks for tests outside the
+harness that the re-vendoring invalidated, and Phase 1 deletes it. Until the
+port lands, this library still *implements* 0.14 and the statements above about
+the standard are about 0.14.
 
 One vector is judged as a **pair**: `splice` ships two files that are each
 conformant alone, so its violation is only visible to `zpf.check_splice`. The

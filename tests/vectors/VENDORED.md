@@ -7,13 +7,14 @@ specification repository. They are not ours to edit.
 |---|---|
 | Source | <https://github.com/adamkjonsson/zipline> |
 | Path | `vectors/` |
-| Tag | `v0.14` |
-| Commit | `89c54e21b03d1bbc6c33b2959651cb5134796f2a` |
-| Vendored | 2026-08-06 |
+| Tag | `v0.16` |
+| Commit | `50fae23dba703ffcdc7b3aabc57988996762ade8` |
+| Vendored | 2026-08-09 |
 
 ## What was and was not copied
 
-Copied: `manifest.json`, `README.md`, and all 39 vector directories.
+Copied: `manifest.json`, `README.md`, and all 53 vector directories — verified
+byte-identical to the tag with `diff -r`.
 
 **Not** copied: `build.py` and `check.py`. Those are the upstream *generator* and
 self-consistency checker — tooling for maintaining the vectors, not fixtures for
@@ -21,10 +22,21 @@ consuming them. Our harness is [`../test_vectors.py`](../test_vectors.py).
 
 Since `0.14` `check.py` also enforces **capability coverage**: it parses the
 option-id registry and the block-type table out of the specification and requires
-every entry to appear in some vector, so new syntax cannot ship uncovered. That
-makes it more useful upstream, not more useful here — it rules on the *suite's*
-completeness, and deliberately parses no block body, so it is not a second
-conformance harness for us to run.
+every entry to appear in some vector, so new syntax cannot ship uncovered. Since
+`0.16` it also carries `RETIRED_CLAIMS`, a ratchet holding claims the model has
+retired from reappearing in the specification text. Both rule on the *suite's*
+and the *document's* consistency rather than on a reader's conformance, and
+neither parses a block body, so `check.py` is still not a second harness for us
+to run.
+
+## One thing changed shape in `manifest.json`
+
+`0.16` adds an optional **`advisory: true`** on an `accept` entry, which then
+declares **1** violation rather than 0. It is a key rather than a fourth tier
+because a tier names what a *reader does*, and a reader accepts these files
+completely. `advisory-transport-content-type` is the only one so far, and it is
+the format's first violation that accepts — our harness needs a path for it that
+neither `accept` nor `isolate` provides.
 
 ## Why they are checked in rather than fetched
 
@@ -40,11 +52,20 @@ vector that seems wrong is a question for the spec repository, not a local patch
 
 ## Known defects
 
-**None at `v0.14`.** Two were found against `v0.12` and both were fixed
-upstream; [`VECTOR-DEFECTS.md`](../../VECTOR-DEFECTS.md) at the repository root
-is now the closed record of them.
+**None at `v0.16`.** Three have been found in total — two against `v0.12` and one
+against `v0.15` — and all three were fixed upstream;
+[`VECTOR-DEFECTS.md`](../../VECTOR-DEFECTS.md) at the repository root is the
+closed record of them.
 
-Both left a mark on the harness, and it stays:
+The third is worth knowing about while reading these files, because it is the one
+whose fix changed a vector's **bytes**: `undecoded-in-capture` shipped at `v0.15`
+with `session_id = 7`, and `0.16` settled the rule it was caught between —
+against a `capture` Source the ids are unused and MUST be written `0`. We never
+vendored `v0.15`, so the file arrives here already correct; it is catalogued
+because it is the only defect so far that was *not* vector-side alone, the text
+having disagreed with itself.
+
+The first two left a mark on the harness, and it stays:
 
 - **The `isolate` tier.** The `0.12` README's tier table permitted a reader to
   reject *or* isolate, while its prose called rejecting "as wrong as" accepting

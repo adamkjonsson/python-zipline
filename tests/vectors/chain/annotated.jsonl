@@ -1,7 +1,7 @@
-{"type":"file","format":"zipline-payload/0.14","tick_hz":1000000,"produced_by":"zpf-annotate 0.2","produced_at":1719520000}
-{"type":"source","source_id":1,"kind":"zpf-input","uri":"raw.zpf","digest":"sha256:8401b47084017a3449b98e618f27fd9b3d8a8520f8b49e46314ad434a201f4cf"}
-{"type":"source","source_id":2,"kind":"zpf-input","uri":"decoded.zpf","digest":"sha256:93804248f52cda2cc20edb7f921ad7bcf5359cd7ca2a95aaa81b04701a5461b9"}
-{"type":"decoder","decoder_id":1,"name":"http/1.1","version":"0.4"}
+{"type":"file","format":"zipline-payload/0.16","tick_hz":1000000,"produced_by":"zpf-annotate 0.2","produced_at":1719520000}
+{"type":"source","source_id":1,"kind":"zpf-input","uri":"raw.zpf","digest":"sha256:e62b72a5eecb38c8b2bd104ae900b8611ae3b4533f6207c797a79648bcebf178"}
+{"type":"source","source_id":2,"kind":"zpf-input","uri":"decoded.zpf","digest":"sha256:46176f2c83ffda8642a5acf43aea31eb1515e2003e3e9d3ccba63d76bafe8a60"}
+{"type":"decoder","decoder_id":1,"output_layer":"decoded","name":"http/1.1","version":"0.4"}
 {"type":"session","session_id":7,"proto":"http"}
 {"type":"participant","session_id":7,"pid":0,"endpoint":["10.0.0.1:51000"],"origin":{"source_id":2,"session_id":7,"pid":0}}
 {"type":"participant","session_id":7,"pid":1,"endpoint":["93.184.216.34:80"],"origin":{"source_id":2,"session_id":7,"pid":1}}

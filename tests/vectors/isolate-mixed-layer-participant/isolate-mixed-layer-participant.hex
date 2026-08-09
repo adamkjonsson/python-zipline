@@ -1,0 +1,134 @@
+# isolate-mixed-layer-participant
+#
+# Generated from the same description as the .zpf -- never edited
+# by hand, so the annotation cannot drift from the bytes.
+
+0000  01 00                    type   = 0x0001  File Header
+0002  00 00                    reserved
+0004  2C 00 00 00              length = 44
+0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
+000C  00 00                    version_major = 0
+000E  10 00                    version_minor = 16
+0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
+0018  12 00 0B 00              option 0x0012 produced_by, len = 11
+001C  7A 70 66 2D 6D 69 78 20  "zpf-mix 0.1"
+0024  30 2E 31
+0027  00                       value padding
+0028  13 00 08 00              option 0x0013 produced_at, len = 8  (1719640000)
+002C  C0 9F 7F 66 00 00 00 00
+
+0034  02 00                    type   = 0x0002  Source Descriptor
+0036  00 00                    reserved
+0038  24 00 00 00              length = 36
+003C  01 00                    source_id = 1
+003E  01                       kind = 1  (zpf-input)
+003F  00                       _reserved
+0040  20 00 0B 00              option 0x0020 uri, len = 11
+0044  70 61 63 6B 65 74 73 2E  "packets.zpf"
+004C  7A 70 66
+004F  00                       value padding
+0050  21 00 0B 00              option 0x0021 digest, len = 11
+0054  73 68 61 32 35 36 3A 31  "sha256:11aa"
+005C  31 61 61
+005F  00                       value padding
+
+0060  03 00                    type   = 0x0003  Decoder Descriptor
+0062  00 00                    reserved
+0064  18 00 00 00              length = 24
+0068  01 00                    decoder_id = 1
+006A  00                       output_layer = 0  (decoded)
+006B  00                       _reserved
+006C  41 00 08 00              option 0x0041 name, len = 8
+0070  68 74 74 70 2F 31 2E 31  "http/1.1"
+0078  42 00 03 00              option 0x0042 version, len = 3
+007C  31 2E 30                 "1.0"
+007F  00                       value padding
+
+0080  03 00                    type   = 0x0003  Decoder Descriptor
+0082  00 00                    reserved
+0084  20 00 00 00              length = 32
+0088  02 00                    decoder_id = 2
+008A  01                       output_layer = 1  (transport)
+008B  00                       _reserved
+008C  41 00 0E 00              option 0x0041 name, len = 14
+0090  74 63 70 2D 72 65 61 73  "tcp-reassembly"
+0098  73 65 6D 62 6C 79
+009E  00 00                    value padding
+00A0  42 00 03 00              option 0x0042 version, len = 3
+00A4  31 2E 31                 "1.1"
+00A7  00                       value padding
+
+00A8  10 00                    type   = 0x0010  Session Descriptor
+00AA  00 00                    reserved
+00AC  10 00 00 00              length = 16
+00B0  1E 00 00 00 00 00 00 00  session_id = 30  (u64)
+00B8  50 00 03 00              option 0x0050 proto, len = 3
+00BC  74 63 70                 "tcp"
+00BF  00                       value padding
+
+00C0  11 00                    type   = 0x0011  Participant Descriptor
+00C2  00 00                    reserved
+00C4  20 00 00 00              length = 32
+00C8  1E 00 00 00 00 00 00 00  session_id = 30  (u64)
+00D0  00 00                    participant_id = 0
+00D2  00 00                    _reserved
+00D4  60 00 0E 00              option 0x0060 endpoint, len = 14
+00D8  31 30 2E 30 2E 30 2E 31  "10.0.0.1:51000"
+00E0  3A 35 31 30 30 30
+00E6  00 00                    value padding
+
+00E8  20 00                    type   = 0x0020  Record
+00EA  00 00                    reserved
+00EC  5C 00 00 00              length = 92
+00F0  1E 00 00 00 00 00 00 00  session_id = 30  (u64)
+00F8  00 00                    sender_pid = 0
+00FA  01 00                    source_id  = 1
+00FC  E8 03 00 00 00 00 00 00  timestamp  = 1000
+0104  00 00                    _reserved  (u16 = 0)
+0106  00 00                    flags      = 0x0000
+0108  05 00 00 00              payload_len = 5
+010C  47 45 54 20 2F           "GET /"
+0111  00 00 00                 payload padding
+0114  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
+0118  01 00
+011A  00 00                    value padding
+011C  80 00 1C 00              option 0x0080 spans, len = 28  (1 entry/entries)
+0120  01 00 00 00 05 00 00 00
+0128  00 00 00 00 00 00 00 00
+0130  00 00 00 00 05 00 00 00
+0138  00 00 00 00
+013C  91 00 0B 00              option 0x0091 content_type, len = 11
+0140  64 65 63 3A 72 65 71 75  "dec:request"
+0148  65 73 74
+014B  00                       value padding
+
+014C  20 00                    type   = 0x0020  Record
+014E  00 00                    reserved
+0150  60 00 00 00              length = 96
+0154  1E 00 00 00 00 00 00 00  session_id = 30  (u64)
+015C  00 00                    sender_pid = 0
+015E  01 00                    source_id  = 1
+0160  4C 04 00 00 00 00 00 00  timestamp  = 1100
+0168  00 00                    _reserved  (u16 = 0)
+016A  00 00                    flags      = 0x0000
+016C  14 00 00 00              payload_len = 20
+0170  43 43 43 43 43 43 43 43  "CCCCCCCCCCCCCCCCCCCC"
+0178  43 43 43 43 43 43 43 43
+0180  43 43 43 43
+0184  90 00 02 00              option 0x0090 decoder_id, len = 2  (2)
+0188  02 00
+018A  00 00                    value padding
+018C  80 00 1C 00              option 0x0080 spans, len = 28  (1 entry/entries)
+0190  01 00 00 00 05 00 00 00
+0198  00 00 00 00 05 00 00 00
+01A0  00 00 00 00 19 00 00 00
+01A8  00 00 00 00
+01AC  70 00 04 00              option 0x0070 seq_start, len = 4  (1001)
+01B0  E9 03 00 00
+
+01B4  41 00                    type   = 0x0041  End of file
+01B6  00 00                    reserved
+01B8  04 00 00 00              length = 4
+01BC  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
+
+01C0                           (end of file, 448 bytes)
