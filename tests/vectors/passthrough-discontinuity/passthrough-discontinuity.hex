@@ -8,7 +8,7 @@
 0004  30 00 00 00              length = 48
 0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
 000C  00 00                    version_major = 0
-000E  0E 00                    version_minor = 14
+000E  10 00                    version_minor = 16
 0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
 0018  12 00 10 00              option 0x0012 produced_by, len = 16
 001C  7A 70 66 2D 61 6E 6E 6F  "zpf-annotate 0.2"
@@ -49,7 +49,8 @@
 0092  00 00                    reserved
 0094  1C 00 00 00              length = 28
 0098  01 00                    decoder_id = 1
-009A  00 00                    _reserved
+009A  00                       output_layer = 0  (decoded)
+009B  00                       _reserved
 009C  41 00 0B 00              option 0x0041 name, len = 11
 00A0  74 6C 73 2D 72 65 63 6F  "tls-records"
 00A8  72 64 73

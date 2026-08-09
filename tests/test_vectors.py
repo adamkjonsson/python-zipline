@@ -1,14 +1,14 @@
-"""Conformance-vector harness for the upstream 0.14 vectors.
+"""Conformance-vector harness for the upstream 0.16 vectors.
 
 The vectors in ``tests/vectors/`` are hand-built from the specification's
 normative text (see ``tests/vectors/VENDORED.md``). They are the acceptance
-criteria for the 0.12 → 0.14 migration: each phase of the port is done when the
+criteria for the 0.14 → 0.16 migration: each phase of the port is done when the
 vectors it targets pass.
 
 **The ratchet.** A vector case is a hard requirement only once its name is added
 to :data:`KNOWN_PASSING`; every other case is ``xfail(strict=False)``. That keeps
 the suite green across a migration that starts with every file unreadable — until
-the version gate moves, a 0.14 file is refused whatever else is implemented. A
+the version gate moves, a 0.16 file is refused whatever else is implemented. A
 case that starts passing shows up as ``XPASS`` — that is the progress signal —
 and is then promoted into :data:`KNOWN_PASSING` so it can never silently
 regress.
@@ -16,9 +16,15 @@ regress.
 So the migration invariant is: ``KNOWN_PASSING`` only ever grows, and the suite
 is green at every step.
 
-The ratchet was reset at Phase 0 of the 0.14 port, when the tree was re-vendored.
-It is not a record of what this library once passed — under 0.12 it passed 25 of
-the 26 vectors then shipped — only of what it passes against *these* files.
+The ratchet was reset at Phase 0 of the 0.16 port, when the tree was re-vendored.
+It is not a record of what this library once passed — under 0.14 it passed all 39
+vectors then shipped — only of what it passes against *these* files.
+
+**Three tests here are not ratchet-gated**, because they are parametrized over
+every readable case rather than over a tier: the escape-contract test, the
+JSONL → binary direction, and the canonical re-encode. They open files, so at
+Phase 0 they fail wholesale at the version gate, and they carry
+``pending_version_gate`` from :mod:`tests._migration` until Phase 1 moves it.
 """
 
 from __future__ import annotations
@@ -31,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from _migration import pending_version_gate
 
 import zpf
 
@@ -39,53 +46,21 @@ VECTORS = Path(__file__).parent / "vectors"
 #: Vector cases that MUST pass. Grow it as phases land; never remove a name,
 #: because that is the regression guard.
 #:
-#: Phase 5: the whole suite. ``splice`` is one name for two files, because its
-#: violation belongs to neither of them — 41 names for 42 files, which is the
-#: honest arithmetic. :data:`PAIRWISE` routes it to
-#: :func:`test_a_pairwise_vector_is_caught`, and the per-file tiers skip it.
+#: Phase 0: the three refused before the version gate is reached, or by it.
+#: ``reject-length-misaligned`` and ``reject-payload-len-overrun`` are *not*
+#: here — they stamp 0/16, so today they are refused for their minor rather
+#: than for the framing defect each exists to test, and :data:`_REJECT_REASONS`
+#: catches that. They return at Phase 1.
+#:
+#: ``splice`` is one name for two files, because its violation belongs to
+#: neither of them — 52 names for 59 files, which is the honest arithmetic.
+#: :data:`PAIRWISE` routes it to :func:`test_a_pairwise_vector_is_caught`, and
+#: the per-file tiers skip it.
 KNOWN_PASSING: frozenset[str] = frozenset(
     {
-        "annotator-decoded",
-        "broken-chain",
-        "chain/annotated",
-        "chain/decoded",
-        "chain/raw",
-        "custom-block",
-        "decoded-basic",
-        "descriptive-metadata",
-        "discontinuity-known-width",
-        "discontinuity-unknown-width",
-        "escape-reserved-flag-bit",
-        "escape-unknown-block",
-        "escape-unknown-enum",
-        "escape-unknown-option",
-        "external-session-id",
-        "file-clock-metadata",
-        "hintless-merge-backwards-ts",
-        "isolate-coverage-gap",
-        "isolate-discontinuity-in-raw",
-        "isolate-duplicate-id",
-        "isolate-extent-exceeds-coverage",
-        "isolate-extents-disagree",
-        "isolate-sequenced-no-basis",
-        "isolate-undeclared-session",
-        "isolate-unknown-source-kind",
-        "merge-timestamp-tie",
-        "partially-hinted-sequenced",
-        "passthrough-discontinuity",
-        "passthrough-transport",
-        "raw-minimal",
         "reject-bad-magic",
-        "reject-length-misaligned",
-        "reject-payload-len-overrun",
         "reject-unknown-major",
         "reject-unknown-minor",
-        "reordered-decoded",
-        "sequenced-basis",
-        "splice",
-        "session-fan-out",
-        "undecoded-reason-class",
-        "undecoded-skipped",
     }
 )
 
@@ -94,8 +69,9 @@ KNOWN_PASSING: frozenset[str] = frozenset(
 #: that nobody bends this implementation to match a broken fixture: if one of
 #: these starts passing, the vector was fixed — or we got it wrong.
 #:
-#: Empty at ``v0.14``: both defects filed against the 0.12 vectors were fixed
-#: upstream. The mechanism stays for the next one.
+#: Empty at ``v0.16``: all three defects filed so far — two against the 0.12
+#: vectors, one against the 0.15 ones — were fixed upstream before we vendored
+#: the tag that carries them. The mechanism stays for the next one.
 DEFECTIVE: dict[str, str] = {}
 
 #: What each ``reject`` vector must be refused *for*. Asserting only that some
@@ -103,8 +79,8 @@ DEFECTIVE: dict[str, str] = {}
 #: vectors, a file is refused for its stamped version long before the check it
 #: actually exercises is reached. That is exactly the state at Phase 0 of each
 #: port — three of these passed for the wrong reason at 0.12's, and two did at
-#: 0.14's, held out of :data:`KNOWN_PASSING` until the gate moved in Phase 1.
-#: Matched case-insensitively against the error message.
+#: 0.14's and again at 0.16's, held out of :data:`KNOWN_PASSING` until the gate
+#: moves in Phase 1. Matched case-insensitively against the error message.
 _REJECT_REASONS: dict[str, str] = {
     "reject-bad-magic": "magic",
     "reject-unknown-major": "version_major",
@@ -123,6 +99,12 @@ _REJECT_REASONS: dict[str, str] = {
 #:
 #: The ``splice/`` pair is absent because its violation belongs to neither file
 #: on its own; a case with no entry here xfails before the lookup.
+#:
+#: The six ``isolate`` vectors new in 0.15/0.16 are likewise absent until the
+#: phase that implements each — ``isolate-hole-against-capture`` and
+#: ``isolate-unknown-output-layer`` at Phase 5, the other four at Phases 4 and
+#: 6. Their diagnostic wording is not decided yet, and inventing it here would
+#: assert against a message no code produces.
 _ISOLATE_REASONS: dict[str, str] = {
     "isolate-coverage-gap": "neither decoded nor marked",
     "isolate-discontinuity-in-raw": "discontinuity",
@@ -136,6 +118,12 @@ _ISOLATE_REASONS: dict[str, str] = {
 
 #: Syntax new in 0.13/0.14, by the option id carrying it. Each must be parsed
 #: into a typed field rather than preserved through the unknown-option escape.
+#:
+#: **Nothing joins this at 0.16.** The port's one piece of new syntax,
+#: ``output_layer``, is a Decoder *body* field rather than an option — there is
+#: no id for it and no escape it could hide in, which is why the specification
+#: chose a body field. A dropped ``output_layer`` shows up in the re-encode and
+#: projection tests instead.
 _NEW_OPTION_IDS: dict[int, str] = {
     0x0015: "transform_params_digest",
     0x0054: "external_session_id",
@@ -286,7 +274,7 @@ def _params(tier: str) -> list[Any]:
         if case.name in KNOWN_PASSING:
             marks: tuple[Any, ...] = ()
         else:
-            reason = DEFECTIVE.get(case.name, "not yet ported to 0.14")
+            reason = DEFECTIVE.get(case.name, "not yet ported to 0.16")
             marks = (pytest.mark.xfail(reason=reason, strict=False),)
         params.append(pytest.param(case, id=case.name, marks=marks))
     return params
@@ -353,17 +341,19 @@ def test_manifest_covers_the_tree() -> None:
 
 
 def test_every_case_has_a_file() -> None:
-    """The manifest expands to exactly the files `v0.14` ships.
+    """The manifest expands to exactly the files `v0.16` ships.
 
     The count is exact rather than a floor, so a half-copied re-vendoring
-    fails here instead of quietly shrinking the suite: 39 manifest entries,
-    of which ``chain`` expands to three files and ``splice`` to two.
+    fails here instead of quietly shrinking the suite: 53 manifest entries,
+    of which ``chain`` expands to three files, ``splice`` to two and
+    ``tunnel`` — the largest fixture the suite has — to four.
     """
-    assert len(CASES) == 42
+    assert len(CASES) == 59
     for case in CASES:
         assert case.path.exists(), case.name
 
 
+@pending_version_gate
 @pytest.mark.parametrize("case", _readable_params())
 def test_new_syntax_is_recognized_rather_than_escaped(case: Case) -> None:
     """No 0.13/0.14 id reaches ``extra_options``, and no block stays unknown.
@@ -395,6 +385,7 @@ def test_new_syntax_is_recognized_rather_than_escaped(case: Case) -> None:
             )
 
 
+@pending_version_gate
 @pytest.mark.parametrize("case", _projected_params())
 def test_the_shipped_jsonl_converts_back_to_the_binary(case: Case) -> None:
     """The projection is lossless in the direction the tier tests do not cover.
@@ -418,6 +409,7 @@ def test_the_shipped_jsonl_converts_back_to_the_binary(case: Case) -> None:
     assert got == expected, f"{case.name}: the JSONL does not rebuild the binary"
 
 
+@pending_version_gate
 @pytest.mark.parametrize("case", _readable_params())
 def test_a_vector_survives_a_canonical_re_encode(case: Case) -> None:
     """Re-encoding a parsed vector from scratch loses nothing.
@@ -506,7 +498,7 @@ def _pairwise_params() -> list[Any]:
     for name in PAIRWISE:
         marks: tuple[Any, ...] = ()
         if name not in KNOWN_PASSING:
-            marks = (pytest.mark.xfail(reason="not yet ported to 0.14", strict=False),)
+            marks = (pytest.mark.xfail(reason="not yet ported to 0.16", strict=False),)
         params.append(pytest.param(name, id=name, marks=marks))
     return params
 
@@ -555,6 +547,7 @@ def test_a_pairwise_vector_is_caught(vector: str) -> None:
     assert all(f.category == "discontinuity-splice" for f in findings)
 
 
+@pending_version_gate
 def test_a_clean_pair_reports_nothing() -> None:
     """The chain's own hops splice nothing, so the checker stays quiet."""
     chain = VECTORS / "chain"

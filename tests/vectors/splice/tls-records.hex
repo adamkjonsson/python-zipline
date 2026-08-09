@@ -8,7 +8,7 @@
 0004  2C 00 00 00              length = 44
 0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
 000C  00 00                    version_major = 0
-000E  0E 00                    version_minor = 14
+000E  10 00                    version_minor = 16
 0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
 0018  12 00 0B 00              option 0x0012 produced_by, len = 11
 001C  7A 70 66 2D 74 6C 73 20  "zpf-tls 0.2"
@@ -35,7 +35,8 @@
 005E  00 00                    reserved
 0060  1C 00 00 00              length = 28
 0064  01 00                    decoder_id = 1
-0066  00 00                    _reserved
+0066  00                       output_layer = 0  (decoded)
+0067  00                       _reserved
 0068  41 00 0B 00              option 0x0041 name, len = 11
 006C  74 6C 73 2D 72 65 63 6F  "tls-records"
 0074  72 64 73

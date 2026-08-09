@@ -1,0 +1,7 @@
+{"type":"file","format":"zipline-payload/0.16","tick_hz":1000000,"produced_by":"zpf-sessionize 0.2","produced_at":1719660000}
+{"type":"source","source_id":1,"kind":"zpf-input","uri":"packets.zpf","digest":"sha256:33cc"}
+{"type":"decoder","decoder_id":1,"output_layer":"transport","name":"tcp-reassembly","version":"1.1"}
+{"type":"session","session_id":50,"proto":"tcp"}
+{"type":"participant","session_id":50,"pid":0,"endpoint":["10.0.0.1:51000"],"isn":1000}
+{"type":"record","session_id":50,"sender_pid":0,"source_id":1,"ts":1000,"payload":"RUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRQ==","decoder_id":1,"spans":[{"source_id":1,"session_id":6,"pid":0,"off_start":0,"off_end":40}],"seq_start":1001,"content_type":"prim:bytes"}
+{"type":"end"}

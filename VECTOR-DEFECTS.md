@@ -1,16 +1,14 @@
-# Defects in the 0.12 conformance vectors
+# Defects in the conformance vectors
 
-**Closed. Both defects were reported upstream and both were fixed; this file is
-the record, not a work list.** Nothing here applies to the vectors now vendored
-in [`tests/vectors/`](tests/vectors/), which are `v0.14`.
+**Closed. All three defects were reported upstream and all three were fixed;
+this file is the record, not a work list.** Nothing here applies to the vectors
+now vendored in [`tests/vectors/`](tests/vectors/), which are `v0.16`.
 
-Found while implementing against `vectors/` at tag `v0.12` (commit `c291afc`),
-during the 0.9 → 0.12 port.
-
-| | Defect | Fixed in | Where |
-|---|---|---|---|
-| 1 | Three decode-stage vectors omit `produced_by`/`produced_at` | `0.13` | CHANGELOG *Fixed*; all three now carry both options |
-| 2 | `vectors/README.md` contradicts the spec on the `isolate` tier | `0.14` | The README, which now reads "Rejecting an `isolate` vector, with a diagnostic, **is conformant**" |
+| | Defect | Found against | Fixed in | Where |
+|---|---|---|---|---|
+| 1 | Three decode-stage vectors omit `produced_by`/`produced_at` | `v0.12` | `0.13` | CHANGELOG *Fixed*; all three now carry both options |
+| 2 | `vectors/README.md` contradicts the spec on the `isolate` tier | `v0.12` | `0.14` | The README, which now reads "Rejecting an `isolate` vector, with a diagnostic, **is conformant**" |
+| 3 | `undecoded-in-capture` writes ids no reading of the text allows | `v0.15` | `0.16` | CHANGELOG *Changed* ([#87](https://github.com/adamkjonsson/zipline/issues/87)); the vector's `session_id` `7` → `0` |
 
 Defect 1 also generalised upstream. The principle this file drew out of it — **a
 negative vector must carry exactly one violation** — is now stated in the vectors
@@ -18,7 +16,73 @@ README and *enforced*: every manifest entry declares a `violations` count, and
 `check.py` requires it to agree with the tier. Declaring it is mandatory, so a
 vector cannot be written without confronting the number.
 
-The rest of this file is as it was filed.
+Defects 1 and 2 were found during the 0.9 → 0.12 port, against `vectors/` at tag
+`v0.12` (commit `c291afc`). Defect 3 came out of the `0.15` review and is
+recorded next; the frozen 0.12 report follows it.
+
+---
+
+## Defect 3 — `undecoded-in-capture` could not be parsed from the `0.15` text
+
+**The one defect so far that was not vector-side alone**, which is why it is
+recorded here rather than only in [`SPEC-0.15-REVIEW.md`](SPEC-0.15-REVIEW.md)
+(Finding 2). Every other entry in this file rests on the vectors' own ground rule
+2 — a vector that disagrees with the specification is the thing that is wrong.
+Here the specification disagreed with *itself*, so no reading could have produced
+a correct vector, and the fix had to settle the text before it could touch the
+bytes.
+
+### What was wrong
+
+The block that shipped at `v0.15`:
+
+```jsonl
+{"type":"undecoded","source_id":1,"session_id":7,"pid":0,
+ "off_start":4096,"off_end":4396,
+ "reason":"overlap-discarded","reason_class":"bytes"}
+```
+
+`source_id 1` is a `capture` Source. Three normative statements bore on it and no
+reading satisfied all three:
+
+| Statement | Where | What it required here |
+|---|---|---|
+| `source_id` is the input Source **`kind = zpf-input`** | Undecoded field table | the block is illegal |
+| the ids are the *source's*, **never the current file's** | §Undecoded | a capture has no id namespace, and `7` **was** this file's session id |
+| for a `capture` source the ids are **unused (write 0)** | span-list rule | `session_id` must be `0`, not `7` |
+
+The file's own `.hex` annotated those ids as "in the input's namespace" for ids
+that were demonstrably this file's.
+
+### How it was resolved
+
+**The span-list rule won**, so an Undecoded body and a `spans` entry are now read
+by one rule as well as parsed by one struct. Against a `capture` source the ids
+are unused and MUST be written `0`, and the offsets are byte offsets into the
+capture file.
+
+That is *not* the reading this project recommended. The review argued for the
+stream-offset reading, on the grounds that a capture-file byte offset cannot name
+a segment that was never captured, which would make the `hole` class unreachable
+there. `0.16` accepted the consequence and stated it outright: against a
+`capture` source only the bytes-exist class is available, because a hole in a
+reassembled transport stream is already carried by its own hole-inclusive
+offsets, and declaring it twice is the contradiction that also bars a
+Discontinuity from such a stream. That is a better answer than the one proposed —
+it removes the second account rather than relocating it — and
+`isolate-hole-against-capture` now tests the bar.
+
+### Why it never reached this tree
+
+We vendored `v0.14` and then `v0.16`, never `v0.15`, so `undecoded-in-capture`
+arrives here already carrying `session_id = 0`. It is catalogued because the
+defect is the reason [`SPEC-0.15-REVIEW.md`](SPEC-0.15-REVIEW.md) called `0.15`
+unimplementable-as-written, and because it is the precedent for what to do when
+a vector and the text cannot both be right: report it, and do not guess.
+
+---
+
+The rest of this file is as it was filed, against `v0.12`.
 
 ---
 

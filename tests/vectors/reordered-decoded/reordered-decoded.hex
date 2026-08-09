@@ -8,7 +8,7 @@
 0004  40 00 00 00              length = 64
 0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
 000C  00 00                    version_major = 0
-000E  0E 00                    version_minor = 14
+000E  10 00                    version_minor = 16
 0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
 0018  12 00 0F 00              option 0x0012 produced_by, len = 15
 001C  7A 70 66 2D 72 65 6F 72  "zpf-reorder 0.1"
@@ -40,7 +40,8 @@
 0076  00 00                    reserved
 0078  18 00 00 00              length = 24
 007C  01 00                    decoder_id = 1
-007E  00 00                    _reserved
+007E  00                       output_layer = 0  (decoded)
+007F  00                       _reserved
 0080  41 00 08 00              option 0x0041 name, len = 8
 0084  68 74 74 70 2F 31 2E 31  "http/1.1"
 008C  42 00 03 00              option 0x0042 version, len = 3
@@ -94,44 +95,55 @@
 0158  64 65 63 3A 72 65 73 70  "dec:response"
 0160  6F 6E 73 65
 
-0164  20 00                    type   = 0x0020  Record
+0164  22 00                    type   = 0x0022  Discontinuity
 0166  00 00                    reserved
-0168  B8 00 00 00              length = 184
-016C  07 00 00 00 00 00 00 00  session_id = 7  (u64)
-0174  01 00                    sender_pid = 1
-0176  01 00                    source_id  = 1
-0178  DE 03 00 00 00 00 00 00  timestamp  = 990
-0180  00 00                    _reserved  (u16 = 0)
-0182  00 00                    flags      = 0x0000
-0184  64 00 00 00              payload_len = 100
-0188  41 41 41 41 41 41 41 41  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-0190  41 41 41 41 41 41 41 41
-0198  41 41 41 41 41 41 41 41
-01A0  41 41 41 41 41 41 41 41
-01A8  41 41 41 41 41 41 41 41
-01B0  41 41 41 41 41 41 41 41
-01B8  41 41 41 41 41 41 41 41
-01C0  41 41 41 41 41 41 41 41
-01C8  41 41 41 41 41 41 41 41
-01D0  41 41 41 41 41 41 41 41
-01D8  41 41 41 41 41 41 41 41
-01E0  41 41 41 41 41 41 41 41
-01E8  41 41 41 41
-01EC  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
-01F0  01 00
-01F2  00 00                    value padding
-01F4  80 00 1C 00              option 0x0080 spans, len = 28  (1 entry/entries)
-01F8  01 00 01 00 07 00 00 00
-0200  00 00 00 00 00 00 00 00
-0208  00 00 00 00 64 00 00 00
-0210  00 00 00 00
-0214  91 00 0C 00              option 0x0091 content_type, len = 12
-0218  64 65 63 3A 72 65 73 70  "dec:response"
-0220  6F 6E 73 65
+0168  1C 00 00 00              length = 28
+016C  07 00 00 00 00 00 00 00  session_id = 7  (in THIS file)
+0174  01 00                    participant_id = 1  (in THIS file)
+0176  00 00                    _reserved
+0178  D1 00 09 00              option 0x00D1 reason, len = 9
+017C  72 65 6F 72 64 65 72 65  "reordered"
+0184  64
+0185  00 00 00                 value padding
 
-0224  41 00                    type   = 0x0041  End of file
-0226  00 00                    reserved
-0228  04 00 00 00              length = 4
-022C  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
+0188  20 00                    type   = 0x0020  Record
+018A  00 00                    reserved
+018C  B8 00 00 00              length = 184
+0190  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+0198  01 00                    sender_pid = 1
+019A  01 00                    source_id  = 1
+019C  DE 03 00 00 00 00 00 00  timestamp  = 990
+01A4  00 00                    _reserved  (u16 = 0)
+01A6  00 00                    flags      = 0x0000
+01A8  64 00 00 00              payload_len = 100
+01AC  41 41 41 41 41 41 41 41  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+01B4  41 41 41 41 41 41 41 41
+01BC  41 41 41 41 41 41 41 41
+01C4  41 41 41 41 41 41 41 41
+01CC  41 41 41 41 41 41 41 41
+01D4  41 41 41 41 41 41 41 41
+01DC  41 41 41 41 41 41 41 41
+01E4  41 41 41 41 41 41 41 41
+01EC  41 41 41 41 41 41 41 41
+01F4  41 41 41 41 41 41 41 41
+01FC  41 41 41 41 41 41 41 41
+0204  41 41 41 41 41 41 41 41
+020C  41 41 41 41
+0210  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
+0214  01 00
+0216  00 00                    value padding
+0218  80 00 1C 00              option 0x0080 spans, len = 28  (1 entry/entries)
+021C  01 00 01 00 07 00 00 00
+0224  00 00 00 00 00 00 00 00
+022C  00 00 00 00 64 00 00 00
+0234  00 00 00 00
+0238  91 00 0C 00              option 0x0091 content_type, len = 12
+023C  64 65 63 3A 72 65 73 70  "dec:response"
+0244  6F 6E 73 65
 
-0230                           (end of file, 560 bytes)
+0248  41 00                    type   = 0x0041  End of file
+024A  00 00                    reserved
+024C  04 00 00 00              length = 4
+0250  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
+
+0254                           (end of file, 596 bytes)

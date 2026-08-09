@@ -1,0 +1,106 @@
+# advisory-transport-content-type
+#
+# Generated from the same description as the .zpf -- never edited
+# by hand, so the annotation cannot drift from the bytes.
+
+0000  01 00                    type   = 0x0001  File Header
+0002  00 00                    reserved
+0004  34 00 00 00              length = 52
+0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
+000C  00 00                    version_major = 0
+000E  10 00                    version_minor = 16
+0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
+0018  12 00 12 00              option 0x0012 produced_by, len = 18
+001C  7A 70 66 2D 73 65 73 73  "zpf-sessionize 0.2"
+0024  69 6F 6E 69 7A 65 20 30
+002C  2E 32
+002E  00 00                    value padding
+0030  13 00 08 00              option 0x0013 produced_at, len = 8  (1719660000)
+0034  E0 ED 7F 66 00 00 00 00
+
+003C  02 00                    type   = 0x0002  Source Descriptor
+003E  00 00                    reserved
+0040  24 00 00 00              length = 36
+0044  01 00                    source_id = 1
+0046  01                       kind = 1  (zpf-input)
+0047  00                       _reserved
+0048  20 00 0B 00              option 0x0020 uri, len = 11
+004C  70 61 63 6B 65 74 73 2E  "packets.zpf"
+0054  7A 70 66
+0057  00                       value padding
+0058  21 00 0B 00              option 0x0021 digest, len = 11
+005C  73 68 61 32 35 36 3A 33  "sha256:33cc"
+0064  33 63 63
+0067  00                       value padding
+
+0068  03 00                    type   = 0x0003  Decoder Descriptor
+006A  00 00                    reserved
+006C  20 00 00 00              length = 32
+0070  01 00                    decoder_id = 1
+0072  01                       output_layer = 1  (transport)
+0073  00                       _reserved
+0074  41 00 0E 00              option 0x0041 name, len = 14
+0078  74 63 70 2D 72 65 61 73  "tcp-reassembly"
+0080  73 65 6D 62 6C 79
+0086  00 00                    value padding
+0088  42 00 03 00              option 0x0042 version, len = 3
+008C  31 2E 31                 "1.1"
+008F  00                       value padding
+
+0090  10 00                    type   = 0x0010  Session Descriptor
+0092  00 00                    reserved
+0094  10 00 00 00              length = 16
+0098  32 00 00 00 00 00 00 00  session_id = 50  (u64)
+00A0  50 00 03 00              option 0x0050 proto, len = 3
+00A4  74 63 70                 "tcp"
+00A7  00                       value padding
+
+00A8  11 00                    type   = 0x0011  Participant Descriptor
+00AA  00 00                    reserved
+00AC  28 00 00 00              length = 40
+00B0  32 00 00 00 00 00 00 00  session_id = 50  (u64)
+00B8  00 00                    participant_id = 0
+00BA  00 00                    _reserved
+00BC  60 00 0E 00              option 0x0060 endpoint, len = 14
+00C0  31 30 2E 30 2E 30 2E 31  "10.0.0.1:51000"
+00C8  3A 35 31 30 30 30
+00CE  00 00                    value padding
+00D0  61 00 04 00              option 0x0061 isn, len = 4  (1000)
+00D4  E8 03 00 00
+
+00D8  20 00                    type   = 0x0020  Record
+00DA  00 00                    reserved
+00DC  84 00 00 00              length = 132
+00E0  32 00 00 00 00 00 00 00  session_id = 50  (u64)
+00E8  00 00                    sender_pid = 0
+00EA  01 00                    source_id  = 1
+00EC  E8 03 00 00 00 00 00 00  timestamp  = 1000
+00F4  00 00                    _reserved  (u16 = 0)
+00F6  00 00                    flags      = 0x0000
+00F8  28 00 00 00              payload_len = 40
+00FC  45 45 45 45 45 45 45 45  "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE"
+0104  45 45 45 45 45 45 45 45
+010C  45 45 45 45 45 45 45 45
+0114  45 45 45 45 45 45 45 45
+011C  45 45 45 45 45 45 45 45
+0124  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
+0128  01 00
+012A  00 00                    value padding
+012C  80 00 1C 00              option 0x0080 spans, len = 28  (1 entry/entries)
+0130  01 00 00 00 06 00 00 00
+0138  00 00 00 00 00 00 00 00
+0140  00 00 00 00 28 00 00 00
+0148  00 00 00 00
+014C  70 00 04 00              option 0x0070 seq_start, len = 4  (1001)
+0150  E9 03 00 00
+0154  91 00 0A 00              option 0x0091 content_type, len = 10
+0158  70 72 69 6D 3A 62 79 74  "prim:bytes"
+0160  65 73
+0162  00 00                    value padding
+
+0164  41 00                    type   = 0x0041  End of file
+0166  00 00                    reserved
+0168  04 00 00 00              length = 4
+016C  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
+
+0170                           (end of file, 368 bytes)

@@ -1,0 +1,77 @@
+# isolate-unbound-zpf-stream
+#
+# Generated from the same description as the .zpf -- never edited
+# by hand, so the annotation cannot drift from the bytes.
+
+0000  01 00                    type   = 0x0001  File Header
+0002  00 00                    reserved
+0004  2C 00 00 00              length = 44
+0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
+000C  00 00                    version_major = 0
+000E  10 00                    version_minor = 16
+0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
+0018  12 00 0C 00              option 0x0012 produced_by, len = 12
+001C  7A 70 66 2D 74 6F 6F 6C  "zpf-tool 0.1"
+0024  20 30 2E 31
+0028  13 00 08 00              option 0x0013 produced_at, len = 8  (1719650000)
+002C  D0 C6 7F 66 00 00 00 00
+
+0034  02 00                    type   = 0x0002  Source Descriptor
+0036  00 00                    reserved
+0038  24 00 00 00              length = 36
+003C  01 00                    source_id = 1
+003E  01                       kind = 1  (zpf-input)
+003F  00                       _reserved
+0040  20 00 0C 00              option 0x0020 uri, len = 12
+0044  75 70 73 74 72 65 61 6D  "upstream.zpf"
+004C  2E 7A 70 66
+0050  21 00 0B 00              option 0x0021 digest, len = 11
+0054  73 68 61 32 35 36 3A 32  "sha256:22bb"
+005C  32 62 62
+005F  00                       value padding
+
+0060  10 00                    type   = 0x0010  Session Descriptor
+0062  00 00                    reserved
+0064  10 00 00 00              length = 16
+0068  28 00 00 00 00 00 00 00  session_id = 40  (u64)
+0070  50 00 03 00              option 0x0050 proto, len = 3
+0074  74 63 70                 "tcp"
+0077  00                       value padding
+
+0078  11 00                    type   = 0x0011  Participant Descriptor
+007A  00 00                    reserved
+007C  28 00 00 00              length = 40
+0080  28 00 00 00 00 00 00 00  session_id = 40  (u64)
+0088  00 00                    participant_id = 0
+008A  00 00                    _reserved
+008C  60 00 0E 00              option 0x0060 endpoint, len = 14
+0090  31 30 2E 30 2E 30 2E 31  "10.0.0.1:51000"
+0098  3A 35 31 30 30 30
+009E  00 00                    value padding
+00A0  61 00 04 00              option 0x0061 isn, len = 4  (1000)
+00A4  E8 03 00 00
+
+00A8  20 00                    type   = 0x0020  Record
+00AA  00 00                    reserved
+00AC  44 00 00 00              length = 68
+00B0  28 00 00 00 00 00 00 00  session_id = 40  (u64)
+00B8  00 00                    sender_pid = 0
+00BA  01 00                    source_id  = 1
+00BC  E8 03 00 00 00 00 00 00  timestamp  = 1000
+00C4  00 00                    _reserved  (u16 = 0)
+00C6  00 00                    flags      = 0x0000
+00C8  1E 00 00 00              payload_len = 30
+00CC  44 44 44 44 44 44 44 44  "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDD"
+00D4  44 44 44 44 44 44 44 44
+00DC  44 44 44 44 44 44 44 44
+00E4  44 44 44 44 44 44
+00EA  00 00                    payload padding
+00EC  70 00 04 00              option 0x0070 seq_start, len = 4  (1001)
+00F0  E9 03 00 00
+
+00F4  41 00                    type   = 0x0041  End of file
+00F6  00 00                    reserved
+00F8  04 00 00 00              length = 4
+00FC  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
+
+0100                           (end of file, 256 bytes)
