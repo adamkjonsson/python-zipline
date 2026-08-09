@@ -1,14 +1,17 @@
 # Defects in the conformance vectors
 
-**Closed. All three defects were reported upstream and all three were fixed;
-this file is the record, not a work list.** Nothing here applies to the vectors
-now vendored in [`tests/vectors/`](tests/vectors/), which are `v0.16`.
+**One open, three closed.** Defect 4 is live against the vectors currently
+vendored in [`tests/vectors/`](tests/vectors/), which are `v0.16`; it holds two
+files out of the suite via `DEFECTIVE` in
+[`tests/test_vectors.py`](tests/test_vectors.py). The other three were reported
+upstream and fixed.
 
-| | Defect | Found against | Fixed in | Where |
-|---|---|---|---|---|
-| 1 | Three decode-stage vectors omit `produced_by`/`produced_at` | `v0.12` | `0.13` | CHANGELOG *Fixed*; all three now carry both options |
-| 2 | `vectors/README.md` contradicts the spec on the `isolate` tier | `v0.12` | `0.14` | The README, which now reads "Rejecting an `isolate` vector, with a diagnostic, **is conformant**" |
-| 3 | `undecoded-in-capture` writes ids no reading of the text allows | `v0.15` | `0.16` | CHANGELOG *Changed* ([#87](https://github.com/adamkjonsson/zipline/issues/87)); the vector's `session_id` `7` → `0` |
+| | Defect | Found against | Status |
+|---|---|---|---|
+| 1 | Three decode-stage vectors omit `produced_by`/`produced_at` | `v0.12` | Fixed in `0.13` — CHANGELOG *Fixed*; all three now carry both options |
+| 2 | `vectors/README.md` contradicts the spec on the `isolate` tier | `v0.12` | Fixed in `0.14` — the README now reads "Rejecting an `isolate` vector, with a diagnostic, **is conformant**" |
+| 3 | `undecoded-in-capture` writes ids no reading of the text allows | `v0.15` | Fixed in `0.16` — CHANGELOG *Changed* ([#87](https://github.com/adamkjonsson/zipline/issues/87)); the vector's `session_id` `7` → `0` |
+| 4 | `tunnel/{inner,outer}.jsonl` spell the flow key `flow_key`, not `key` | `v0.16` | **Open** |
 
 Defect 1 also generalised upstream. The principle this file drew out of it — **a
 negative vector must carry exactly one violation** — is now stated in the vectors
@@ -17,8 +20,71 @@ README and *enforced*: every manifest entry declares a `violations` count, and
 vector cannot be written without confronting the number.
 
 Defects 1 and 2 were found during the 0.9 → 0.12 port, against `vectors/` at tag
-`v0.12` (commit `c291afc`). Defect 3 came out of the `0.15` review and is
-recorded next; the frozen 0.12 report follows it.
+`v0.12` (commit `c291afc`). Defect 3 came out of the `0.15` review, and defect 4
+out of Phase 1 of the 0.14 → 0.16 port. Both are recorded next; the frozen 0.12
+report follows them.
+
+---
+
+## Defect 4 — `tunnel/inner.jsonl` and `tunnel/outer.jsonl` use the binary field name for the flow key
+
+**Open at `v0.16`.** Found at Phase 1 of the 0.14 → 0.16 port, when the version
+gate moved and `tunnel/outer` became readable for the first time.
+
+### What is wrong
+
+Both files spell the Session flow key `"flow_key"`:
+
+```jsonl
+{"type":"session","session_id":1,"proto":"udp","flow_key":"198.51.100.7:51820 -> 203.0.113.9:51820"}
+```
+
+The JSONL ↔ binary mapping lists it among the **brevity aliases** — the keys
+whose JSON name deliberately differs from the binary name — as `key`:
+
+| JSONL key | Binary field / option |
+|---|---|
+| `key` | `flow_key` (Session) |
+
+and adds, immediately below, "(`proto` is **not** an alias — its JSON key equals
+its option name.)", which is the sentence that makes the intent unmistakable.
+
+### The suite disagrees with itself
+
+`descriptive-metadata.jsonl`, in the same vendored tree, writes `"key"`. So do
+the specification's own older examples. The two spellings are both present at
+`v0.16`:
+
+| File | Spelling |
+|---|---|
+| `descriptive-metadata.jsonl` | `"key"` ✓ |
+| `tunnel/inner.jsonl` | `"flow_key"` ✗ |
+| `tunnel/outer.jsonl` | `"flow_key"` ✗ |
+
+The specification carries the same split: `"key"` at the IRC example, and
+`"flow_key"` in the *Worked example: a decrypted tunnel* walkthrough that the
+`tunnel/` fixture accompanies. Both the walkthrough and the fixture are new in
+`0.15`, and both were evidently written from the option registry rather than
+from the alias table.
+
+### Why it matters
+
+It is small and it is not cosmetic. A reader that follows the mapping table —
+as this implementation does — emits `"key"` and cannot round-trip either file,
+so two of the four members of the suite's largest fixture fail the accept tier
+for a reason that has nothing to do with what `tunnel/` exists to test. A reader
+that follows the fixture instead writes a JSONL key no other vector uses.
+
+It is vector-side under the vectors' own ground rule 2 — the normative mapping
+is unambiguous, and one vector already obeys it — so the fix is to the two
+`.jsonl` files and the walkthrough, not to the table.
+
+### What we do meanwhile
+
+`tunnel/inner` and `tunnel/outer` are listed in `DEFECTIVE`, which exists to keep
+exactly this apart from the not-yet-ported xfails: nothing here bends the
+implementation to match a broken fixture, and if either starts passing, either
+the vector was fixed or we got the mapping wrong.
 
 ---
 

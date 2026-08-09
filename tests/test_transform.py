@@ -7,7 +7,6 @@ import io
 from pathlib import Path
 
 import pytest
-from _migration import pending_version_gate
 
 import zpf
 
@@ -239,14 +238,12 @@ def test_hole_inclusive_extents(tmp_path: Path):
 CHAIN = Path(__file__).parent / "vectors/chain"
 
 
-@pending_version_gate
 def test_a_decode_stages_record_resolves_in_one_hop():
     # It carries spans of its own: this file's stage built it.
     (span,) = zpf.resolve_spans(CHAIN / "decoded.zpf", 7, 0, 0)
     assert (span.off_start, span.off_end) == (0, 9)
 
 
-@pending_version_gate
 def test_a_pass_throughs_record_resolves_in_two_hops():
     # annotated.zpf re-emits decoded.zpf's records unchanged, so they carry
     # no spans. The walk takes the participant's origin into decoded.zpf,
@@ -261,7 +258,6 @@ def test_a_pass_throughs_record_resolves_in_two_hops():
     assert (other.off_start, other.off_end) == (0, 16)
 
 
-@pending_version_gate
 def test_a_raw_file_records_no_provenance_to_resolve():
     assert zpf.resolve_spans(CHAIN / "raw.zpf", 7, 0, 0) == ()
 
@@ -274,7 +270,6 @@ def test_resolving_a_stream_needs_an_explicit_opener():
         zpf.resolve_spans(handle, 7, 0, 0)
 
 
-@pending_version_gate
 def test_an_opener_may_redirect_where_inputs_are_found():
     seen: list[str] = []
 
@@ -382,7 +377,6 @@ def test_a_rewrite_needs_an_input_with_a_decoded_layer(tmp_path: Path):
 VECTORS = Path(__file__).parent / "vectors"
 
 
-@pending_version_gate
 def test_check_extents_needs_no_input_file():
     """The point of the function: coverage checkable from the file alone.
 
@@ -396,7 +390,6 @@ def test_check_extents_needs_no_input_file():
     assert "40" in finding.message
 
 
-@pending_version_gate
 def test_check_extents_reports_one_finding_per_fault():
     disagree = VECTORS / "isolate-extents-disagree/isolate-extents-disagree.zpf"
     (finding,) = zpf.check_extents(disagree)
@@ -407,7 +400,6 @@ def test_check_extents_reports_one_finding_per_fault():
     assert finding.category == "extents-disagree"
 
 
-@pending_version_gate
 def test_check_extents_finds_an_interior_hole_with_nothing_declared():
     path = VECTORS / "isolate-coverage-gap/isolate-coverage-gap.zpf"
     (finding,) = zpf.check_extents(path)
@@ -415,7 +407,6 @@ def test_check_extents_finds_an_interior_hole_with_nothing_declared():
     assert finding.offset == 10
 
 
-@pending_version_gate
 def test_check_extents_passes_every_conformant_vector():
     """No false positive on anything upstream ships as ``accept``.
 
@@ -488,7 +479,6 @@ def test_check_coverage_cross_checks_a_declared_extent_against_the_input(tmp_pat
 # --- check_splice: a violation belonging to a pair of files -------------------
 
 
-@pending_version_gate
 def test_check_splice_catches_a_unit_welding_two_sides_of_a_break():
     stage1 = VECTORS / "splice/tls-records.zpf"
     stage2 = VECTORS / "splice/http.zpf"

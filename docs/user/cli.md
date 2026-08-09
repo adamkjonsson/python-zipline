@@ -72,7 +72,7 @@ it is exactly what `convert ... --to jsonl` writes.
 
 ```console
 $ zpf cat session.zpf
-{"type":"file","format":"zipline-payload/0.14","tick_hz":1000000}
+{"type":"file","format":"zipline-payload/0.16","tick_hz":1000000}
 {"type":"source","source_id":0,"kind":"capture","uri":"capture.pcap"}
 {"type":"session","session_id":0,"proto":"tcp","key":"10.0.0.1:51000 <-> 93.184.216.34:80"}
 {"type":"participant","session_id":0,"pid":0,"endpoint":["10.0.0.1:51000"],"isn":1000}

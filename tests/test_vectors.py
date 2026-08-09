@@ -22,9 +22,10 @@ vectors then shipped — only of what it passes against *these* files.
 
 **Three tests here are not ratchet-gated**, because they are parametrized over
 every readable case rather than over a tier: the escape-contract test, the
-JSONL → binary direction, and the canonical re-encode. They open files, so at
-Phase 0 they fail wholesale at the version gate, and they carry
-``pending_version_gate`` from :mod:`tests._migration` until Phase 1 moves it.
+JSONL → binary direction, and the canonical re-encode. Phase 0 held them behind
+a version-gate mark; Phase 1 moved the gate and retired it. What is left is
+:data:`_PENDING_JSONL_OUTPUT_LAYER`, five named vectors in the JSONL → binary
+direction alone.
 """
 
 from __future__ import annotations
@@ -37,7 +38,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from _migration import pending_version_gate
 
 import zpf
 
@@ -46,11 +46,18 @@ VECTORS = Path(__file__).parent / "vectors"
 #: Vector cases that MUST pass. Grow it as phases land; never remove a name,
 #: because that is the regression guard.
 #:
-#: Phase 0: the three refused before the version gate is reached, or by it.
-#: ``reject-length-misaligned`` and ``reject-payload-len-overrun`` are *not*
-#: here — they stamp 0/16, so today they are refused for their minor rather
-#: than for the framing defect each exists to test, and :data:`_REJECT_REASONS`
-#: catches that. They return at Phase 1.
+#: Phase 1: everything the version gate alone unblocks — every vector whose
+#: file carries **no Decoder Descriptor**, plus the two framing rejects that
+#: were previously refused for their minor rather than for the defect each
+#: exists to test.
+#:
+#: The 23 accept cases still out are, with two exceptions, exactly the ones
+#: holding a Decoder: their ``decoder`` line wants ``output_layer`` and the
+#: JSONL face does not write it yet, so the projection compare in
+#: :func:`test_accept` fails while the file itself reads cleanly. Phase 2.
+#: The exceptions are ``undecoded-in-capture``, which needs Phase 5's rule for
+#: an Undecoded block against a ``capture`` Source, and ``tunnel/outer``, which
+#: is :data:`DEFECTIVE`.
 #:
 #: ``splice`` is one name for two files, because its violation belongs to
 #: neither of them — 52 names for 59 files, which is the honest arithmetic.
@@ -58,9 +65,35 @@ VECTORS = Path(__file__).parent / "vectors"
 #: the per-file tiers skip it.
 KNOWN_PASSING: frozenset[str] = frozenset(
     {
+        "chain/raw",
+        "custom-block",
+        "descriptive-metadata",
+        "escape-reserved-flag-bit",
+        "escape-unknown-block",
+        "escape-unknown-enum",
+        "escape-unknown-option",
+        "external-session-id",
+        "file-clock-metadata",
+        "hintless-merge-backwards-ts",
+        "isolate-coverage-gap",
+        "isolate-discontinuity-in-raw",
+        "isolate-duplicate-id",
+        "isolate-extent-exceeds-coverage",
+        "isolate-extents-disagree",
+        "isolate-sequenced-no-basis",
+        "isolate-undeclared-session",
+        "isolate-unknown-source-kind",
+        "merge-timestamp-tie",
+        "partially-hinted-sequenced",
+        "passthrough-transport",
+        "raw-minimal",
         "reject-bad-magic",
+        "reject-length-misaligned",
+        "reject-payload-len-overrun",
         "reject-unknown-major",
         "reject-unknown-minor",
+        "sequenced-basis",
+        "splice",
     }
 )
 
@@ -69,10 +102,17 @@ KNOWN_PASSING: frozenset[str] = frozenset(
 #: that nobody bends this implementation to match a broken fixture: if one of
 #: these starts passing, the vector was fixed — or we got it wrong.
 #:
-#: Empty at ``v0.16``: all three defects filed so far — two against the 0.12
-#: vectors, one against the 0.15 ones — were fixed upstream before we vendored
-#: the tag that carries them. The mechanism stays for the next one.
-DEFECTIVE: dict[str, str] = {}
+#: Two entries at ``v0.16``, both the same defect: ``tunnel/inner.jsonl`` and
+#: ``tunnel/outer.jsonl`` spell the Session flow key ``"flow_key"``, but the
+#: normative JSONL mapping lists it among the **brevity aliases** as ``"key"``
+#: — and ``descriptive-metadata.jsonl`` in this same suite writes ``"key"``.
+#: See ``VECTOR-DEFECTS.md`` defect 4. Our face follows the mapping table, so
+#: these two cannot pass until upstream fixes them, and must not be chased at
+#: Phase 2 when the other ``tunnel/`` members turn green.
+DEFECTIVE: dict[str, str] = {
+    "tunnel/inner": "defect 4: .jsonl writes flow_key where the mapping says key",
+    "tunnel/outer": "defect 4: .jsonl writes flow_key where the mapping says key",
+}
 
 #: What each ``reject`` vector must be refused *for*. Asserting only that some
 #: exception escaped is not enough: while the version gate is behind the
@@ -245,14 +285,52 @@ def _readable_params() -> list[Any]:
     return [pytest.param(case, id=case.name) for case in CASES if case.tier != "reject"]
 
 
+#: The vectors whose JSONL → binary direction waits on Phase 2, and the whole
+#: of the reason: each declares a decoder emitting **transport**, so its
+#: ``decoder`` line carries ``"output_layer":"transport"`` and the JSONL face
+#: does not read it yet.
+#:
+#: That this list is five names rather than forty is the ``output_layer``
+#: byte-compatibility property showing up as a test result. Every other
+#: projected vector round-trips through a face that knows nothing about the
+#: field, because ``decoded`` is ``0`` — the value a pre-0.15 writer already
+#: wrote, and the one :class:`zpf.OutputLayer` defaults to. Phase 2 empties
+#: this set; nothing else in the harness is behind it.
+_PENDING_JSONL_OUTPUT_LAYER: frozenset[str] = frozenset(
+    {
+        "advisory-transport-content-type",
+        "reassembler-declared",
+        "sessionization-stage",
+        "tunnel/inner",
+        "tunnel/outer",
+    }
+)
+
+
 def _projected_params() -> list[Any]:
-    """Build unmarked params for every vector shipping an expected projection.
+    """Build params for every vector shipping an expected projection.
+
+    Marked only where :data:`_PENDING_JSONL_OUTPUT_LAYER` says the face
+    cannot rebuild the binary yet.
 
     Returns:
         One param per case with a ``.jsonl`` beside it, in name order.
 
     """
-    return [pytest.param(case, id=case.name) for case in CASES if case.expected_jsonl is not None]
+    params = []
+    for case in CASES:
+        if case.expected_jsonl is None:
+            continue
+        marks: tuple[Any, ...] = ()
+        if case.name in _PENDING_JSONL_OUTPUT_LAYER:
+            marks = (
+                pytest.mark.xfail(
+                    reason="transport output_layer on the decoder line — unblocks at Phase 2",
+                    strict=False,
+                ),
+            )
+        params.append(pytest.param(case, id=case.name, marks=marks))
+    return params
 
 
 def _params(tier: str) -> list[Any]:
@@ -353,7 +431,6 @@ def test_every_case_has_a_file() -> None:
         assert case.path.exists(), case.name
 
 
-@pending_version_gate
 @pytest.mark.parametrize("case", _readable_params())
 def test_new_syntax_is_recognized_rather_than_escaped(case: Case) -> None:
     """No 0.13/0.14 id reaches ``extra_options``, and no block stays unknown.
@@ -385,7 +462,6 @@ def test_new_syntax_is_recognized_rather_than_escaped(case: Case) -> None:
             )
 
 
-@pending_version_gate
 @pytest.mark.parametrize("case", _projected_params())
 def test_the_shipped_jsonl_converts_back_to_the_binary(case: Case) -> None:
     """The projection is lossless in the direction the tier tests do not cover.
@@ -409,7 +485,6 @@ def test_the_shipped_jsonl_converts_back_to_the_binary(case: Case) -> None:
     assert got == expected, f"{case.name}: the JSONL does not rebuild the binary"
 
 
-@pending_version_gate
 @pytest.mark.parametrize("case", _readable_params())
 def test_a_vector_survives_a_canonical_re_encode(case: Case) -> None:
     """Re-encoding a parsed vector from scratch loses nothing.
@@ -547,7 +622,6 @@ def test_a_pairwise_vector_is_caught(vector: str) -> None:
     assert all(f.category == "discontinuity-splice" for f in findings)
 
 
-@pending_version_gate
 def test_a_clean_pair_reports_nothing() -> None:
     """The chain's own hops splice nothing, so the checker stays quiet."""
     chain = VECTORS / "chain"

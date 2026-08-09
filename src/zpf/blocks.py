@@ -1,4 +1,4 @@
-"""Typed block model for the Zipline Payload Format v0.14.
+"""Typed block model for the Zipline Payload Format v0.16.
 
 One frozen dataclass per block type, mirroring the specification's normative
 binary encoding. Each class knows how to serialize itself (:meth:`Block.to_bytes`)
@@ -39,7 +39,7 @@ _SWAPPED_MAGIC = 0x4650495A
 #: ``(version_major, version_minor)``. A writer stamps the version it
 #: implements; there is no obligation to compute the lowest version whose
 #: features a file happens to use.
-SPEC_VERSION: tuple[int, int] = (0, 14)
+SPEC_VERSION: tuple[int, int] = (0, 16)
 
 
 #: The canonical :class:`Undecoded` ``reason`` values, mapped to their
@@ -104,10 +104,38 @@ class SourceKind(IntEnum):
     """The ``kind`` of a Source Descriptor."""
 
     CAPTURE = 0
-    """A raw capture source (a pcap file or interface)."""
+    """A capture source (a pcap file or interface)."""
 
     ZPF_INPUT = 1
     """Another ``.zpf`` file this file was derived from."""
+
+
+class OutputLayer(IntEnum):
+    """The layer a decoder emits, from the Decoder Descriptor **body**.
+
+    The layer decides a stream's offset space, and it is not answered by
+    ``decoder_id`` alone: the rule is *layer = decoder present ? that
+    decoder's* ``output_layer`` *: transport*. Reassembly is a decoder too,
+    so a record may carry a ``decoder_id`` and still be a byte run.
+
+    ``DECODED`` is ``0`` because the field occupies two bytes that were
+    ``_reserved`` before 0.15, which a conformant writer MUST have written
+    ``0`` — so every Decoder Descriptor ever written already holds the value
+    that says what it always meant. The ordering is deliberately *not*
+    parallel to :class:`SourceKind`.
+
+    Like :class:`SourceKind` and unlike ``tcp_role``, this enum is
+    **load-bearing**: an unrecognized value leaves a reader unable to compute
+    the stream's offset space at all, so it MUST NOT be guessed and MUST NOT
+    fall back to the absent-means-decoded default. It is kept as a plain
+    ``int``, preserved through a round-trip, and isolated by the checker.
+    """
+
+    DECODED = 0
+    """Protocol messages — offsets are the concatenation of record payloads."""
+
+    TRANSPORT = 1
+    """Byte runs — hole-inclusive offsets, as a reassembler produces."""
 
 
 class TcpRole(IntEnum):
@@ -763,21 +791,29 @@ class Source(Block):
         return cls(source_id=source_id, kind=kind, extra_options=extras, **values)
 
 
-_DECODER_BODY = struct.Struct("<HH")
+_DECODER_BODY = struct.Struct("<HBB")
 
 
 @dataclass(frozen=True)
 class Decoder(Block):
-    """Decoder Descriptor block (``0x03``) — files carrying a decoded layer.
+    """Decoder Descriptor block (``0x03``) — one decoding this file references.
 
-    That is a decode stage's output, or a pass-through preserving one: such
-    a transform re-declares the descriptors that its inherited
-    ``decoder_id`` values reference, because a filtered or re-emitted HTTP
+    It appears wherever a ``decoder_id`` is referenced, whatever the
+    stream's provenance: in the file whose stage ran the decoder, and in any
+    pass-through re-emitting its records — a filtered or re-emitted HTTP
     message is still an HTTP message.
 
+    Not only in files carrying a *decoded* layer. A reassembler is a decoder
+    that declares ``output_layer = TRANSPORT``, which is what gives its
+    overlap policy and timeout a ``params_digest`` to live in.
 
     Attributes:
         decoder_id: Id referenced per-record.
+        output_layer: The layer this decoder emits —
+            :attr:`OutputLayer.DECODED` or :attr:`OutputLayer.TRANSPORT`
+            (an unrecognized u8 value is kept as a plain ``int``). A body
+            field, so it is always present and has no absent case; it
+            defaults to ``DECODED``, the value every pre-0.15 writer wrote.
         name: Decoder identifier, e.g. ``"http/1.1"``.
         version: Decoder version.
         params_digest: Hash of the decoder config, for reproducible decodes.
@@ -789,6 +825,7 @@ class Decoder(Block):
     block_type: ClassVar[int] = _frame.BT_DECODER
 
     decoder_id: int
+    output_layer: OutputLayer | int = OutputLayer.DECODED
     name: str | None = None
     version: str | None = None
     params_digest: str | None = None
@@ -804,16 +841,22 @@ class Decoder(Block):
 
     def __post_init__(self) -> None:
         _check_uint(self.decoder_id, 16, "decoder_id")
+        _check_uint(int(self.output_layer), 8, "output_layer")
+        if not isinstance(self.output_layer, OutputLayer) and int(self.output_layer) in (0, 1):
+            object.__setattr__(self, "output_layer", OutputLayer(self.output_layer))
         object.__setattr__(self, "extra_options", tuple(self.extra_options))
 
     def _encode(self) -> bytes:
-        return _DECODER_BODY.pack(self.decoder_id, 0) + _encode_options(self, self._SPEC.ordered)
+        body = _DECODER_BODY.pack(self.decoder_id, int(self.output_layer), 0)
+        return body + _encode_options(self, self._SPEC.ordered)
 
     @classmethod
     def _parse(cls, content: bytes) -> Self:
-        decoder_id, _reserved = cls._body(content, _DECODER_BODY)
+        decoder_id, output_layer, _reserved = cls._body(content, _DECODER_BODY)
         values, extras = _parse_options(content[_DECODER_BODY.size :], cls._SPEC.by_id)
-        return cls(decoder_id=decoder_id, extra_options=extras, **values)
+        return cls(
+            decoder_id=decoder_id, output_layer=output_layer, extra_options=extras, **values
+        )
 
 
 _SESSION_BODY = struct.Struct("<Q")

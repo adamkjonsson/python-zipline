@@ -40,6 +40,7 @@ from zpf.blocks import (
     FileHeader,
     InputExtent,
     NameResolution,
+    OutputLayer,
     Participant,
     Record,
     RecordFlags,
@@ -314,15 +315,21 @@ class FileWriter:
         self,
         name: str,
         *,
+        output_layer: OutputLayer | int = OutputLayer.DECODED,
         version: str | None = None,
         params_digest: str | None = None,
         comment: str | None = None,
         decoder_id: int | None = None,
     ) -> DecoderHandle:
-        """Declare a Decoder (decode-stage files) and return its handle.
+        """Declare a Decoder and return its handle.
 
         Args:
             name: Decoder identifier, e.g. ``"http/1.1"``.
+            output_layer: The layer this decoder emits. Leave it at
+                :attr:`~zpf.OutputLayer.DECODED` for an app decoder; pass
+                :attr:`~zpf.OutputLayer.TRANSPORT` for a reassembler, which
+                is what lets one name itself and record its overlap policy
+                in ``params_digest``.
             version: Decoder version.
             params_digest: Hash of the decoder config.
             comment: Free-text note.
@@ -335,7 +342,7 @@ class FileWriter:
         chosen, self._next_decoder = _allocate(self._decoder_ids, decoder_id, self._next_decoder)
         self._emit(
             Decoder(
-                decoder_id=chosen, name=name, version=version,
+                decoder_id=chosen, output_layer=output_layer, name=name, version=version,
                 params_digest=params_digest, comment=comment,
             )
         )
