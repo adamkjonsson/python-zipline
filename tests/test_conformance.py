@@ -161,12 +161,16 @@ def test_raw_and_derived_records_never_mix():
     )
 
 
-def test_decoded_record_must_reference_a_zpf_input_source():
-    reject(
-        DERIVED_HEADER, CAP, DEC, SESS, PART,
-        raw_record(source_id=1, decoder_id=3),
-        match="zpf-input",
-    )
+def test_a_capture_sourced_record_may_carry_a_decoder_id():
+    """0.15 legalised both capture-sourced shapes, and each has a vector.
+
+    A decoded stream with no predecessor file — a TLS-terminating proxy,
+    an ``SSL_write`` uprobe — is ``proxy-decoded``. A head-of-pipeline
+    reassembler declaring itself, with ``output_layer = transport``, is
+    ``reassembler-declared``. The retired rule inferred the layer from
+    ``decoder_id`` and the provenance from the layer; both steps were wrong.
+    """
+    accept(HEADER, CAP, DEC, SESS, PART, raw_record(source_id=1, decoder_id=3))
 
 
 def test_undecoded_only_in_decode_stage_files():
@@ -306,11 +310,20 @@ def test_decoder_id_no_longer_decides_the_file_kind():
     assert checker.file_kind == "pass-through"
 
 
-def test_span_sources_match_the_record_kind():
+def test_a_records_spans_name_a_zpf_input_source():
+    """Keyed on carrying ``spans``, not on carrying a ``decoder_id``.
+
+    A record with spans is a decode stage's output, and §Conformance
+    requires those to reference a ``zpf-input`` Source. It used to be keyed
+    on ``decoder_id``, which asked for a *capture* span from a record
+    without one — an inference the two-axis model removed.
+
+    The Undecoded block's body is the same packed shape and is deliberately
+    not held to this: it may name a capture, which is Phase 5's reading.
+    """
     input_span = Span(source_id=2, session_id=9, participant_id=0, off_start=0, off_end=1)
     capture_span = Span(source_id=1, session_id=0, participant_id=0, off_start=0, off_end=1)
-    accept(*RAW_PRELUDE, raw_record(spans=(capture_span,)))  # capture provenance is fine
-    reject(HEADER, CAP, INP, SESS, PART, raw_record(spans=(input_span,)), match="CAPTURE source")
+    accept(DERIVED_HEADER, INP, DEC, SESS, PART, raw_record(source_id=2, spans=(input_span,)))
     reject(
         DERIVED_HEADER, INP, DEC, CAP, SESS, PART,
         raw_record(source_id=2, decoder_id=3, spans=(capture_span,)),

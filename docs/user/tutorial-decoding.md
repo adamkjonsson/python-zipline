@@ -104,7 +104,7 @@ the wrong stream. See
 
 ```console
 $ python 06_write_decoder.py
-file_kind: decode-stage
+stream 0:  zpf_input decoded
 decoder:   http/1.1 tutorial
   dec:http-request: b'GET /users/1 HTTP/1.1\r\nHost: api.example'
   dec:http-response: b'HTTP/1.1 200 OK\r\nContent-Type: applicati'

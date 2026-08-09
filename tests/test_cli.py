@@ -27,7 +27,7 @@ def test_info(golden_path: Path, capsys: pytest.CaptureFixture[str]):
     assert main(["info", str(golden_path)]) == 0
     out = capsys.readouterr().out
     assert "face:      binary" in out
-    assert "kind:      raw" in out
+    assert "stream 0: capture transport" in out
     assert "source 1: capture sideA.pcap" in out
     assert "session 7: proto=tcp" in out
     assert "participants=[10.0.0.1:51000] records=1" in out
@@ -120,7 +120,10 @@ def test_merge_end_to_end(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
     assert main(["validate", "--verify", str(merged)]) == 0
     capsys.readouterr()
     with zpf.open(merged) as f:
-        assert f.file_kind == "pass-through"
+        assert f.stream_kind(f.sessions()[0].session_id, 0) == (
+            zpf.SourceKind.ZPF_INPUT,
+            zpf.OutputLayer.TRANSPORT,
+        )
         assert f.header.produced_by == f"zpf {zpf.__version__}"
 
 

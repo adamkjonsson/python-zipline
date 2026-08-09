@@ -43,7 +43,10 @@ def test_merge_produces_the_specs_pass_through_file(sides: tuple[Path, Path], tm
     output = tmp_path / "merged.zpf"
     zpf.merge_files(side_a, side_b, output, produced_by="zpf-merge 1.2", produced_at=1_719_510_000)
     with zpf.open(output) as merged:
-        assert merged.file_kind == "pass-through"
+        assert merged.stream_kind(merged.sessions()[0].session_id, 0) == (
+            zpf.SourceKind.ZPF_INPUT,
+            zpf.OutputLayer.TRANSPORT,
+        )
         assert merged.complete
         assert merged.diagnostics == []
         header = merged.header
@@ -122,12 +125,38 @@ def test_merge_rejects_non_canonical_shapes(sides: tuple[Path, Path], tmp_path: 
         zpf.merge_files(side_a, two_participants, tmp_path / "out.zpf", produced_by="t 1")
 
 
-def test_merge_rejects_derived_inputs(sides: tuple[Path, Path], tmp_path: Path):
+def test_merge_rejects_an_already_merged_input_for_its_shape(
+    sides: tuple[Path, Path], tmp_path: Path
+):
+    """Rejected for holding two directions, not for being derived.
+
+    The bar used to be ``file_kind == "raw"``, which caught this file for
+    the wrong reason. Since 0.15 made provenance and layer independent,
+    being derived says nothing about whether a file is mergeable: a merged
+    file is a transport stream and its offsets are preserved. What still
+    disqualifies it is that the merge takes **one captured direction per
+    input**, and this holds both.
+    """
     side_a, side_b = sides
     merged = tmp_path / "merged.zpf"
     zpf.merge_files(side_a, side_b, merged, produced_by="t 1")
-    with pytest.raises(zpf.ZpfError, match="pass-through file"):
+    with pytest.raises(zpf.ZpfError, match="2 participants"):
         zpf.merge_files(merged, side_b, tmp_path / "out.zpf", produced_by="t 1")
+
+
+def test_merge_rejects_a_decoded_input(tmp_path: Path):
+    """The layer is the bar, and a decoded stream fails it.
+
+    Its offsets are a concatenation of record payloads, which a re-emission
+    into a merged file does not preserve — so there is nothing for the merge
+    to be faithful to, whatever the file's provenance.
+    """
+    raw = tmp_path / "raw.zpf"
+    write_raw(raw)
+    decoded = tmp_path / "decoded.zpf"
+    write_decoded(decoded, raw, [(0, 139)], [])
+    with pytest.raises(zpf.ZpfError, match="decoded layer"):
+        zpf.merge_files(decoded, raw, tmp_path / "out.zpf", produced_by="t 1")
 
 
 # --- check_coverage ---------------------------------------------------------------
@@ -312,7 +341,7 @@ def test_a_filter_stage_is_a_decode_stage_not_a_pass_through(tmp_path: Path):
     zpf.rewrite_decoded(src, out, keep=lambda r: r.payload != b"BB",
                         produced_by="zpf-filter 1.0", produced_at=2)
     with zpf.open(out) as f:
-        assert f.file_kind == "decode-stage"
+        assert f.stream_kind(7, 0) == (zpf.SourceKind.ZPF_INPUT, zpf.OutputLayer.DECODED)
         assert f.diagnostics == []
         session = f.session(7)
         assert [r.payload for r in session.stream(0)] == [b"AAA", b"CCCC"]
@@ -438,7 +467,9 @@ def test_check_coverage_cross_checks_a_declared_extent_against_the_input(tmp_pat
         session = next(iter(reader.sessions()))
         participant = session.participants[0]
         pid = participant.participant_id
-        actual = zpf.reassembly.stream_extent(participant, list(session.stream_blocks(pid)))
+        actual = zpf.reassembly.stream_extent(
+            participant, list(session.stream_blocks(pid)), session.layer(pid)
+        )
 
     decoded = tmp_path / "decoded.zpf"
     blocks = [

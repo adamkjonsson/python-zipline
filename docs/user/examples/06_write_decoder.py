@@ -82,7 +82,8 @@ with zpf.decode_stage(
 
 # Read the decode stage back, then prove it accounts for every input byte.
 with zpf.open("rest_decoded.zpf") as decoded:
-    print(f"file_kind: {decoded.file_kind}")
+    provenance, layer = decoded.stream_kind(7, 0)
+    print(f"stream 0:  {provenance.name.lower()} {layer.name.lower()}")
     print(f"decoder:   {decoded.decoders[0].name} {decoded.decoders[0].version}")
     (session,) = decoded.sessions()
     for record in session.records():

@@ -28,36 +28,89 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from zpf.blocks import Discontinuity, Record, Span
-from zpf.errors import ZpfError
+from zpf.blocks import Discontinuity, OutputLayer, Record, Span
+from zpf.errors import SemanticError, ZpfError
 from zpf.order import SEQ_SPACE
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Sequence
+    from collections.abc import Callable, Iterator, Mapping, Sequence
 
-    from zpf.blocks import Participant
+    from zpf.blocks import Decoder, Participant
     from zpf.writer import SourceHandle
 
 
-def is_decoded_stream(records: Sequence[Record]) -> bool:
-    """Return whether a participant's records form a *decoded* layer.
+def stream_layer(
+    records: Sequence[Record], decoders: Mapping[int, Decoder]
+) -> OutputLayer | int:
+    """Resolve the layer of one participant's stream.
 
-    A record is decoded iff it carries a ``decoder_id``, and that is what
-    selects the stream's offset space — not whether it happens to carry
-    transport hints.
+    The rule is *layer = decoder present ? that decoder's* ``output_layer``
+    *: transport*. Both halves matter: reassembly is a decoder too, so
+    carrying a ``decoder_id`` no longer means a record is decoded, and the
+    answer needs the Decoder table rather than the records alone. That is
+    why this takes ``decoders`` and why it replaced the old
+    ``is_decoded_stream``, whose signature could not be repaired.
+
+    The layer is a property of the **stream**, so it is resolved once per
+    participant rather than per record — which the specification licenses
+    only because every record of a participant must resolve to the same
+    layer. Where they do not, there is no answer to give and this says so
+    rather than picking one: silently choosing would put every offset in
+    the participant in the wrong space, which is the exact failure the rule
+    exists to prevent.
 
     Args:
         records: The participant's records, in stored order.
+        decoders: The file's declared Decoders, by ``decoder_id``.
+            Declare-on-first-use guarantees every id a record references is
+            already in here.
 
     Returns:
-        True if any record carries a ``decoder_id``.
+        The stream's layer. An :class:`~zpf.blocks.OutputLayer` where the
+        declared value is one this version defines, and the raw ``int``
+        where it is not — a caller cannot compute an offset space from that
+        and must not guess, but the value is reported rather than hidden. A
+        participant with no records is ``TRANSPORT``, the no-decoder answer.
+
+    Raises:
+        SemanticError: If the records resolve to two different layers, or
+            reference a ``decoder_id`` the file never declared.
 
     """
-    return any(record.decoder_id is not None for record in records)
+    layers: set[OutputLayer | int] = set()
+    for record in records:
+        if record.decoder_id is None:
+            layers.add(OutputLayer.TRANSPORT)
+            continue
+        decoder = decoders.get(record.decoder_id)
+        if decoder is None:
+            msg = (
+                f"record references undeclared decoder_id {record.decoder_id}, "
+                f"so its layer cannot be resolved"
+            )
+            raise SemanticError(msg)
+        layers.add(decoder.output_layer)
+    if not layers:
+        return OutputLayer.TRANSPORT
+    if len(layers) > 1:
+        named = ", ".join(sorted(layer_name(layer) for layer in layers))
+        msg = (
+            f"participant mixes layers ({named}), so its offset space has no "
+            f"single definition; a reader MUST NOT pick one"
+        )
+        raise SemanticError(msg)
+    return layers.pop()
+
+
+def layer_name(layer: OutputLayer | int) -> str:
+    """Name a layer for a diagnostic, without pretending to know an unknown one."""
+    return layer.name.lower() if isinstance(layer, OutputLayer) else f"output_layer {int(layer)}"
 
 
 def record_ranges(
-    participant: Participant, blocks: Sequence[Record | Discontinuity]
+    participant: Participant,
+    blocks: Sequence[Record | Discontinuity],
+    layer: OutputLayer | int,
 ) -> tuple[tuple[int, int], ...]:
     """Compute the offset range each record occupies in its own stream.
 
@@ -91,6 +144,11 @@ def record_ranges(
             stored order. Stored order is what defines the space, so the
             blocks' positions among the records are what make their widths
             terms.
+        layer: The stream's layer, from :func:`stream_layer`. Required
+            rather than re-derived, because deriving it needs the file's
+            Decoder table and this function is handed one participant's
+            blocks. Passing the wrong one silently misplaces every record,
+            so there is deliberately no default.
 
     Returns:
         One ``(off_start, off_end)`` per :class:`~zpf.blocks.Record` in
@@ -99,9 +157,21 @@ def record_ranges(
         record carrying no ``seq_start`` — gets a zero-width range at the
         stream's current end, since it contributes no bytes.
 
+    Raises:
+        SemanticError: If ``layer`` is a value this version does not define.
+            Both offset spaces are wrong for a layer we cannot name, and the
+            specification is explicit that a reader MUST NOT guess one.
+
     """
+    if not isinstance(layer, OutputLayer):
+        msg = (
+            f"cannot compute an offset space for {layer_name(layer)}: the value is "
+            f"not one this version defines, and guessing a layer would read the "
+            f"stream in the wrong space"
+        )
+        raise SemanticError(msg)
     records = [block for block in blocks if isinstance(block, Record)]
-    decoded = is_decoded_stream(records)
+    decoded = layer is OutputLayer.DECODED
     origin: int | None = None
     if not decoded:
         if participant.isn is not None:
@@ -133,12 +203,17 @@ def record_ranges(
     return tuple(ranges)
 
 
-def stream_extent(participant: Participant, blocks: Sequence[Record | Discontinuity]) -> int:
+def stream_extent(
+    participant: Participant,
+    blocks: Sequence[Record | Discontinuity],
+    layer: OutputLayer | int,
+) -> int:
     """Return one past the last offset the participant's stream reaches.
 
     Args:
         participant: The participant whose stream this is.
         blocks: Its records and Discontinuity blocks, in stored order.
+        layer: The stream's layer, from :func:`stream_layer`.
 
     Returns:
         The stream's extent in its own offset space, 0 when empty.
@@ -153,7 +228,7 @@ def stream_extent(participant: Participant, blocks: Sequence[Record | Discontinu
         trailing break, so this does not invent an answer for it.
 
     """
-    return max((end for _, end in record_ranges(participant, blocks)), default=0)
+    return max((end for _, end in record_ranges(participant, blocks, layer)), default=0)
 
 
 @dataclass(frozen=True)

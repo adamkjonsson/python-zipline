@@ -170,7 +170,7 @@ def test_decode_stage_writes_a_conformant_decode_stage_file(tmp_path: Path):
     run_http_decode(path, sink)
 
     with zpf.open(io.BytesIO(sink.getvalue())) as out:
-        assert out.file_kind == "decode-stage"
+        assert out.stream_kind(7, 0) == (zpf.SourceKind.ZPF_INPUT, zpf.OutputLayer.DECODED)
         assert out.complete
         assert out.diagnostics == []
         assert out.header.tick_hz == 1_000_000  # copied from the input

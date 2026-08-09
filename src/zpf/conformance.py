@@ -549,13 +549,17 @@ class ConformanceChecker:
         inherited ones forward, so it says nothing about which stage ran.
         """
         source_kind = self._require_source(block.source_id, described)
-        if block.decoder_id is not None:
-            if block.decoder_id not in self._decoders:
-                msg = f"{described} names undeclared decoder {block.decoder_id}"
-                raise SemanticError(msg)
-            if source_kind != SourceKind.ZPF_INPUT:
-                msg = f"{described} is decoded, so it must reference a zpf-input source"
-                raise SemanticError(msg)
+        if block.decoder_id is not None and block.decoder_id not in self._decoders:
+            msg = f"{described} names undeclared decoder {block.decoder_id}"
+            raise SemanticError(msg)
+        # Carrying a decoder_id no longer implies a zpf-input Source. Both
+        # capture-sourced shapes are legal since 0.15 and each has a vector:
+        # a decoded stream with no predecessor file (a TLS-terminating
+        # proxy, `proxy-decoded`), and a head-of-pipeline reassembler
+        # declaring itself with output_layer = transport
+        # (`reassembler-declared`). The old rule read the layer off
+        # decoder_id and the provenance off the layer, and both halves of
+        # that were wrong.
         if source_kind == SourceKind.CAPTURE:
             self._lock_kind(_RAW, f"{described} (byte run from a capture source)")
         elif source_kind == SourceKind.ZPF_INPUT:
@@ -566,14 +570,24 @@ class ConformanceChecker:
         else:
             msg = f"{described} references source {block.source_id} of unknown kind {source_kind}"
             raise SemanticError(msg)
-        self._check_spans(block.spans, decoded=block.decoder_id is not None, described=described)
+        self._check_spans(block.spans, described=described)
 
-    def _check_spans(self, spans: tuple[Span, ...], *, decoded: bool, described: str) -> None:
-        wanted = SourceKind.ZPF_INPUT if decoded else SourceKind.CAPTURE
+    def _check_spans(self, spans: tuple[Span, ...], *, described: str) -> None:
+        """Check a record's spans name an input this file declared as a `.zpf`.
+
+        Keyed on carrying ``spans`` rather than on carrying a
+        ``decoder_id``: a record with spans is a decode stage's output, and
+        §Conformance requires those to reference a ``zpf-input`` Source.
+        Every ``spans`` entry in all 53 vectors does.
+
+        An **Undecoded** block's body is the same packed shape and is *not*
+        checked here, because it may name a capture — that reading is
+        Phase 5's.
+        """
         for span in spans:
             kind = self._require_source(span.source_id, f"{described} span")
-            if kind != wanted:
-                msg = f"{described} span must reference a {wanted.name} source"
+            if kind != SourceKind.ZPF_INPUT:
+                msg = f"{described} span must reference a ZPF_INPUT source"
                 raise SemanticError(msg)
 
     def _check_record_order(self, block: Record, state: _SessionState, described: str) -> None:

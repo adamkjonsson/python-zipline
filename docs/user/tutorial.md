@@ -60,9 +60,10 @@ session 0: tcp '10.0.0.1:51000 <-> 93.184.216.34:80'
 ```
 
 `session.records()` reads each record from disk as the loop asks for it —
-opening a file does not load its payloads into memory. `file_kind` reports
-`"raw"` because these records reference a `capture` source directly (as
-opposed to a decode stage or a merge); see
+opening a file does not load its payloads into memory. `reader.stream_kind(7, 0)`
+reports `(CAPTURE, TRANSPORT)` for this stream: its records reference a
+`capture` source directly, and no decoder ran over them. The two answers are
+independent — see
 [File kinds](concepts.md#file-kinds-raw-decode-stage-pass-through).
 
 ## 3. Causal order

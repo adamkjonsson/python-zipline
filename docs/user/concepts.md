@@ -186,9 +186,10 @@ carrying `spans` was built by this file's stage; a record without them,
 whose participant carries `origin`, was re-emitted from the input.
 `decoder_id` answers a different question — *which decoder's layer* a record
 belongs to — and a pass-through carries inherited ones forward, so it says
-nothing about which stage ran. Whether a record is *decoded* is still told
-solely by whether it carries a `decoder_id`. {attr}`FileReader.file_kind
-<zpf.reader.FileReader.file_kind>` reports the file's kind.
+nothing about which stage ran. Whether a stream is *decoded* is **not** told by whether its records carry a
+`decoder_id` — reassembly is a decoder too. It comes from that decoder's
+declared `output_layer`; {meth}`FileReader.stream_kind
+<zpf.reader.FileReader.stream_kind>` reports both axes for one stream.
 
 Raw and decoded views live in **separate files** because their boundaries
 rarely align — one HTTP message can start and end mid-way through raw
