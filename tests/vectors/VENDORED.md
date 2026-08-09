@@ -52,10 +52,15 @@ vector that seems wrong is a question for the spec repository, not a local patch
 
 ## Known defects
 
-**None at `v0.16`.** Three have been found in total — two against `v0.12` and one
-against `v0.15` — and all three were fixed upstream;
-[`VECTOR-DEFECTS.md`](../../VECTOR-DEFECTS.md) at the repository root is the
-closed record of them.
+**One open at `v0.16`** — `tunnel/inner.jsonl` and `tunnel/outer.jsonl` spell
+the Session flow key `"flow_key"` where the normative JSONL mapping lists it
+among the brevity aliases as `"key"`, and where `descriptive-metadata.jsonl` in
+this same tree writes `"key"`. Both files are held in `DEFECTIVE` in
+[`../test_vectors.py`](../test_vectors.py) rather than accommodated. Details as
+defect 4 in [`VECTOR-DEFECTS.md`](../../VECTOR-DEFECTS.md).
+
+Three others have been found — two against `v0.12` and one against `v0.15` — and
+all three were fixed upstream; the same file is the closed record of them.
 
 The third is worth knowing about while reading these files, because it is the one
 whose fix changed a vector's **bytes**: `undecoded-in-capture` shipped at `v0.15`

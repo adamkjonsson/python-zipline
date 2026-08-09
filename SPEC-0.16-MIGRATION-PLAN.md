@@ -65,10 +65,11 @@ Four vectors are new since the review was written and were not sized there:
 
 ---
 
-## One defect in `0.16`, found while reading it
+## The first defect in `0.16`, found while reading it
 
 *Reported upstream as
-[zipline#103](https://github.com/adamkjonsson/zipline/issues/103).*
+[zipline#103](https://github.com/adamkjonsson/zipline/issues/103). Later ones are
+in the [register](#phase-8--prose-and-the-upstream-report).*
 
 **§Layers still asserts the file-purity rule `0.15` replaced.** Line 741 of the
 specification reads:
@@ -91,6 +92,10 @@ its replacement. `#103` proposes the wording and the ratchet entry.
 agree, and the offending sentence even points the reader at §Conformance. But an
 implementer reading §Layers front-to-back builds the wrong classifier, which is
 exactly what our `conformance.py` does today.
+
+It was the first defect this port found and it is not the last. The running list
+is the [register in Phase 8](#phase-8--prose-and-the-upstream-report), which is
+also where each one gets reported upstream.
 
 ---
 
@@ -314,12 +319,39 @@ self-derivation check, plus the harness's advisory path. Targets
 D6's seam API; the filter's width; the reassembler declaration; the
 sessionization stage. Round-trips every accept vector through our own writer.
 
-### Phase 8 — prose
+### Phase 8 — prose, and the upstream report
 Retire "raw" throughout `docs/`, `README.md`, `DECODER_API.md`,
 `CONTENT_TYPE_API.md`. **Larger than a `sed`**: several passages explain *why*
 raw and derived line up, which is the thing that stopped being true. Record the
 F5 non-adoption and the F7 unenforceable rule in `docs/dev/conformance.md`, so
 neither reads as an oversight in our checker.
+
+**And file an issue upstream for every defect this port found**, on
+[`adamkjonsson/zipline`](https://github.com/adamkjonsson/zipline/issues), one
+issue per defect, in the house style of `#89`/`#91`: the quoted text with its
+line citation, what contradicts it, why it survived, then a `## Fix` section
+proposing wording. Where the defect is vector-side, say which artifact has to
+change and why the text is not the thing that is wrong.
+
+Batching them here rather than filing as we go is deliberate. A defect found at
+Phase 1 is a guess about what the text means; the same defect after the rule is
+implemented and the vectors are passing is a report backed by a working reader,
+and that is worth more to the maintainer than being three days earlier. It also
+lets one issue reference another where two turn out to share a cause, as `#89`
+and `#91` did.
+
+**The register.** Every defect goes in the table below as it is found, whichever
+phase finds it, so nothing is left to be remembered at the end. A vector-side
+defect is *also* recorded in `VECTOR-DEFECTS.md` and held in the harness's
+`DEFECTIVE` — the issue is the report, that file is our record, and the two are
+kept in step.
+
+| # | Defect | Found | Kind | Upstream |
+|---|---|---|---|---|
+| 1 | §Layers still asserts a derived file is "never a mix", which §Conformance and `mixed-derivation` contradict | reading `0.16` | text | **filed**, [#103](https://github.com/adamkjonsson/zipline/issues/103) |
+| 2 | `tunnel/{inner,outer}.jsonl` spell the flow key `flow_key`, where the JSONL mapping's alias table says `key` and `descriptive-metadata.jsonl` writes `key`. The tunnel walkthrough (spec `:1183`, `:1194`) has the same slip | Phase 1 | vector + text | to file — `VECTOR-DEFECTS.md` defect 4 |
+
+Phase 8 is done when every row reads **filed** and carries its issue number.
 
 ---
 
@@ -347,9 +379,10 @@ public-API break and its docs. Phase 4 is a day, and is mostly deletion. Phase 6
 is the hard one — the predicate is small but every near-miss vector has to be
 verified against it individually — call it two days. Phase 7 is two days,
 because the seam API is a new user-facing concept rather than a rule. Phase 8 is
-a day.
+a day and a half: a day of prose, and half a day for the upstream issues, which
+is the register's length times the half-hour a well-evidenced issue takes.
 
-Call it **eight to nine working days**, with Phase 6 the one that can overrun.
+Call it **eight to ten working days**, with Phase 6 the one that can overrun.
 
 Nothing here is blocked. `0.16` resolved both findings that would have stopped
 us, which is the whole reason to port to it rather than to `0.15`.

@@ -172,6 +172,43 @@ def test_unknown_source_kind_is_kept_as_int():
     )
 
 
+def test_a_decoder_declares_the_layer_it_emits():
+    """``output_layer`` is a body field, so it is always present."""
+    reassembler = zpf.Decoder(decoder_id=1, output_layer=zpf.OutputLayer.TRANSPORT, name="tcp-r")
+    reparsed = zpf.Decoder.from_content(reassembler.to_bytes())
+    assert reparsed.output_layer is zpf.OutputLayer.TRANSPORT
+    assert reparsed.name == "tcp-r"
+
+
+def test_a_decoder_defaults_to_the_decoded_layer():
+    """The default is the value every pre-0.15 writer already wrote.
+
+    ``decoded`` is ``0`` and the field occupies bytes that were ``_reserved``,
+    which a conformant writer MUST have written ``0``. So a Decoder built
+    without naming a layer encodes the same four body bytes it always did,
+    and a descriptor written before the field existed parses as ``DECODED``
+    rather than as an absent value.
+    """
+    assert zpf.Decoder(decoder_id=1).output_layer is zpf.OutputLayer.DECODED
+    body = zpf.Decoder(decoder_id=1).to_bytes()[:4]
+    assert body == b"\x01\x00\x00\x00"
+
+
+def test_unknown_output_layer_is_kept_as_int():
+    """Load-bearing, like Source ``kind``: preserved, never guessed.
+
+    A reader that met this value could not compute the stream's offset space,
+    so it must not fall back to the absent-means-decoded default — absence and
+    an unrecognized value are different statements. The block model's whole
+    duty is to carry the byte through a round-trip; isolating on it is the
+    checker's, at Phase 5.
+    """
+    decoder = zpf.Decoder(decoder_id=1, output_layer=9)
+    reparsed = zpf.Decoder.from_content(decoder.to_bytes())
+    assert reparsed.output_layer == 9
+    assert not isinstance(reparsed.output_layer, zpf.OutputLayer)
+
+
 def test_spans_auto_chunking_and_concatenation():
     many = tuple(
         zpf.Span(source_id=1, session_id=1, participant_id=0, off_start=i, off_end=i + 1)
@@ -269,6 +306,7 @@ def test_replace_drops_the_byte_cache():
         lambda: zpf.FileHeader(tick_hz=1, version_major=2),
         lambda: zpf.FileHeader(tick_hz=2**64),
         lambda: zpf.Source(source_id=2**16, kind=0),
+        lambda: zpf.Decoder(decoder_id=1, output_layer=2**8),
         lambda: zpf.Session(session_id=2**64),
         lambda: zpf.Session(session_id=-1),
         lambda: zpf.Participant(session_id=1, participant_id=0, isn=2**32),
