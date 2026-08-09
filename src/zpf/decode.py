@@ -36,7 +36,7 @@ from typing import IO, TYPE_CHECKING
 
 from zpf._intervals import complement, intersections
 from zpf.blocks import InputExtent, Span
-from zpf.errors import ZpfError
+from zpf.errors import SemanticError, ZpfError
 from zpf.reader import FileReader
 from zpf.reassembly import Gap
 from zpf.writer import create
@@ -252,6 +252,20 @@ class DecodeStage:
 
         """
         all_spans = tuple(spans) + _as_spans(stream, cites)
+        if not all_spans:
+            # A decode stage's records are *created*, and spans are what say
+            # which input range each one corresponds to. Emitting one
+            # without them claims it was re-emitted unchanged, which this
+            # stage cannot mean, and leaves the region it came from outside
+            # the coverage guarantee. The checker cannot catch it: since
+            # 0.16 the created-versus-preserved discriminator binds per
+            # participant, and this participant's other records carry spans,
+            # so the stream is well formed and only the API knows better.
+            msg = (
+                "a decode stage's record must cite the input range it was built "
+                "from; pass cites= or spans=, or emit an Undecoded marker instead"
+            )
+            raise SemanticError(msg)
         self._track(self._cited, all_spans)
         stream.session.record(
             stream.handle,

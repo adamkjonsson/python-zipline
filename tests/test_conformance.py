@@ -30,15 +30,28 @@ def raw_record(**kwargs: object) -> zpf.Record:
 
 
 def accept(*blocks: zpf.Block) -> zpf.ConformanceChecker:
+    """Feed a stream without finalizing it.
+
+    Deliberately mid-stream: several tests assert that a deferred rule has
+    *not* fired yet, then drive Session End or :meth:`finish` themselves.
+    Use :func:`finished` to check a whole file.
+    """
     checker = zpf.ConformanceChecker()
     checker.check(blocks)
     return checker
 
 
 def reject(*blocks: zpf.Block, match: str) -> None:
-    """Assert the sequence's first finding isolates its block."""
+    """Assert the sequence's first finding isolates its block.
+
+    Finalizes, because since 0.16 a violation may only be decidable at the
+    end: both axes are properties of a *stream*, so the per-participant
+    rules wait until a participant's records are all in — Session End, or
+    end-of-stream for a session that never got one. A mid-stream violation
+    still raises where it always did.
+    """
     with pytest.raises(zpf.SemanticError, match=match) as caught:
-        accept(*blocks)
+        finished(*blocks)
     assert not isinstance(caught.value, zpf.AdvisoryError)
 
 
@@ -142,22 +155,24 @@ def test_order_is_per_participant():
 # --- File-kind purity --------------------------------------------------------------
 
 
-def test_raw_and_derived_records_never_mix():
+def test_one_participant_may_not_mix_layers():
     decoded = raw_record(
         source_id=2, decoder_id=3,
         spans=(Span(source_id=2, session_id=9, participant_id=0, off_start=0, off_end=1),),
     )
     reject(
         DERIVED_HEADER, CAP, INP, DEC, SESS, PART,
-        raw_record(),  # raw byte run from a capture source
-        decoded,
-        match="exactly one kind",
+        raw_record(),  # no decoder: transport by the layer rule
+        decoded,  # a decoder declaring `decoded`
+        match="resolves to two layers",
     )
+    # Order does not matter: the rule is about the set of layers a stream
+    # resolves to, not about which record arrived first.
     reject(
         DERIVED_HEADER, CAP, INP, DEC, SESS, PART,
         decoded,
         raw_record(),
-        match="exactly one kind",
+        match="resolves to two layers",
     )
 
 
@@ -173,9 +188,17 @@ def test_a_capture_sourced_record_may_carry_a_decoder_id():
     accept(HEADER, CAP, DEC, SESS, PART, raw_record(source_id=1, decoder_id=3))
 
 
-def test_undecoded_only_in_decode_stage_files():
+def test_an_undecoded_block_rides_beside_a_capture_sourced_stream():
+    """No longer a file-kind conflict, because there is no file kind.
+
+    An Undecoded block names an *input*; a capture-sourced record names a
+    capture. Both statements are about different streams and 0.15 stopped
+    them contradicting each other — which is what ``mixed-derivation``
+    ships. The block naming a ``capture`` Source is still refused here;
+    that reading is Phase 5's.
+    """
     undecoded = zpf.Undecoded(source_id=2, session_id=9, participant_id=0, off_start=0, off_end=4)
-    reject(DERIVED_HEADER, CAP, INP, SESS, PART, raw_record(), undecoded, match="exactly one kind")
+    finished(DERIVED_HEADER, CAP, INP, SESS, PART, raw_record(), undecoded)
     reject(
         DERIVED_HEADER, CAP, SESS, PART,
         zpf.Undecoded(source_id=1, session_id=9, participant_id=0, off_start=0, off_end=4),
@@ -292,22 +315,21 @@ def test_pass_through_records_carry_no_spans():
         DERIVED_HEADER, INP, SESS,
         zpf.Participant(session_id=5, participant_id=0, origin=ORIGIN),
         raw_record(source_id=2, spans=(span,)),
-        match="exactly one kind",
+        match="carries origin and holds records carrying spans",
     )
 
 
-def test_decoder_id_no_longer_decides_the_file_kind():
+def test_decoder_id_decides_neither_axis():
     # A pass-through preserving a decoded layer: records keep decoder_id and
     # content_type but carry no spans, provenance is the participants'
     # origin, and inherited Undecoded blocks ride along. 0.9 could not
     # express this, and a strict 0.9 reader refuses it.
-    checker = accept(
+    finished(
         DERIVED_HEADER, INP, DEC, SESS,
         zpf.Participant(session_id=5, participant_id=0, origin=ORIGIN),
         raw_record(source_id=2, decoder_id=3, content_type="dec:request"),
         zpf.Undecoded(source_id=2, session_id=9, participant_id=0, off_start=0, off_end=4),
     )
-    assert checker.file_kind == "pass-through"
 
 
 def test_a_records_spans_name_a_zpf_input_source():
@@ -334,26 +356,41 @@ def test_a_records_spans_name_a_zpf_input_source():
 # --- Pass-through origins ------------------------------------------------------------
 
 
-def test_origin_in_a_raw_file_is_a_violation():
-    with_origin = zpf.Participant(session_id=5, participant_id=1, origin=ORIGIN)
-    reject(HEADER, CAP, INP, SESS, PART, raw_record(), with_origin, match="exactly one kind")
+def test_origin_on_a_capture_sourced_stream_is_a_violation():
+    """Binds per stream, so the origin and the capture record must be one.
+
+    Under the file-wide rule these could sit on *different* participants
+    and still conflict. They cannot now, and should not: a file may hold a
+    preserved stream beside a captured one. What stays forbidden is one
+    stream claiming both — a capture-sourced stream's ``source_id`` is the
+    whole of its provenance.
+    """
+    reject(
+        DERIVED_HEADER, CAP, INP, SESS,
+        zpf.Participant(session_id=5, participant_id=0, origin=ORIGIN),
+        raw_record(source_id=1),
+        match="carries origin, but its records are capture-sourced",
+    )
 
 
-def test_pass_through_requires_origin_on_every_participant():
-    # Kind locks at the pass-through record; the earlier origin-less
-    # participant is reported retroactively.
+def test_a_zpf_sourced_stream_must_be_created_or_preserved():
+    """Neither is a violation of its own since 0.16, and it binds per stream.
+
+    A participant with no ``origin`` whose records carry no ``spans`` names
+    no provenance for its bytes at all: nothing resolves one level down and
+    no coverage obligation can be computed in either direction. It used to
+    be reachable only as a file-kind conflict, which meant a file with one
+    such stream and nothing else to conflict with passed.
+    """
     reject(
         DERIVED_HEADER, INP, SESS, PART,
         raw_record(source_id=2),
-        match="carries no origin",
+        match="neither origin nor records with spans",
     )
-    # And a later origin-less participant is caught directly.
-    reject(
-        DERIVED_HEADER, INP, SESS,
-        zpf.Participant(session_id=5, participant_id=0, origin=ORIGIN),
-        zpf.Participant(session_id=5, participant_id=1),
-        match="carries no origin",
-    )
+    # It binds on zpf-sourced streams alone: a capture-sourced participant
+    # correctly carries neither, and its source_id is the whole of its
+    # provenance.
+    finished(HEADER, CAP, SESS, PART, raw_record())
 
 
 def test_origin_must_reference_a_zpf_input_source():
@@ -393,7 +430,7 @@ def test_a_block_with_reserved_bits_is_still_absorbed():
     # a dropped Session Descriptor would take its participants and records.
     checker = accept(zpf.FileHeader(tick_hz=1, flags=zpf.FileFlags(0x0002)))
     checker.check([CAP, SESS, PART, raw_record()])  # the header counted; the file reads on
-    assert checker.file_kind == "raw"
+    checker.finish()
 
     checker = accept(HEADER, CAP, zpf.Session(session_id=5, flags=zpf.SessionFlags(0x0002)))
     checker.check([PART, raw_record()])  # the session counted; its records belong to it
@@ -423,7 +460,8 @@ def test_an_advisory_record_is_absorbed_before_it_is_reported():
         raw_record(payload=b"abc", content_type="prim:u32", seq_start=100),
         match="payload_len",
     )
-    assert checker.file_kind == "raw"
+    # The seq cursor advanced, which is what proves the record was counted.
+    checker.observe(raw_record(seq_start=200))
     with pytest.raises(zpf.SemanticError, match="seq_start order"):
         checker.observe(raw_record(seq_start=50))
 
@@ -449,19 +487,14 @@ def test_an_isolating_violation_outranks_an_advisory_one():
 
 
 def test_the_golden_file_passes():
-    checker = accept(*GOLDEN_BLOCKS)
-    assert checker.file_kind == "raw"
+    finished(*GOLDEN_BLOCKS)
 
 
 @pytest.mark.parametrize(
-    ("example", "kind"),
-    [(MERGED_EXAMPLE, "pass-through"), (DECODED_EXAMPLE, "decode-stage")],
-    ids=["merged", "decoded"],
+    "example", [MERGED_EXAMPLE, DECODED_EXAMPLE], ids=["merged", "decoded"]
 )
-def test_the_spec_derived_examples_pass(example: str, kind: str):
-    blocks = list(zpf.JsonlReader(io.StringIO(example)))
-    checker = accept(*blocks)
-    assert checker.file_kind == kind
+def test_the_spec_derived_examples_pass(example: str):
+    finished(*zpf.JsonlReader(io.StringIO(example)))
 
 
 # --- Flat-writer wiring -------------------------------------------------------------------
@@ -546,7 +579,7 @@ def test_a_raw_file_may_not_carry_a_transform_params_digest():
 
 
 def test_a_discontinuity_is_fine_in_a_decode_stage():
-    checker = accept(
+    finished(
         DERIVED_HEADER, INP, DEC, SESS, PART,
         zpf.Record(
             session_id=5, sender_pid=0, source_id=2, timestamp=0, payload=b"x",
@@ -555,7 +588,6 @@ def test_a_discontinuity_is_fine_in_a_decode_stage():
         ),
         zpf.Discontinuity(session_id=5, participant_id=0, width=25),
     )
-    assert checker.file_kind == "decode-stage"
 
 
 def test_a_discontinuity_names_a_participant_of_its_own_file():
@@ -673,7 +705,7 @@ def test_a_pass_through_is_not_held_to_the_coverage_guarantee():
     conformant vectors would fail.
     """
     origin = Origin(source_id=2, session_id=7, participant_id=0)
-    checker = accept(
+    checker = finished(
         DERIVED_HEADER, INP, DEC, SESS,
         zpf.Participant(session_id=5, participant_id=0, origin=origin),
         zpf.Record(session_id=5, sender_pid=0, source_id=2, timestamp=0,
@@ -681,5 +713,86 @@ def test_a_pass_through_is_not_held_to_the_coverage_guarantee():
         zpf.Undecoded(source_id=2, session_id=7, participant_id=0,
                       off_start=100, off_end=139, reason="undecodable"),
     )
-    assert checker.file_kind == "pass-through"
     assert checker.coverage_findings() == []
+
+
+# --- Per-participant classification (0.16) ---------------------------------------------
+
+
+def test_one_file_may_decode_one_stream_and_pass_another_through():
+    """``mixed-derivation``'s shape, and what file purity could not express.
+
+    The old rule left a tool with a decoder for one protocol and not the
+    other two dishonest options: pass everything through, or mark the second
+    stream entirely Undecoded, which drops those bytes from the output.
+    """
+    span = Span(source_id=2, session_id=9, participant_id=0, off_start=0, off_end=1)
+    finished(
+        DERIVED_HEADER, INP, DEC, SESS,
+        zpf.Participant(session_id=5, participant_id=0),  # created
+        zpf.Participant(session_id=5, participant_id=1, origin=ORIGIN),  # preserved
+        raw_record(source_id=2, sender_pid=0, decoder_id=3, spans=(span,)),
+        raw_record(source_id=2, sender_pid=1, decoder_id=3),
+    )
+
+
+def test_a_stream_resolving_to_an_undefined_layer_is_isolated():
+    """Absence and an unrecognised value are different statements.
+
+    Falling back to the absent-means-decoded default would read a transport
+    stream's offsets as a payload concatenation, silently.
+    """
+    reject(
+        DERIVED_HEADER, INP, zpf.Decoder(decoder_id=3, output_layer=9), SESS, PART,
+        raw_record(source_id=2, decoder_id=3, spans=(
+            Span(source_id=2, session_id=9, participant_id=0, off_start=0, off_end=1),
+        )),
+        match="does not define",
+    )
+
+
+def test_two_decoders_in_one_session_are_ordinary():
+    """What is NOT wrong: the rule is per participant, not per session."""
+    other = zpf.Decoder(decoder_id=4, name="tls")
+    span = Span(source_id=2, session_id=9, participant_id=0, off_start=0, off_end=1)
+    finished(
+        DERIVED_HEADER, INP, DEC, other, SESS,
+        PART, zpf.Participant(session_id=5, participant_id=1),
+        raw_record(source_id=2, sender_pid=0, decoder_id=3, spans=(span,)),
+        raw_record(source_id=2, sender_pid=1, decoder_id=4, spans=(span,)),
+    )
+
+
+def test_a_transport_stream_may_not_carry_a_discontinuity():
+    """Barred by the layer, whatever the provenance.
+
+    Its offsets are already hole-inclusive, so a gap occupies a real range
+    no payload covers; a second account of the same missing bytes would have
+    no rule for which to believe.
+    """
+    reject(
+        HEADER, CAP, SESS, PART,
+        raw_record(),  # no decoder: transport
+        zpf.Discontinuity(session_id=5, participant_id=0, width=25),
+        match="MUST NOT carry a Discontinuity",
+    )
+
+
+def test_a_capture_only_file_may_not_carry_a_transform_params_digest():
+    """Stated as placement, not as the absence of a transform.
+
+    Reassembly *is* a transform, and a destructive one — but a reassembler
+    wanting its configuration recorded declares itself as a Decoder and puts
+    it in that descriptor's ``params_digest``. This option is for a stage
+    that produced records **without** decoding, which such a file has none of.
+    """
+    header = zpf.FileHeader(tick_hz=1, transform_params_digest="sha256:ab")
+    reject(header, CAP, SESS, PART, raw_record(), match="every stream in this file is")
+    # With one zpf-sourced stream in the file, the option has a stage to
+    # belong to and the rule does not bind.
+    finished(
+        zpf.FileHeader(tick_hz=1, produced_by="t", produced_at=1,
+                       transform_params_digest="sha256:ab"),
+        INP, SESS, zpf.Participant(session_id=5, participant_id=0, origin=ORIGIN),
+        raw_record(source_id=2),
+    )

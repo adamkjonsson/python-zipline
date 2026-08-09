@@ -2,13 +2,29 @@
 
 The specification's Conformance section states writer obligations that go
 beyond well-formed bytes: declare-before-use, id uniqueness, session
-lifetime, per-participant record order, and file-kind purity (a file is
-raw, a decode stage, or a pass-through transform — never a mix).
+lifetime, per-participant record order, and the rules that make each
+**stream** well formed as a stream.
 :class:`ConformanceChecker` implements them as a single-pass observer over
 a block sequence, raising :class:`~zpf.errors.SemanticError` on the first
 violation. It is used by the ergonomic writer (always), by the flat
 writers when constructed with ``check=True``, and can be run standalone
 over any block iterable.
+
+**The unit is the stream, not the file.** Provenance and layer are
+independent axes and both are per participant, so one file may hold a
+created stream beside a preserved one and a captured stream beside a
+derived one. There is no file kind to infer, and asking for one was how
+this checker used to reject ``mixed-derivation``. Four rules bind per
+participant and are ruled on when its records are all in — at Session End,
+or at end-of-stream for a session that never got one:
+
+* its records MUST resolve to **one layer**, or the stream's offset space
+  has two incompatible definitions;
+* a layer this version does not define MUST NOT be guessed past;
+* it is **created or preserved** — carrying ``origin``, or holding records
+  with ``spans`` — and never half of each;
+* a ``zpf``-sourced participant MUST be one or the other, never neither,
+  or nothing says which input stream its bytes came from.
 
 Findings come in two strengths. Most are *isolating*: the block cannot be
 made sense of, so a lenient reader drops it. A few bind the writer only —
@@ -49,6 +65,7 @@ from zpf.blocks import (
     End,
     FileHeader,
     NameResolution,
+    OutputLayer,
     Participant,
     Record,
     Session,
@@ -60,6 +77,7 @@ from zpf.blocks import (
 from zpf.content import ContentType, prim_fault
 from zpf.errors import AdvisoryError, SemanticError
 from zpf.order import seq_leq
+from zpf.reassembly import layer_name
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -72,16 +90,45 @@ if TYPE_CHECKING:
 # conformant path" — and requires the bit to survive a round-trip without
 # being interpreted. Diagnosing one would report conformant data as suspect.
 
-_RAW = "raw"
-_DECODE = "decode-stage"
-_PASS_THROUGH = "pass-through"
+@dataclass
+class _ParticipantState:
+    """What one **output** stream has said about itself, freed at Session End.
+
+    The unit is the participant, not the file. Provenance and layer are
+    independent axes and both are per stream, so one file may hold a
+    created stream beside a preserved one, and a captured stream beside a
+    derived one — which is what ``mixed-derivation`` ships and what the
+    file-purity machinery this replaced could not express.
+
+    Attributes:
+        described: The Participant block, for diagnostics.
+        origin_source: The ``source_id`` its ``origin`` names, if any.
+        has_spans: Whether any of its records carries ``spans``.
+        provenances: The Source kinds its records reference.
+        layers: The layers its records resolve to. More than one is a
+            violation — the stream's offset space would have two
+            incompatible definitions.
+        has_discontinuity: The first Discontinuity block naming it, if any.
+            Whether that is legal depends on the layer, which is not known
+            until the records are in.
+        last_seq: Its most recent ``seq_start``, for the stored-order rule.
+
+    """
+
+    described: str
+    origin_source: int | None = None
+    has_spans: bool = False
+    provenances: set[SourceKind | int] = field(default_factory=set)
+    layers: set[OutputLayer | int] = field(default_factory=set)
+    has_discontinuity: str | None = None
+    last_seq: int | None = None
 
 
 @dataclass
 class _SessionState:
     """Live per-session bookkeeping, freed at Session End."""
 
-    last_seq: dict[int, int | None] = field(default_factory=dict)  # pid -> last seq_start
+    participants: dict[int, _ParticipantState] = field(default_factory=dict)
     described: str = ""
     sequenced: bool = False
     sequenced_basis: str | None = None
@@ -142,18 +189,20 @@ class CoverageLedger:
                 key = (extent.source_id, extent.session_id, extent.participant_id)
                 self._for(key).declared[block.session_id] = extent.extent
 
-    def findings(self, file_kind: str | None) -> list[tuple[int, str, str]]:
+    def findings(self) -> list[tuple[int, str, str]]:
         """Rule on everything gathered, once the stream is complete.
 
-        Args:
-            file_kind: The inferred kind, as
-                :attr:`ConformanceChecker.file_kind` reports it. The
-                interior-gap check runs only for a decode stage: a
-                pass-through re-emits records rather than citing them, so its
-                records carry no ``spans`` and its only covered ranges are the
-                Undecoded blocks it inherited — everything else would look
-                like a hole. Applying a decode stage's obligation to a
-                pass-through fails conformant files.
+        The interior-gap check runs for an input stream **some record's
+        ``spans`` cited**, which is what makes this file answerable for it.
+        That used to be gated on the whole file being a decode stage; the
+        per-stream test is both narrower and more accurate, and it survives
+        a file that decodes one session while passing another through
+        (``mixed-derivation``), which the file-wide gate could not express.
+
+        A pass-through cites nothing — it re-emits records rather than
+        spanning them, and its only entries here are the Undecoded blocks it
+        inherited. Applying a decode stage's obligation to those would
+        report every unspanned byte as a hole, failing conformant files.
 
         Returns:
             ``(offset, category, message)`` per finding, in stream order.
@@ -161,11 +210,11 @@ class CoverageLedger:
         """
         findings: list[tuple[int, str, str]] = []
         for key in sorted(self._streams):
-            findings.extend(self._stream_findings(key, self._streams[key], file_kind))
+            findings.extend(self._stream_findings(key, self._streams[key]))
         return findings
 
     def _stream_findings(
-        self, key: tuple[int, int, int], ledger: _StreamLedger, file_kind: str | None
+        self, key: tuple[int, int, int], ledger: _StreamLedger
     ) -> list[tuple[int, str, str]]:
         source_id, session_id, pid = key
         where = f"input stream (source {source_id}, session {session_id}, pid {pid})"
@@ -188,7 +237,7 @@ class CoverageLedger:
             # one fault.
             return findings
 
-        if file_kind == _DECODE:
+        if ledger.spans:
             findings.extend(
                 (
                     start,
@@ -236,13 +285,11 @@ class ConformanceChecker:
     def __init__(self) -> None:
         self._header: FileHeader | None = None
         self._sources: dict[int, SourceKind | int] = {}
-        self._decoders: set[int] = set()
+        self._decoders: dict[int, OutputLayer | int] = {}
         self._live: dict[int, _SessionState] = {}
         self._ended: set[int] = set()
-        self._kind: str | None = None
-        self._kind_reason = ""
-        self._orphan_participants: list[str] = []  # declared without origin, kind still open
-        self._derived_only: list[str] = []  # blocks that forbid raw, kind still open
+        self._transform_digest: str | None = None
+        self._saw_zpf_sourced = False
         self._file_ended = False
         self._advisory: list[str] = []  # findings for the block being observed
         self._coverage = CoverageLedger()
@@ -259,16 +306,6 @@ class ConformanceChecker:
             NameResolution: self._on_name,
             End: self._on_end,
         }
-
-    @property
-    def file_kind(self) -> str | None:
-        """The inferred file kind, once a block has locked it.
-
-        One of ``"raw"``, ``"decode-stage"``, ``"pass-through"``, or
-        ``None`` while the stream has not yet contained a distinguishing
-        block.
-        """
-        return self._kind
 
     def observe(self, block: Block) -> None:
         """Check one block, in file order.
@@ -346,6 +383,15 @@ class ConformanceChecker:
             del self._live[session_id]
             self._ended.add(session_id)
             self._check_sequenced_basis(state)
+            self._close_participants(state)
+        if self._transform_digest is not None and not self._saw_zpf_sourced:
+            msg = (
+                f"{self._transform_digest} carries transform_params_digest, but every "
+                f"stream in this file is capture-sourced; the option is for a stage "
+                f"that produced records without decoding, and a reassembler wanting "
+                f"its configuration recorded declares itself as a Decoder instead"
+            )
+            raise SemanticError(msg)
         for _offset, _category, message in self.coverage_findings():
             raise SemanticError(message)
 
@@ -360,7 +406,7 @@ class ConformanceChecker:
             ``(offset, category, message)`` per finding, in stream order.
 
         """
-        return self._coverage.findings(self._kind)
+        return self._coverage.findings()
 
     def _check_sequenced_basis(self, state: _SessionState) -> None:
         """Require a hint-less sequenced session to say what its order rests on.
@@ -388,9 +434,15 @@ class ConformanceChecker:
             raise SemanticError(msg)
         self._header = block
         if block.transform_params_digest is not None:
-            # Names the configuration of a transform that produced records,
-            # which a raw capture has not got.
-            self._require_derived(f"{_describe(block)} carries transform_params_digest")
+            # "A file all of whose streams are capture-sourced MUST NOT carry
+            # the option", and the reason is placement rather than the absence
+            # of a transform: reassembly *is* a transform, but a reassembler
+            # wanting its configuration recorded declares itself as a Decoder
+            # and puts it in that descriptor's params_digest. This option is
+            # for a stage that produced records without decoding, which a
+            # capture-sourced file has none of. Whole-file, so it settles at
+            # finish() rather than here.
+            self._transform_digest = _describe(block)
 
     def _on_source(self, block: Source) -> None:
         if block.source_id in self._sources:
@@ -402,7 +454,7 @@ class ConformanceChecker:
         if block.decoder_id in self._decoders:
             msg = f"decoder id {block.decoder_id} declared twice"
             raise SemanticError(msg)
-        self._decoders.add(block.decoder_id)
+        self._decoders[block.decoder_id] = block.output_layer
 
     def _on_session(self, block: Session) -> None:
         if block.session_id in self._live or block.session_id in self._ended:
@@ -415,69 +467,72 @@ class ConformanceChecker:
         )
 
     def _on_participant(self, block: Participant) -> None:
-        state = self._require_live_session(block.session_id, _describe(block))
-        if block.participant_id in state.last_seq:
+        described = _describe(block)
+        state = self._require_live_session(block.session_id, described)
+        if block.participant_id in state.participants:
             msg = (
                 f"participant {block.participant_id} of session {block.session_id} "
                 "declared twice"
             )
             raise SemanticError(msg)
+        origin_source: int | None = None
         if block.origin is not None:
-            origin_kind = self._require_source(block.origin.source_id, _describe(block))
+            origin_kind = self._require_source(block.origin.source_id, described)
             if origin_kind != SourceKind.ZPF_INPUT:
-                msg = f"{_describe(block)} origin must reference a zpf-input source"
+                msg = f"{described} origin must reference a zpf-input source"
                 raise SemanticError(msg)
-            self._lock_kind(_PASS_THROUGH, f"{_describe(block)} (carries origin)")
-        elif self._kind == _PASS_THROUGH:
-            msg = (
-                f"{_describe(block)} carries no origin, but {self._kind_reason} "
-                "made this a pass-through file (every participant must map to its input)"
-            )
-            raise SemanticError(msg)
-        else:
-            self._orphan_participants.append(_describe(block))
+            # An origin names an input `.zpf`, so this file holds a
+            # zpf-sourced stream and owes the header's build provenance.
+            self._require_derived_header(f"{described} (carries origin)")
+            self._saw_zpf_sourced = True
+            origin_source = block.origin.source_id
         # Registration last: a raised violation leaves the checker
         # consistent, so a lenient reader can isolate the block and go on.
-        state.last_seq[block.participant_id] = None
+        state.participants[block.participant_id] = _ParticipantState(
+            described=described, origin_source=origin_source
+        )
 
     def _on_session_end(self, block: SessionEnd) -> None:
         described = _describe(block)
         if block.input_extents:
-            # Measures an input stream, so the file has one.
-            self._require_derived(f"{described} carries input_extents")
+            # Measures an input stream, so the file holds one.
+            self._require_derived_header(f"{described} carries input_extents")
         state = self._require_live_session(block.session_id, described)
         del self._live[block.session_id]
         self._ended.add(block.session_id)
         self._check_sequenced_basis(state)
+        self._close_participants(state)
 
     def _on_record(self, block: Record) -> None:
         described = _describe(block)
         state = self._require_live_session(block.session_id, described)
-        if block.sender_pid not in state.last_seq:
+        stream = state.participants.get(block.sender_pid)
+        if stream is None:
             msg = f"{described} names undeclared sender participant {block.sender_pid}"
             raise SemanticError(msg)
-        # Isolating checks before any state mutation or kind-locking, so a
-        # raised violation leaves the checker consistent (block isolation).
+        # Isolating checks before any state mutation, so a raised violation
+        # leaves the checker consistent (block isolation).
         self._note(_prim_finding(block, described))
-        self._check_record_order(block, state, described)
-        self._classify_record(block, described)
+        self._check_record_order(block, stream, described)
+        self._classify_record(block, stream, described)
         if block.seq_start is not None or block.ack is not None:
             state.has_hints = True
         if block.seq_start is not None:
-            state.last_seq[block.sender_pid] = block.seq_start
+            stream.last_seq = block.seq_start
 
     def _on_discontinuity(self, block: Discontinuity) -> None:
         described = _describe(block)
         state = self._require_live_session(block.session_id, described)
-        if block.participant_id not in state.last_seq:
+        if block.participant_id not in state.participants:
             msg = f"{described} names undeclared participant {block.participant_id}"
             raise SemanticError(msg)
-        # Marks a break in a *decoded* stream this file produced, so the file
-        # is derived. A raw capture's offsets are true stream positions, in
-        # which a hole is already expressible as the space between seq_starts
-        # — there is nothing for this block to say and no space for it to say
-        # it in.
-        self._require_derived(described)
+        # A transport-layer stream MUST NOT carry one, whatever its
+        # provenance: its offsets are already hole-inclusive, so a gap
+        # occupies a real range no payload covers and the two mechanisms
+        # would contradict each other. The bar is the layer, which is only
+        # known once the participant's records are all in — so this is noted
+        # here and ruled on at the stream's close.
+        state.participants[block.participant_id].has_discontinuity = described
 
     def _on_undecoded(self, block: Undecoded) -> None:
         described = _describe(block)
@@ -492,8 +547,8 @@ class ConformanceChecker:
         # Not a decode-stage marker any more: a pass-through preserving a
         # decoded layer re-emits its input's Undecoded blocks unchanged,
         # which is what carries the input's coverage guarantee forward. All
-        # that follows is that the file is derived.
-        self._require_derived(described)
+        # that follows is that the file names an input `.zpf`.
+        self._require_derived_header(described)
 
     def _check_reason_class(self, block: Undecoded, described: str) -> None:
         """Check the reason names a recoverability class a consumer can act on.
@@ -528,7 +583,7 @@ class ConformanceChecker:
 
     def _on_name(self, block: NameResolution) -> None:
         state = self._require_live_session(block.session_id, _describe(block))
-        if block.participant_id not in state.last_seq:
+        if block.participant_id not in state.participants:
             msg = f"{_describe(block)} names undeclared participant {block.participant_id}"
             raise SemanticError(msg)
 
@@ -538,10 +593,18 @@ class ConformanceChecker:
 
     # --- Record helpers ----------------------------------------------------
 
-    def _classify_record(self, block: Record, described: str) -> None:
-        """Lock the file kind implied by this record and check its references.
+    def _classify_record(
+        self, block: Record, stream: _ParticipantState, described: str
+    ) -> None:
+        """Record what this block says about its stream's two axes.
 
-        The discriminator between the two derived kinds is **spans versus
+        Nothing is ruled on here. Both axes are properties of the *stream*,
+        so they are only decidable once all of a participant's records are
+        in — which is Session End. What this does is gather: the Source kind
+        the record references (provenance), the layer its decoder declares,
+        and whether it carries ``spans`` (created versus preserved).
+
+        The discriminator between created and preserved is **spans versus
         origin**, not ``decoder_id``. A record carrying ``spans`` was built
         by this file's stage; one without them was re-emitted from the input
         unchanged. ``decoder_id`` answers a different question — which
@@ -549,28 +612,29 @@ class ConformanceChecker:
         inherited ones forward, so it says nothing about which stage ran.
         """
         source_kind = self._require_source(block.source_id, described)
-        if block.decoder_id is not None and block.decoder_id not in self._decoders:
-            msg = f"{described} names undeclared decoder {block.decoder_id}"
+        if source_kind not in (SourceKind.CAPTURE, SourceKind.ZPF_INPUT):
+            msg = f"{described} references source {block.source_id} of unknown kind {source_kind}"
             raise SemanticError(msg)
         # Carrying a decoder_id no longer implies a zpf-input Source. Both
         # capture-sourced shapes are legal since 0.15 and each has a vector:
-        # a decoded stream with no predecessor file (a TLS-terminating
-        # proxy, `proxy-decoded`), and a head-of-pipeline reassembler
-        # declaring itself with output_layer = transport
-        # (`reassembler-declared`). The old rule read the layer off
-        # decoder_id and the provenance off the layer, and both halves of
-        # that were wrong.
-        if source_kind == SourceKind.CAPTURE:
-            self._lock_kind(_RAW, f"{described} (byte run from a capture source)")
-        elif source_kind == SourceKind.ZPF_INPUT:
-            if block.spans:
-                self._lock_kind(_DECODE, f"{described} (carries spans)")
-            else:
-                self._lock_kind(_PASS_THROUGH, f"{described} (carries no spans)")
+        # a decoded stream with no predecessor file (`proxy-decoded`), and a
+        # head-of-pipeline reassembler declaring itself with
+        # output_layer = transport (`reassembler-declared`).
+        if block.decoder_id is None:
+            layer: OutputLayer | int = OutputLayer.TRANSPORT
         else:
-            msg = f"{described} references source {block.source_id} of unknown kind {source_kind}"
-            raise SemanticError(msg)
+            declared = self._decoders.get(block.decoder_id)
+            if declared is None:
+                msg = f"{described} names undeclared decoder {block.decoder_id}"
+                raise SemanticError(msg)
+            layer = declared
         self._check_spans(block.spans, described=described)
+        if source_kind == SourceKind.ZPF_INPUT:
+            self._require_derived_header(described)
+            self._saw_zpf_sourced = True
+        stream.provenances.add(source_kind)
+        stream.layers.add(layer)
+        stream.has_spans = stream.has_spans or bool(block.spans)
 
     def _check_spans(self, spans: tuple[Span, ...], *, described: str) -> None:
         """Check a record's spans name an input this file declared as a `.zpf`.
@@ -590,11 +654,13 @@ class ConformanceChecker:
                 msg = f"{described} span must reference a ZPF_INPUT source"
                 raise SemanticError(msg)
 
-    def _check_record_order(self, block: Record, state: _SessionState, described: str) -> None:
+    def _check_record_order(
+        self, block: Record, stream: _ParticipantState, described: str
+    ) -> None:
         """Check (without mutating) that the record respects seq_start order."""
         if block.seq_start is None:
             return
-        last = state.last_seq[block.sender_pid]
+        last = stream.last_seq
         if last is not None and not seq_leq(last, block.seq_start):
             msg = (
                 f"{described} seq_start {block.seq_start} precedes the participant's "
@@ -626,50 +692,66 @@ class ConformanceChecker:
             raise SemanticError(msg)
         return kind
 
-    def _require_derived(self, reason: str) -> None:
-        """Record that a block rules the file out as raw, whatever kind it is.
+    def _close_participants(self, state: _SessionState) -> None:
+        """Rule on every stream of a session, once its records are all in.
 
-        Some blocks say "derived" without saying *which* derived kind, so
-        they cannot lock one. Deferring works because the constraint is
-        cheap to carry and is settled either way: if a later block locks raw
-        the conflict surfaces there, and if it locks a derived kind the
-        constraint is already satisfied.
+        Deferred to Session End for the same reason ``sequenced_basis`` is:
+        these are properties of a participant's *records*, and
+        declare-on-first-use puts the Participant block before them. State
+        is freed here, so live memory stays proportional to open sessions.
         """
-        if self._kind == _RAW:
+        for pid in sorted(state.participants):
+            self._check_participant(state.participants[pid])
+
+    def _check_participant(self, stream: _ParticipantState) -> None:
+        """Check one output stream is well formed as a stream.
+
+        Four rules, each of which the two-axis model made statable and the
+        old file-wide classifier could not express.
+        """
+        if len(stream.layers) > 1:
+            named = ", ".join(sorted(layer_name(layer) for layer in stream.layers))
             msg = (
-                f"{reason} implies a derived file, but {self._kind_reason} "
-                f"already made it {_RAW} (a file is exactly one kind)"
+                f"{stream.described} resolves to two layers ({named}), so this "
+                f"stream's offset space has no single definition; a reader MUST NOT "
+                f"pick one"
             )
             raise SemanticError(msg)
-        if self._kind is None:
-            self._derived_only.append(reason)
-            self._require_derived_header(reason)
-
-    def _lock_kind(self, kind: str, reason: str) -> None:
-        """Lock the file kind, or verify it matches the already-locked one."""
-        if self._kind is None:
-            if kind == _RAW and self._derived_only:
+        for layer in stream.layers:
+            if not isinstance(layer, OutputLayer):
                 msg = (
-                    f"{reason} implies a {_RAW} file, but {self._derived_only[0]} "
-                    "already made it derived (a file is exactly one kind)"
+                    f"{stream.described} references a decoder declaring "
+                    f"{layer_name(layer)}, which this version does not define; the "
+                    f"stream's offset space cannot be computed and MUST NOT be guessed"
                 )
                 raise SemanticError(msg)
-            self._kind = kind
-            self._kind_reason = reason
-            if kind != _RAW:
-                self._require_derived_header(reason)
-            if kind == _PASS_THROUGH and self._orphan_participants:
-                msg = (
-                    f"{self._orphan_participants[0]} carries no origin, but {reason} "
-                    "made this a pass-through file (every participant must map to its input)"
-                )
-                raise SemanticError(msg)
-            self._orphan_participants.clear()
-            self._derived_only.clear()
-        elif self._kind != kind:
+        if stream.has_discontinuity is not None and OutputLayer.DECODED not in stream.layers:
             msg = (
-                f"{reason} implies a {kind} file, but {self._kind_reason} "
-                f"already made it {self._kind} (a file is exactly one kind)"
+                f"{stream.has_discontinuity} names a transport-layer stream, which "
+                f"MUST NOT carry a Discontinuity: its offsets are hole-inclusive, so "
+                f"the break is already expressible as the space no payload covers"
+            )
+            raise SemanticError(msg)
+        # Created or preserved, never half of each, and never neither.
+        if stream.origin_source is not None and stream.has_spans:
+            msg = (
+                f"{stream.described} carries origin and holds records carrying spans; "
+                f"one stream is created or preserved, never half of each"
+            )
+            raise SemanticError(msg)
+        if SourceKind.ZPF_INPUT in stream.provenances:
+            if stream.origin_source is None and not stream.has_spans:
+                msg = (
+                    f"{stream.described} is zpf-sourced but carries neither origin nor "
+                    f"records with spans, so nothing says which input stream its bytes "
+                    f"came from"
+                )
+                raise SemanticError(msg)
+        elif stream.origin_source is not None and stream.provenances:
+            msg = (
+                f"{stream.described} carries origin, but its records are "
+                f"capture-sourced; a capture-sourced stream's source_id is the whole "
+                f"of its provenance"
             )
             raise SemanticError(msg)
 
