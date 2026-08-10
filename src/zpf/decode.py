@@ -32,14 +32,15 @@ scaffolding without owning the control flow.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import IO, TYPE_CHECKING
 
 from zpf._intervals import complement, intersections
-from zpf.blocks import InputExtent, Span
+from zpf.blocks import InputExtent, OutputLayer, Span
 from zpf.errors import SemanticError, ZpfError
 from zpf.reader import FileReader
 from zpf.reassembly import Gap
-from zpf.writer import create
+from zpf.writer import InputRef, create
 
 if TYPE_CHECKING:
     import os
@@ -62,6 +63,57 @@ if TYPE_CHECKING:
     _Cites = Span | tuple[int, int] | Iterable[Span | tuple[int, int]] | None
 
 _PAIR = 2
+
+
+@dataclass(frozen=True)
+class Hints:
+    """TCP ordering hints for a record at the **transport** layer.
+
+    Passed to :meth:`DecodeStage.record` as ``hints=``. A transport stream's
+    requirements bind on the layer, not on where its bytes came from, so a
+    sessionization stage carries these exactly as a capture's reassembled
+    stream does — which is the point of its output being a transport layer
+    at all.
+
+    Attributes:
+        seq_start: Absolute sequence number of the run's first byte.
+        ack: Cumulative acknowledgement in force, where known.
+
+    """
+
+    seq_start: int | None = None
+    ack: int | None = None
+
+
+@dataclass(frozen=True)
+class Seam:
+    """A seam between two of a stage's own records that does **not** join.
+
+    The *writing* face of a :class:`~zpf.blocks.Discontinuity`, and the
+    counterpart of :class:`zpf.Break`, which is the reading face: a
+    :class:`Seam` says what to declare, a :class:`~zpf.Break` reports what
+    was declared, and only the second carries an offset — a seam's position
+    is wherever the record it is passed with lands.
+
+    Passed to :meth:`DecodeStage.record` as ``seam=``, which emits the
+    :class:`~zpf.blocks.Discontinuity` in the right place for you.
+
+    Attributes:
+        width: The break's extent in this stream's offset space, when the
+            stage knows it — a filter's dropped payloads, a QUIC stream's
+            counted offsets. Absent means *unknowable*, which contributes 0
+            to the positional arithmetic and still says the two do not
+            join: the honest answer where a lost TLS record's plaintext
+            length cannot be recovered. A **reordering** stage always
+            leaves it absent, because what lies between two units that were
+            never adjacent is not a hole to be counted.
+        reason: Why they do not join, e.g. ``"records-dropped"``,
+            ``"reordered"``, ``"tls-record-lost"``. Open vocabulary.
+
+    """
+
+    width: int | None = None
+    reason: str | None = None
 
 
 class DecodeStream:
@@ -175,6 +227,8 @@ class DecodeStage:
         self._streams: tuple[DecodeStream, ...] | None = None
         self._cited: dict[tuple[int, int], list[tuple[int, int]]] = {}
         self._marked: dict[tuple[int, int], list[tuple[int, int]]] = {}
+        # Streams that have emitted a record, so a seam has two sides.
+        self._emitted: set[int] = set()
         self._closed = False
 
     def __enter__(self) -> Self:
@@ -229,11 +283,29 @@ class DecodeStage:
         spans: Sequence[Span] = (),
         decoder: DecoderHandle | None = None,
         flags: RecordFlags | int = 0,
+        seam: Seam | None = None,
+        hints: Hints | None = None,
     ) -> None:
         """Write one decoded record for ``stream``.
 
         The output participant, the stage's decoder, and the ids inside
         every cited span are filled in from ``stream``.
+
+        **The seam.** A stage MUST declare a break between two adjacent
+        units of its own output wherever those two do not join, and the
+        question is one only the producer can answer — it rests on what the
+        stage did with its input, and most of it is not mechanically
+        decidable. So this asks, once per record, rather than leaving a
+        block to be remembered: pass ``joins_previous=False`` where the
+        content this record represents did not run continuously on from the
+        previous one, and the Discontinuity is emitted for you.
+
+        The default is ``True`` because the common seam is a join: framing
+        bytes, a nonce and a tag left undecoded between two units withhold
+        nothing, and the content either side runs straight on. What is *not*
+        a join: a ``hole``-class region between them, content the stage
+        declined or dropped, and units it reordered so that these two were
+        never neighbours.
 
         Args:
             stream: The input stream this record was decoded from.
@@ -249,6 +321,17 @@ class DecodeStage:
             spans: Extra spans to append, already built.
             decoder: Override the stage's decoder for this record.
             flags: Record flags.
+            seam: The break between this record and the previous one of the
+                same stream, when they do not join. Omit where they do.
+                Ignored for a stream's first record, which has no seam.
+            hints: TCP ordering hints, for a stage emitting a **transport**
+                layer. They bind on the layer rather than on provenance, so
+                a sessionization stage's ``zpf``-sourced output carries them
+                exactly as a capture's reassembled stream does. A decoded
+                record has no use for them — its offsets are positional.
+
+        Raises:
+            SemanticError: If the record cites no input range.
 
         """
         all_spans = tuple(spans) + _as_spans(stream, cites)
@@ -267,6 +350,11 @@ class DecodeStage:
             )
             raise SemanticError(msg)
         self._track(self._cited, all_spans)
+        if seam is not None and stream.pid in self._emitted:
+            stream.session.discontinuity(
+                stream.handle, width=seam.width, reason=seam.reason
+            )
+        self._emitted.add(stream.pid)
         stream.session.record(
             stream.handle,
             ts=ts,
@@ -275,6 +363,8 @@ class DecodeStage:
             content_type=content_type,
             spans=all_spans,
             flags=flags,
+            seq_start=None if hints is None else hints.seq_start,
+            ack=None if hints is None else hints.ack,
         )
 
     def undecoded(
@@ -467,9 +557,9 @@ def decode_stage(
     decoder: str | tuple[str, str | None] | DecoderHandle,
     produced_by: str,
     produced_at: int | datetime,
+    output_layer: OutputLayer | int = OutputLayer.DECODED,
     proto: str | None = None,
-    uri: str | None = None,
-    digest: str | None = None,
+    input_ref: InputRef | None = None,
     comment: str | None = None,
     fill_undecoded: bool = True,
 ) -> DecodeStage:
@@ -488,15 +578,24 @@ def decode_stage(
         sink: Where to write the decode-stage file.
         decoder: The decoder to declare: a name, a ``(name, version)``
             pair, or a handle already declared on another writer's terms.
+        output_layer: The layer this stage's decoder emits. Leave it at
+            :attr:`~zpf.OutputLayer.DECODED` for an app decoder. Pass
+            :attr:`~zpf.OutputLayer.TRANSPORT` to build a **sessionization
+            stage** — a reassembler run over a ``.zpf`` rather than over a
+            capture, whose output is ``zpf``-sourced and transport-shaped.
+            0.14 could not express that at all: a reassembler had to be
+            characterised by the *absence* of a ``decoder_id``, so its
+            overlap policy and timeout had nowhere to be recorded. Ignored
+            when ``decoder`` is a handle, which was declared already.
         produced_by: Tool + version doing the decoding (required of a
             derived file).
         produced_at: Build time (required of a derived file); Unix seconds,
             or a timezone-aware :class:`~datetime.datetime`.
         proto: Protocol for the output sessions, e.g. ``"http"``; defaults
             to the input's.
-        uri: Where the input lives; defaults to the path it was opened
-            from.
-        digest: Content hash of the input; SHA-256 of it when omitted.
+        input_ref: How to describe the input in the output's Source — see
+            :class:`~zpf.InputRef`. Both halves default: the URI to the path
+            the input was opened from, the digest to SHA-256 of its bytes.
         comment: Free-text note for the File Header.
         fill_undecoded: On a clean close, mark every input offset the
             decoder left uncovered as ``Undecoded`` (``gap`` for
@@ -532,8 +631,9 @@ def decode_stage(
             reader.close()
         raise
     try:
-        derived = writer.derive_from(reader, uri=uri, digest=digest, proto=proto)
-        handle = _declare_decoder(writer, decoder)
+        ref = input_ref or InputRef()
+        derived = writer.derive_from(reader, uri=ref.uri, digest=ref.digest, proto=proto)
+        handle = _declare_decoder(writer, decoder, output_layer)
     except BaseException:
         writer.close(end=False)
         if owns_reader:
@@ -554,14 +654,16 @@ def _open_input(
 
 
 def _declare_decoder(
-    writer: FileWriter, decoder: str | tuple[str, str | None] | DecoderHandle
+    writer: FileWriter,
+    decoder: str | tuple[str, str | None] | DecoderHandle,
+    output_layer: OutputLayer | int,
 ) -> DecoderHandle:
     """Declare the stage's decoder from a name, a (name, version) pair, or a handle."""
     if isinstance(decoder, str):
-        return writer.add_decoder(decoder)
+        return writer.add_decoder(decoder, output_layer=output_layer)
     if isinstance(decoder, tuple):
         name, version = decoder
-        return writer.add_decoder(name, version=version)
+        return writer.add_decoder(name, version=version, output_layer=output_layer)
     return decoder
 
 

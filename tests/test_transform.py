@@ -631,7 +631,9 @@ def test_a_rewrite_carries_its_inputs_breaks_forward(tmp_path: Path):
     """
     src, out = tmp_path / "in.zpf", tmp_path / "out.zpf"
     decoded_with_a_break(src)
-    zpf.rewrite_decoded(src, out, produced_by="f 1", produced_at=2, mark_gaps=False)
+    # Nothing is dropped or reordered here, so the only break in the output
+    # is the input's own — this stage adds none of its own.
+    zpf.rewrite_decoded(src, out, produced_by="f 1", produced_at=2)
     with zpf.open(out) as reader:
         breaks = [b for b in reader.blocks() if isinstance(b, zpf.Discontinuity)]
     assert [(b.width, b.reason) for b in breaks] == [(5, "tls-record-lost")]
@@ -659,25 +661,47 @@ def test_a_rewrite_marks_a_break_as_a_hole_not_as_skipped(tmp_path: Path):
     assert zpf.check_coverage(out, src) == []
 
 
-def test_mark_gaps_records_a_join_the_filter_itself_made(tmp_path: Path):
-    """D5: beyond what 0.14 requires, and off by request.
+def test_a_drop_declares_the_width_it_withheld(tmp_path: Path):
+    """The duty 0.15 made normative, and the width that tells it apart.
 
     Dropping the middle record leaves its neighbours adjacent in the output
-    when they did not adjoin in the input — the defect a Discontinuity exists
-    to prevent, one hop along, and one no rule covers.
+    when they did not adjoin in the input — the defect a Discontinuity
+    exists to prevent, one hop along. Through 0.14 no rule covered it and
+    this library emitted the block behind a switch; 0.15 made it a MUST, so
+    the switch is gone.
+
+    A drop withheld content of *known* extent, so the width is declared —
+    which is what ``filtered-decoded`` ships.
     """
-    src = tmp_path / "in.zpf"
+    src, out = tmp_path / "in.zpf", tmp_path / "out.zpf"
     decoded_with_a_break(src)
+    zpf.rewrite_decoded(src, out, keep=lambda r: r.payload != b"BB",
+                        produced_by="f 1", produced_at=2)
+    with zpf.open(out) as reader:
+        breaks = [b for b in reader.blocks() if isinstance(b, zpf.Discontinuity)]
+    assert [(b.width, b.reason) for b in breaks] == [
+        (5, "tls-record-lost"),  # the input's own, carried forward
+        (2, "records-dropped"),  # this stage's, and it knows the extent
+    ]
 
-    def reasons(path: Path, *, mark_gaps: bool) -> list[str | None]:
-        zpf.rewrite_decoded(src, path, keep=lambda r: r.payload != b"BB",
-                            produced_by="f 1", produced_at=2, mark_gaps=mark_gaps)
-        with zpf.open(path) as reader:
-            return [b.reason for b in reader.blocks() if isinstance(b, zpf.Discontinuity)]
 
-    assert reasons(tmp_path / "on.zpf", mark_gaps=True) == ["tls-record-lost", "filtered"]
-    # Off: only the duty the standard states survives.
-    assert reasons(tmp_path / "off.zpf", mark_gaps=False) == ["tls-record-lost"]
+def test_a_reorder_declares_no_width(tmp_path: Path):
+    """The mirror case, and the specification is explicit about it.
+
+    A reordering stage withholds nothing — every byte reaches the output —
+    but two records stored as neighbours assert that they join, and for
+    reordered neighbours that is false. What lies between two units that
+    were never adjacent is not a hole to be counted, so there is no width to
+    declare and the block contributes 0.
+    """
+    src, out = tmp_path / "in.zpf", tmp_path / "out.zpf"
+    decoded_with_a_break(src)
+    zpf.rewrite_decoded(src, out, reorder=lambda rs: list(reversed(rs)),
+                        produced_by="f 1", produced_at=2)
+    with zpf.open(out) as reader:
+        breaks = [b for b in reader.blocks() if isinstance(b, zpf.Discontinuity)]
+    assert all(b.width is None for b in breaks if b.reason == "reordered")
+    assert "reordered" in [b.reason for b in breaks]
 
 
 def test_a_rewrite_can_record_its_own_configuration(tmp_path: Path):

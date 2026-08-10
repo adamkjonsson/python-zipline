@@ -50,7 +50,7 @@ from zpf.blocks import (
 )
 from zpf.conformance import ConformanceChecker
 from zpf.content import PRIM_WIDTHS, ContentRegistry, ContentType, decode_prim
-from zpf.decode import DecodeStage, DecodeStream, decode_stage
+from zpf.decode import DecodeStage, DecodeStream, Hints, Seam, decode_stage
 from zpf.errors import (
     AdvisoryError,
     ContentError,
@@ -129,6 +129,7 @@ __all__ = [
     "FileReader",
     "FileWriter",
     "Gap",
+    "Hints",
     "InputExtent",
     "InputRef",
     "JsonlReader",
@@ -142,6 +143,7 @@ __all__ = [
     "Record",
     "RecordFlags",
     "Segment",
+    "Seam",
     "SemanticError",
     "Session",
     "SessionEnd",

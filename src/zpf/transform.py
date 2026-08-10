@@ -42,32 +42,20 @@ from zpf.errors import Diagnostic, ZpfError
 from zpf.order import causal_merge
 from zpf.reader import FileReader, SessionReader
 from zpf.reassembly import layer_name, stream_extent
-from zpf.writer import DecoderHandle, DerivedInput, FileWriter, ParticipantHandle, SessionWriter
+from zpf.writer import (
+    DecoderHandle,
+    DerivedInput,
+    FileWriter,
+    InputRef,
+    ParticipantHandle,
+    SessionWriter,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
     from datetime import datetime
 
     from zpf.blocks import Record, Source
-
-@dataclasses.dataclass(frozen=True)
-class InputRef:
-    """How a transform's output should describe the input it derived from.
-
-    The two values a ``zpf-input`` Source carries about the file it names.
-    Grouped because they travel together and are almost always both left to
-    default — the URI to the path the input was opened from, the digest to
-    SHA-256 of its bytes.
-
-    Attributes:
-        uri: Where the input lives; the opened path when ``None``.
-        digest: Content hash of the input; computed when ``None``.
-
-    """
-
-    uri: str | None = None
-    digest: str | None = None
-
 
 # One input participant stream, and its cited [start, end) offset ranges.
 _StreamKey = tuple[int, int]  # (session_id, pid), in the input's namespace
@@ -702,7 +690,6 @@ def rewrite_decoded(
     produced_by: str,
     produced_at: int | datetime,
     transform_params_digest: str | None = None,
-    mark_gaps: bool = True,
     input_ref: InputRef | None = None,
     comment: str | None = None,
 ) -> None:
@@ -727,26 +714,25 @@ def rewrite_decoded(
     expected: coverage depends on which ranges are covered, not on the order
     they appear in.
 
-    **``mark_gaps`` goes beyond ``0.14``, deliberately.** Two duties are the
-    standard's: this stage reads an input that may carry Discontinuity
-    blocks, so it carries every one forward rather than dropping it, and it
-    never welds records the input said do not join. What the standard does
-    *not* say is what a **filter** owes at a drop point. Dropping a record
-    leaves its two surviving neighbours adjacent in the output offset space
-    when they were not adjacent in the input's — precisely the shape of the
-    defect the Discontinuity block exists to prevent, one hop along — but no
-    rule requires a block there, because the MUST NOT is written about spans
-    crossing an *input's* break and a filter's spans cross nothing.
+    **The gap this used to fill is now the standard's.** Through ``0.14``
+    nothing required a block at a drop point: the MUST NOT was written about
+    spans crossing an *input's* break, and a filter's spans cross nothing.
+    This library emitted one anyway, behind a ``mark_gaps`` switch, and
+    reported the hole as
+    `zipline#78 <https://github.com/adamkjonsson/zipline/issues/78>`_.
+    ``0.15`` closed it: a stage **MUST** emit a Discontinuity between two
+    adjacent units of its own output wherever those two do not join, and a
+    filter whose dropped records break its survivors apart is one of the
+    three shapes named. So the switch is gone — an always-conformant writer
+    has no business offering output that is not.
 
-    So this emits one anyway, at every drop point and wherever a reorder
-    separates records that adjoined. The alternative is a filtered file whose
-    consumer splices two messages that never adjoined, with this library
-    having had the information and said nothing. Pass ``mark_gaps=False`` for
-    output that claims no more than ``0.14`` obliges. Reported upstream as
-    `zipline#78 <https://github.com/adamkjonsson/zipline/issues/78>`_, open at
-    the time of writing; if it lands, this stops being an extension.
+    The two shapes are distinguished by **width**, and the distinction is
+    the specification's. A drop withheld content of known extent, so the
+    block declares it (``reason="records-dropped"``); a reorder withheld
+    nothing, and what lies between two units that were never adjacent is not
+    a hole to be counted, so it declares none (``reason="reordered"``).
 
-    That gap is closed. Through ``0.12`` a transform producing records
+    Through ``0.12`` a transform producing records
     without decoding them had no ``params_digest`` to record its own
     configuration in, so the output stated *what* it came from but not
     *how*; ``0.14`` adds ``transform_params_digest`` to the File Header for
@@ -766,12 +752,8 @@ def rewrite_decoded(
         transform_params_digest: Hash of this stage's configuration — the
             filter predicate, the ordering, whatever decides the output.
             Recording it is what makes the rewrite reproducible.
-        mark_gaps: Emit a Discontinuity wherever this stage makes two
-            records adjacent that did not adjoin in the input — at every
-            drop point, and wherever a reorder separates neighbours.
-            **This exceeds what 0.14 requires**; see the note below.
         input_ref: How to describe the input in the output's Source — see
-            :class:`InputRef`. Both halves default.
+            :class:`~zpf.InputRef`. Both halves default.
         comment: Free-text note for the File Header.
 
     Raises:
@@ -816,7 +798,7 @@ def rewrite_decoded(
                 for participant in session.participants:
                     _rewrite_stream(
                         session, participant.participant_id, writer, out, derived,
-                        decoders, keep=keep, reorder=reorder, mark_gaps=mark_gaps,
+                        decoders, keep=keep, reorder=reorder,
                     )
                 out.end()
     finally:
@@ -844,7 +826,6 @@ def _rewrite_stream(
     *,
     keep: Callable[[Record], bool] | None,
     reorder: Callable[[Sequence[Record]], Sequence[Record]] | None,
-    mark_gaps: bool,
 ) -> None:
     """Emit one participant's surviving records, and skip-mark the rest."""
     handle = derived.participants[(session.session_id, pid)]
@@ -874,17 +855,15 @@ def _rewrite_stream(
     inherited = _inherited_breaks(blocks, kept_set)
     previous: Record | None = None
     for record in survivors:
+        carried = 0
         for break_block in inherited.get(id(record), ()):
             out.discontinuity(
                 handle, width=break_block.width, reason=break_block.reason,
                 comment=break_block.comment,
             )
-        if mark_gaps and previous is not None and not _adjoined(previous, record, cited):
-            out.discontinuity(
-                handle,
-                reason="filtered",
-                comment="records that did not adjoin in the input are adjacent here",
-            )
+            carried += break_block.width or 0
+        if previous is not None:
+            _declare_seam(out, handle, cited[id(previous)][1], cited[id(record)][0], carried)
         previous = record
         off_start, off_end = cited[id(record)]
         out.record(
@@ -923,6 +902,39 @@ def _rewrite_stream(
         )
 
 
+def _declare_seam(
+    out: SessionWriter, handle: ParticipantHandle, ends: int, begins: int, carried: int
+) -> None:
+    """Declare this stage's own break between two survivors, if it owes one.
+
+    The duty is *do these two join?*, and it is about content **this stage**
+    withheld. The input's own breaks are already back between the same two
+    units, so their declared widths are subtracted before asking: a seam
+    fully explained by a carried-forward block owes nothing more, and
+    declaring it again would count the same missing bytes twice.
+
+    Args:
+        out: The output session writer.
+        handle: The output participant.
+        ends: Where the previous survivor's input range ended.
+        begins: Where this survivor's input range begins.
+        carried: Total declared width of the input breaks just re-emitted
+            at this seam.
+
+    """
+    if begins < ends:
+        # Reordered: these two were never adjacent, and what lies between
+        # them is not a hole to be counted. No width, per the specification.
+        out.discontinuity(handle, reason="reordered")
+        return
+    withheld = begins - ends - carried
+    if withheld > 0:
+        # Dropped: content of known extent did not reach the output, and the
+        # extent is exactly what the survivors' input ranges leave between
+        # them once the input's own declared breaks are accounted for.
+        out.discontinuity(handle, width=withheld, reason="records-dropped")
+
+
 def _inherited_breaks(
     blocks: Sequence[Record | Discontinuity], kept: set[int]
 ) -> dict[int, list[Discontinuity]]:
@@ -949,10 +961,3 @@ def _inherited_breaks(
             attached[id(block)] = pending
             pending = []
     return attached
-
-
-def _adjoined(
-    previous: Record, current: Record, cited: dict[int, tuple[int, int]]
-) -> bool:
-    """Return whether two records were adjacent in the input's offset space."""
-    return cited[id(previous)][1] == cited[id(current)][0]
