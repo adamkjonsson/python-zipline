@@ -1,6 +1,6 @@
 # Validate a file
 
-Validation reads a file and reports where it departs from the v0.14
+Validation reads a file and reports where it departs from the v0.16
 specification. It answers three separable questions: is the file
 *conformant*, is a SEQUENCED session's stored order *actually* a valid
 ordering, and does a decode stage *cover* its input. This is the recipe; the
@@ -28,7 +28,7 @@ Add checks with flags:
 
 ```console
 $ zpf validate merged.zpf --verify                 # also re-check sequenced order
-$ zpf validate rest_decoded.zpf --input rest_raw.zpf   # also check decode coverage
+$ zpf validate rest_decoded.zpf --input rest_transport.zpf   # also check decode coverage
 $ zpf validate session.zpf --strict                # stop at the first violation
 ```
 
@@ -98,7 +98,7 @@ Check decode coverage with {func}`zpf.check_coverage`, which returns the
 violations (empty when the guarantee holds):
 
 ```python
-findings = zpf.check_coverage("rest_decoded.zpf", "rest_raw.zpf")
+findings = zpf.check_coverage("rest_decoded.zpf", "rest_transport.zpf")
 assert findings == []
 ```
 

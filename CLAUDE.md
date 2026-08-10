@@ -2,13 +2,13 @@
 
 ## The product
 
-This code is a Python implementation of v0.14 of the Zipline Payload Format,
+This code is a Python implementation of v0.16 of the Zipline Payload Format,
 which is defined in
-`https://github.com/adamkjonsson/zipline/blob/v0.14/docs/zipline-payload-format.md`.
+`https://github.com/adamkjonsson/zipline/blob/v0.16/docs/zipline-payload-format.md`.
 It is a module that readers and writers of zpf-files use to access and create
 files.
 
-"The standard" in this file always means **0.14**, and `zpf.SPEC_VERSION` is the
+"The standard" in this file always means **0.16**, and `zpf.SPEC_VERSION` is the
 single source of truth for it in code. The format is in `0.x`, where **every
 minor is a separate format**: a reader must reject a `version_minor` it does not
 implement, and no upgrade path between `0.x` versions is guaranteed. So this is
@@ -18,11 +18,14 @@ path, and files written by earlier versions of this library are unreadable by it
 Two traps worth naming, because both look like bugs and are not:
 
 - A **0.9** file stamps `version_major = 1`, `version_minor = 0` — that version
-  was published as "1.0" and renumbered without rewriting its bytes. 0.14 stamps
-  `0`/`14`. A 0.9 file is correctly rejected at the version gate.
-- `decoder_id` does **not** decide a file's kind. The discriminator between the
-  two derived kinds is `spans` versus `origin`; a pass-through preserving a
-  decoded layer carries inherited `decoder_id` values forward.
+  was published as "1.0" and renumbered without rewriting its bytes. 0.16 stamps
+  `0`/`16`. A 0.9 file is correctly rejected at the version gate.
+- `decoder_id` decides **neither** axis. It does not say a record is decoded —
+  reassembly is a decoder too, so the layer comes from that decoder's declared
+  `output_layer` — and it does not say which stage ran, since a pass-through
+  carries inherited ones forward. Created versus preserved is `spans` versus
+  `origin`, and both axes are per **stream**, never per file. There is no file
+  kind; `FileReader.stream_kind(session_id, pid)` is the accessor.
 
 The conformance vectors in `tests/vectors/` are vendored verbatim from the spec
 repository and are the acceptance criteria — do not edit them to make a test
@@ -30,16 +33,10 @@ pass. `VECTOR-DEFECTS.md` records four defects found against them: three closed,
 and defect 4 open at `v0.16`, which holds `tunnel/inner` and `tunnel/outer` in
 `DEFECTIVE`. Never bend the implementation to match a fixture in `DEFECTIVE`.
 
-**A port to 0.16 is in progress** (`SPEC-0.16-MIGRATION-PLAN.md`), phases 0 and
-1 landed. The vectors are vendored at `v0.16` — 53 of them, 59 files — and the
-version gate now reads 0.16, so 0.14 files are refused. The rest of the suite is
-behind the ratchet in `tests/test_vectors.py`: a vector is a hard requirement
-only once its name is in `KNOWN_PASSING`, which only ever grows.
-
-Until the later phases land, the **prose** — this file's version statements
-above, `README.md`, `docs/` — still describes 0.14, and the code above it does
-not. Phase 8 is the pass that fixes that; do not treat the mismatch as guidance
-in either direction, read `SPEC_VERSION` and the plan.
+The 0.14 → 0.16 port is **complete** (`SPEC-0.16-MIGRATION-PLAN.md`, phases 0–8).
+The vectors are vendored at `v0.16` — 53 of them, 59 files — and every name is in
+`KNOWN_PASSING`. The ratchet in `tests/test_vectors.py` stays as the regression
+guard: a name is never removed from that set.
 
 One vector is judged as a **pair**: `splice` ships two files that are each
 conformant alone, so its violation is only visible to `zpf.check_splice`. The

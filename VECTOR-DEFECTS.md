@@ -11,7 +11,7 @@ upstream and fixed.
 | 1 | Three decode-stage vectors omit `produced_by`/`produced_at` | `v0.12` | Fixed in `0.13` — CHANGELOG *Fixed*; all three now carry both options |
 | 2 | `vectors/README.md` contradicts the spec on the `isolate` tier | `v0.12` | Fixed in `0.14` — the README now reads "Rejecting an `isolate` vector, with a diagnostic, **is conformant**" |
 | 3 | `undecoded-in-capture` writes ids no reading of the text allows | `v0.15` | Fixed in `0.16` — CHANGELOG *Changed* ([#87](https://github.com/adamkjonsson/zipline/issues/87)); the vector's `session_id` `7` → `0` |
-| 4 | `tunnel/{inner,outer}.jsonl` spell the flow key `flow_key`, not `key` | `v0.16` | **Open** |
+| 4 | `tunnel/{inner,outer}.jsonl` spell the flow key `flow_key`, not `key` | `v0.16` | **Open** — reported as [#104](https://github.com/adamkjonsson/zipline/issues/104) |
 
 Defect 1 also generalised upstream. The principle this file drew out of it — **a
 negative vector must carry exactly one violation** — is now stated in the vectors
@@ -86,13 +86,16 @@ exactly this apart from the not-yet-ported xfails: nothing here bends the
 implementation to match a broken fixture, and if either starts passing, either
 the vector was fixed or we got the mapping wrong.
 
-Reporting it is Phase 8's job, with the rest of the port's findings — see the
-register in
+Reported at Phase 8 as
+[zipline#104](https://github.com/adamkjonsson/zipline/issues/104), with the rest
+of the port's findings — see the register in
 [`SPEC-0.16-MIGRATION-PLAN.md`](SPEC-0.16-MIGRATION-PLAN.md#phase-8--prose-and-the-upstream-report).
-Batched deliberately: a defect reported after the rule is implemented and the
+Batching was deliberate: a defect reported after the rule is implemented and the
 vectors pass is a report backed by a working reader rather than a guess about
-what the text means. This entry stays the record either way; the issue is the
-report.
+what the text means. That paid off here — the issue could say which two of the
+suite's 53 vectors are affected, that every other one passes, and that one
+vector in the same tree already obeys the rule. This entry stays the record
+either way; the issue is the report.
 
 ---
 

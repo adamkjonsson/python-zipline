@@ -9,6 +9,8 @@ import zpf
 
 with zpf.open("session.zpf") as reader:
     print(f"face: {reader.face}, complete: {reader.complete}")
+    provenance, layer = reader.stream_kind(0, 0)  # the two axes, per stream
+    print(f"stream 0: {provenance.name.lower()} {layer.name.lower()}")
 
     for session in reader.sessions():  # one Session block declared -> one entry
         print(f"session {session.session_id}: {session.proto} {session.key!r}")

@@ -29,7 +29,7 @@ from datetime import UTC, datetime
 import zpf
 
 with zpf.decode_stage(
-    "rest_raw.zpf", "rest_decoded.zpf",
+    "rest_transport.zpf", "rest_decoded.zpf",
     decoder=("http/1.1", "tutorial"),   # name, version
     produced_by="http-decode 1.0",
     produced_at=datetime.now(tz=UTC),   # or int Unix seconds
@@ -105,7 +105,7 @@ violations (empty when it holds) — with auto-fill on, it is `[]` by
 construction:
 
 ```python
-findings = zpf.check_coverage("rest_decoded.zpf", "rest_raw.zpf")
+findings = zpf.check_coverage("rest_decoded.zpf", "rest_transport.zpf")
 assert findings == []
 ```
 
@@ -113,7 +113,7 @@ Or from the command line, the way you'd gate a decoder's output in a
 pipeline:
 
 ```console
-$ zpf validate rest_decoded.zpf --input rest_raw.zpf
+$ zpf validate rest_decoded.zpf --input rest_transport.zpf
 rest_decoded.zpf: OK
 ```
 
@@ -127,7 +127,7 @@ file](validate.md#reading-the-diagnostics).
   views and (advanced) mixing several decoders in one session.
 - [Tutorial: writing a decoder](../tutorial-decoding.md) — the same steps as
   a runnable, end-to-end example.
-- [Concepts: file kinds](../concepts.md#file-kinds-raw-decode-stage-pass-through)
+- [Concepts: created or preserved](../concepts.md#created-or-preserved)
   and [provenance](../concepts.md#provenance-spans-coverage-origins) — the
   normative model, including how decode stages chain (`raw → tls-records →
   http`).

@@ -1,6 +1,6 @@
 # Decoding
 
-A **decode stage** turns a raw `.zpf` — records that are transport byte-runs —
+A **decode stage** turns a transport-layer `.zpf` — records that are byte runs —
 into one whose records are whole application messages (an HTTP request, a TLS
 record, a JSON body). This guide explains the two halves of that job: reading
 an input stream, and writing the decoded output. For a runnable walkthrough see
@@ -10,7 +10,7 @@ spans and coverage, [Concepts](../concepts.md#provenance-spans-coverage-origins)
 
 ## Reading the input: reassembly views
 
-A decoder consumes its input one **participant stream** at a time. The raw
+A decoder consumes its input one **participant stream** at a time. The input
 records are byte-runs whose boundaries came from reassembly, not the
 application, so a message can span several records or share one with the next.
 {meth}`~zpf.SessionReader.reassemble` hands back one {class}`~zpf.StreamView`
@@ -19,7 +19,7 @@ offsets** (0-based positions in the reassembled stream, byte 0 = the first
 application byte) so you never touch `seq_start`/`isn` arithmetic.
 
 ```python
-with zpf.open("rest_raw.zpf") as reader:
+with zpf.open("rest_transport.zpf") as reader:
     for session in reader.sessions():
         for stream in session.reassemble():
             ...  # one StreamView per participant
@@ -80,7 +80,7 @@ participant that stands for it.
 from datetime import UTC, datetime
 
 with zpf.decode_stage(
-    "rest_raw.zpf", "rest_decoded.zpf",
+    "rest_transport.zpf", "rest_decoded.zpf",
     decoder=("http/1.1", "1.0"),        # name, version
     produced_by="http-decode 1.0",
     produced_at=datetime.now(tz=UTC),   # or int Unix seconds
@@ -295,10 +295,10 @@ pick a specific decoder per region.
 ### Decoder chaining
 
 Chaining is the same file-to-file mechanism applied more than once:
-`raw → tls-records → http` is two decode stages, each taking the previous
+`transport → tls-records → http` is two decode stages, each taking the previous
 output as its input. Because every decoded record cites the input it was built
 from, provenance recurses: a consumer walking back from an HTTP record reaches
-the TLS-record stream, then the raw capture. Each stage is an ordinary
+the TLS-record stream, then the capture. Each stage is an ordinary
 `decode_stage` run; nothing special is needed to chain them.
 
 ### Filtering or reordering a decoded file

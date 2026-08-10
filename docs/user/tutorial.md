@@ -51,7 +51,8 @@ sessions, each with participants and records.
 
 ```console
 $ python 02_read_it_back.py
-face: binary, kind: raw, complete: True
+face: binary, complete: True
+stream 0: capture transport
 session 0: tcp '10.0.0.1:51000 <-> 93.184.216.34:80'
   participant 0: 10.0.0.1:51000
   participant 1: 93.184.216.34:80
@@ -60,11 +61,11 @@ session 0: tcp '10.0.0.1:51000 <-> 93.184.216.34:80'
 ```
 
 `session.records()` reads each record from disk as the loop asks for it —
-opening a file does not load its payloads into memory. `reader.stream_kind(7, 0)`
-reports `(CAPTURE, TRANSPORT)` for this stream: its records reference a
-`capture` source directly, and no decoder ran over them. The two answers are
-independent — see
-[File kinds](concepts.md#file-kinds-raw-decode-stage-pass-through).
+opening a file does not load its payloads into memory. `stream_kind` reports
+`capture transport` for this stream: its records reference a `capture` source
+directly (provenance), and no decoder ran over them, so its offsets are true
+stream positions (layer). The two answers are independent — see
+[Two axes](concepts.md#two-axes-provenance-and-layer).
 
 ## 3. Causal order
 
@@ -137,10 +138,10 @@ See the [CLI reference](cli.md) for every subcommand.
 ## Where to go next
 
 - [Concepts](concepts.md) — the mental model this tutorial only sketched:
-  file kinds, spans and provenance, the SEQUENCED flag, robustness to
+  the two axes, spans and provenance, the SEQUENCED flag, robustness to
   truncation and unknown blocks.
 - [Tutorial: writing a decoder](tutorial-decoding.md) — the next step:
-  turning a raw file into a decode stage of application messages.
+  turning a transport-layer file into a decode stage of application messages.
 - The [how-to guides](howto/index.md) — task-shaped recipes that assume
   this tutorial, including the [merge](howto/merge.md) and
   [convert](howto/convert.md) transforms in full.
