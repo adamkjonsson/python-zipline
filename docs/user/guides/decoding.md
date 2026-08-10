@@ -147,10 +147,21 @@ one unit, lost the next, and emitted the one after — say so with
 {meth}`~zpf.DecodeStage.discontinuity`:
 
 ```python
-stage.record(stream, ts=..., payload=plaintext, spans=(stream.cite(0, 50),))
-stage.discontinuity(stream, reason="tls-record-lost")   # the two do not join
-stage.record(stream, ts=..., payload=more, spans=(stream.cite(139, 200),))
+stage.record(stream, ts=..., payload=plaintext, cites=(0, 50))
+stage.record(
+    stream, ts=..., payload=more, cites=(139, 200),
+    seam=zpf.Seam(reason="tls-record-lost"),   # these two do not join
+)
 ```
+
+The break is declared **on the record whose seam it is**, rather than as a
+separate call you have to sequence correctly. That is deliberate: the duty is
+*do these two units join?*, it rests on what your stage did with its input, and
+most of it is not mechanically decidable — so the API asks once per record
+instead of leaving a block to be remembered. Omitting `seam=` means they join,
+which is the common case and the one the specification names: framing bytes, a
+nonce and a tag left undecoded between two units withhold nothing, and the
+content either side runs straight on.
 
 It is the mirror of {meth}`~zpf.DecodeStage.undecoded`, and the pair are easy
 to confuse: an Undecoded block says *there were bytes over there I did not
@@ -325,20 +336,25 @@ record its own configuration in, so the output stated *what* it came from but
 not *how*; `0.14` adds `transform_params_digest` to the File Header for exactly
 this case. Pass it to {func}`~zpf.rewrite_decoded` or {func}`~zpf.merge_files`.
 
-```{admonition} Beyond the standard
-:class: caution
+```{admonition} The duty at a drop point
+:class: note
 
-`mark_gaps=True` (the default) emits a `Discontinuity` wherever this stage
-makes two records adjacent that did not adjoin in the input — at every drop
-point, and wherever a reorder separates neighbours. **`0.14` does not require
-this.** Two duties *are* the standard's: the stage carries every break its
-input declared forward, and never welds records the input said do not join.
-What the standard leaves open is what a *filter* owes at a drop point, where
-the surviving neighbours become adjacent in the output when they were not in
-the input — the defect a Discontinuity exists to prevent, one hop along, and
-one no rule covers. Reported upstream as
-[zipline#78](https://github.com/adamkjonsson/zipline/issues/78). Pass
-`mark_gaps=False` for output that claims no more than `0.14` obliges.
+A stage **MUST** emit a `Discontinuity` between two adjacent units of its own
+output wherever those two do not join. {func}`~zpf.rewrite_decoded` does that
+for you: at every drop point, and wherever a reorder separates records that
+adjoined.
+
+The two shapes are told apart by **width**. A *drop* withheld content of known
+extent — the input range between the two survivors — so the block declares it,
+with `reason="records-dropped"`. A *reorder* withheld nothing, and what lies
+between two units that were never adjacent is not a hole to be counted, so the
+block carries no width and contributes 0, with `reason="reordered"`.
+
+This library emitted the block before the standard asked for it, behind a
+`mark_gaps` switch, and reported the hole as
+[zipline#78](https://github.com/adamkjonsson/zipline/issues/78). `0.15` closed
+it, so the switch is gone: an always-conformant writer has no business
+offering output that is not.
 ```
 
 ## See also

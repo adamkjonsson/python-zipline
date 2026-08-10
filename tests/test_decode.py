@@ -588,3 +588,98 @@ def test_a_stage_can_break_its_own_output(tmp_path: Path):
         marked = [b for b in reader.blocks() if isinstance(b, zpf.Undecoded)]
         assert [(b.off_start, b.off_end) for b in marked] == [(5, 11)]
     assert zpf.check_coverage(out, raw) == []
+
+
+# --- The write side at 0.16 -------------------------------------------------------------
+
+
+def test_a_sessionization_stage_emits_a_transport_layer(tmp_path: Path):
+    """The cell 0.14 could not express at all.
+
+    A reassembler run over a ``.zpf`` rather than over a capture: its output
+    is ``zpf``-sourced *and* transport-shaped, which the old model made
+    impossible — a reassembler had to be characterised by the **absence** of
+    a ``decoder_id``, so its overlap policy and timeout had nowhere to be
+    recorded and the layer it created had no name.
+    """
+    src = tmp_path / "packets.zpf"
+    out = tmp_path / "sessionized.zpf"
+    with zpf.create(src, tick_hz=1_000_000, produced_by="t", produced_at=1) as w:
+        source = w.add_source("capture", uri="tap.pcap")
+        with w.begin_session(proto="tcp", session_id=4) as s:
+            p = s.participant("10.0.0.1:51000", isn=1000)
+            s.record(p, ts=1000, payload=b"A" * 50, source=source, seq_start=1001)
+            s.record(p, ts=1200, payload=b"B" * 30, source=source, seq_start=1051)
+
+    with zpf.decode_stage(
+        src, out,
+        decoder=("tcp-reassembly", "1.1"),
+        output_layer=zpf.OutputLayer.TRANSPORT,
+        produced_by="zpf-sessionize 0.2", produced_at=1_719_630_000,
+    ) as dec:
+        stream = dec.streams()[0]
+        for segment in stream.segments():
+            dec.record(
+                stream, segment.data, ts=segment.ts,
+                cites=(segment.off_start, segment.off_end),
+                hints=zpf.Hints(seq_start=1001 + segment.off_start),
+            )
+
+    with zpf.open(out) as reader:
+        assert reader.diagnostics == []
+        (session,) = reader.sessions()
+        assert reader.stream_kind(session.session_id, 0) == (
+            zpf.SourceKind.ZPF_INPUT,
+            zpf.OutputLayer.TRANSPORT,
+        )
+        records = list(session.stream(0))
+        # The hints bind on the layer, not on provenance, so a zpf-sourced
+        # transport stream carries them exactly as a capture's does.
+        assert [r.seq_start for r in records] == [1001]
+        assert all(r.decoder_id is not None for r in records)
+        assert all(r.content_type is None for r in records)  # MUST NOT, at this layer
+
+
+def test_a_stage_declares_a_seam_that_does_not_join(tmp_path: Path):
+    """D6: the producer answers the question, and the block follows.
+
+    The duty rests on what the stage did with its input and is mostly not
+    mechanically decidable, so the API asks per record rather than leaving a
+    block to be sequenced correctly by hand.
+    """
+    src, out = tmp_path / "in.zpf", tmp_path / "out.zpf"
+    src.write_bytes(raw_file())
+    with zpf.decode_stage(
+        src, out, decoder="http/1.1", produced_by="d 1", produced_at=1
+    ) as dec:
+        stream = dec.streams()[0]
+        whole = stream.reassembled()
+        dec.record(stream, whole[:4], ts=1, cites=(0, 4))
+        dec.record(
+            stream, whole[8:], ts=2, cites=(8, len(whole)),
+            seam=zpf.Seam(width=4, reason="records-dropped"),
+        )
+        dec.undecoded(stream, 4, 8, reason="skipped")
+
+    with zpf.open(out) as reader:
+        assert reader.diagnostics == []
+        (session,) = reader.sessions()
+        breaks = [b for b in session.stream_blocks(0) if isinstance(b, zpf.Discontinuity)]
+    assert [(b.width, b.reason) for b in breaks] == [(4, "records-dropped")]
+
+
+def test_a_stages_first_record_has_no_seam_to_declare(tmp_path: Path):
+    """Nothing precedes it, so a seam passed there is quietly not a break."""
+    src, out = tmp_path / "in.zpf", tmp_path / "out.zpf"
+    src.write_bytes(raw_file())
+    with zpf.decode_stage(
+        src, out, decoder="http/1.1", produced_by="d 1", produced_at=1
+    ) as dec:
+        stream = dec.streams()[0]
+        whole = stream.reassembled()
+        dec.record(stream, whole, ts=1, cites=(0, len(whole)),
+                   seam=zpf.Seam(reason="reordered"))
+    with zpf.open(out) as reader:
+        assert reader.diagnostics == []
+        (session,) = reader.sessions()
+        assert not [b for b in session.stream_blocks(0) if isinstance(b, zpf.Discontinuity)]

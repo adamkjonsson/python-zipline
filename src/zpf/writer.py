@@ -103,6 +103,25 @@ def unix_seconds(value: int | datetime) -> int:
 
 
 @dataclass(frozen=True)
+class InputRef:
+    """How a transform's output should describe the input it derived from.
+
+    The two values a ``zpf-input`` Source carries about the file it names.
+    Grouped because they travel together and are almost always both left to
+    default — the URI to the path the input was opened from, the digest to
+    SHA-256 of its bytes.
+
+    Attributes:
+        uri: Where the input lives; the opened path when ``None``.
+        digest: Content hash of the input; computed when ``None``.
+
+    """
+
+    uri: str | None = None
+    digest: str | None = None
+
+
+@dataclass(frozen=True)
 class SourceHandle:
     """A declared Source, returned by :meth:`FileWriter.add_source`.
 

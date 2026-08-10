@@ -693,3 +693,42 @@ def test_the_unmarked_break_predicate_fires_on_exactly_one_vector() -> None:
         if wanted in reported:
             fired.add(case.name)
     assert fired == {"isolate-unmarked-break"}
+
+
+@pytest.mark.parametrize("case", _readable_params())
+def test_a_vector_survives_our_own_writer(case: Case) -> None:
+    """Every conformant file this suite ships can be written *by us*.
+
+    The re-encode test proves the block model round-trips; this proves the
+    **checked** writer accepts the result. Every block goes through
+    :class:`~zpf.conformance.ConformanceChecker` on the way out, so a rule
+    that is too strict shows up here as a refusal to write a file upstream
+    ships as conformant — the failure mode a reader-only test cannot see.
+
+    The negative tiers are included deliberately, with their violation
+    expected: an ``isolate`` vector must be refused by the writer, since the
+    writer's contract is that the easy path writes only conformant files.
+
+    One vector is exempt, and the exemption is the specification's.
+    ``isolate-self-derived`` is detected by comparing a ``zpf-input`` Source
+    ``uri`` against **the path the file was opened from**, and a block
+    stream carries no such path — there is no in-band self-identifier. So
+    the reader diagnoses it and the writer cannot, which is not an
+    inconsistency between them but the same partial-by-design rule seen from
+    two sides.
+    """
+    unreachable_without_a_path = {"isolate-self-derived"}
+    with zpf.open(case.path) as reader:
+        blocks = list(reader.blocks())
+        clean = reader.diagnostics == []
+    sink = io.BytesIO()
+    try:
+        with zpf.BlockWriter(sink, check=True) as writer:
+            for block in blocks:
+                writer.write(block)
+    except zpf.SemanticError as exc:
+        assert not clean, f"{case.name}: our writer refuses a conformant file — {exc}"
+        return
+    assert clean or case.name in set(DEFECTIVE) | unreachable_without_a_path, (
+        f"{case.name}: our writer accepted a file the reader diagnosed"
+    )
