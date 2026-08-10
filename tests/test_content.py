@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from test_conformance import RAW_PRELUDE, raw_record
+from test_conformance import DECODED_PRELUDE, decoded_record
 
 import zpf
 from zpf.content import (
@@ -202,10 +202,10 @@ def test_opacity_and_the_advisory_finding_are_complements(payload: bytes, token:
     Two modules read the same rule; if they ever disagree, one of them lets a
     record through with a label it cannot honour, or reports a conformant one.
     """
-    block = raw_record(payload=payload, content_type=f"prim:{token}")
+    block = decoded_record(payload=payload, content_type=f"prim:{token}")
     checker = zpf.ConformanceChecker()
     try:
-        checker.check([*RAW_PRELUDE, block])
+        checker.check([*DECODED_PRELUDE, block])
     except zpf.AdvisoryError:
         flagged = True
     else:
@@ -217,7 +217,7 @@ def test_the_checker_leaves_other_schemes_to_their_handlers():
     # Only prim: is fully spec-defined, so only prim: can be nonconformant
     # here — a mime:/dec:/unknown label is never the checker's business.
     for label in ("mime:text/plain", "dec:request", "x-private:thing", "prim", ""):
-        zpf.ConformanceChecker().check([*RAW_PRELUDE, raw_record(content_type=label)])
+        zpf.ConformanceChecker().check([*DECODED_PRELUDE, decoded_record(content_type=label)])
 
 
 # --- Record.content() --------------------------------------------------------------

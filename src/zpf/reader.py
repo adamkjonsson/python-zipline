@@ -679,10 +679,46 @@ class FileReader:
         """Run the checker's end-of-stream pass, isolating in lenient mode."""
         try:
             self._checker.finish()
+            self._check_self_derivation()
         except SemanticError as exc:
             if self.strict:
                 raise
             self.diagnostics.append(Diagnostic(offset, "nonconformant", str(exc)))
+
+    def _check_self_derivation(self) -> None:
+        """Refuse a file that derives one of its own streams from another.
+
+        A stage reads its input and then writes its output, so a file cannot
+        be among its own inputs: the offsets its ``spans`` name would have to
+        have been fixed before the file containing them existed. The reason
+        is *not* the ``digest`` — that option is optional, so a file could
+        omit it and the prohibition would still hold.
+
+        **Detection is partial by design**, and the specification says so.
+        There is no in-band self-identifier: the only signal is a
+        ``zpf-input`` Source's ``uri``, so a reader handed a **path** can
+        compare the two after normalisation, while one handed a file object
+        — stdin, a socket, a tar member, all of which :func:`zpf.open`
+        accepts — cannot, and is **not obliged to detect it**. The rule binds
+        the writer either way. A reader that cannot check is conformant in
+        accepting the file; what it must still not do is resolve the spans
+        against the sibling session.
+        """
+        if self.path is None:
+            return
+        mine = os.path.realpath(self.path)
+        here = os.path.dirname(mine)
+        for source in self._sources.values():
+            if source.kind != SourceKind.ZPF_INPUT or source.uri is None:
+                continue
+            named = os.path.realpath(os.path.join(here, source.uri))
+            if named == mine:
+                msg = (
+                    f"source {source.source_id} names {source.uri!r}, which is this "
+                    f"file: a file MUST NOT derive one of its own streams from "
+                    f"another, and its spans MUST NOT be resolved against the sibling"
+                )
+                raise SemanticError(msg)
 
     def _admit(self, block: Block, offset: int) -> bool:
         """Run the semantic checker; in lenient mode isolate violations.

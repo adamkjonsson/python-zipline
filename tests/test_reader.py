@@ -270,6 +270,10 @@ def unusable_prim_labels_file() -> bytes:
     with zpf.BlockWriter(sink) as w:  # permissive flat writer
         w.write(zpf.FileHeader(tick_hz=1))
         w.write(zpf.Source(source_id=0, kind=zpf.SourceKind.CAPTURE))
+        # A decoder, because content_type belongs to the decoded layer: a
+        # transport record MUST NOT carry one, and this file is about the
+        # prim: rules rather than that.
+        w.write(zpf.Decoder(decoder_id=1, name="probe"))
         w.write(zpf.Session(session_id=0, proto="tcp"))
         w.write(zpf.Participant(session_id=0, participant_id=0))
         for ts, payload, content_type in (
@@ -278,7 +282,7 @@ def unusable_prim_labels_file() -> bytes:
             (3, b"\xff", "prim:frobnicate"),  # not in the closed vocabulary
         ):
             w.write(zpf.Record(
-                session_id=0, sender_pid=0, source_id=0,
+                session_id=0, sender_pid=0, source_id=0, decoder_id=1,
                 timestamp=ts, payload=payload, content_type=content_type,
             ))
         w.write(zpf.End())
