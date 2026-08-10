@@ -199,12 +199,84 @@ def test_an_undecoded_block_rides_beside_a_capture_sourced_stream():
     """
     undecoded = zpf.Undecoded(source_id=2, session_id=9, participant_id=0, off_start=0, off_end=4)
     finished(DERIVED_HEADER, CAP, INP, SESS, PART, raw_record(), undecoded)
-    reject(
-        DERIVED_HEADER, CAP, SESS, PART,
-        zpf.Undecoded(source_id=1, session_id=9, participant_id=0, off_start=0, off_end=4),
-        match="zpf-input",
-    )
     accept(DERIVED_HEADER, INP, DEC, undecoded)
+
+
+# --- Undecoded against a capture Source (0.16) -----------------------------------------
+
+
+def against_capture(**kwargs: object) -> zpf.Undecoded:
+    args: dict = {
+        "source_id": 1, "session_id": 0, "participant_id": 0,
+        "off_start": 4096, "off_end": 4396, "reason": "overlap-discarded",
+        "reason_class": "bytes",
+    }
+    args.update(kwargs)
+    return zpf.Undecoded(**args)
+
+
+def test_a_reassembler_may_declare_an_overlap_it_discarded():
+    """``undecoded-in-capture``: legal, and it needs no derived header.
+
+    Reassembly *is* a transform, and a destructive one. What the block adds
+    here is bytes that are in the capture and did not reach the output —
+    an overlapping retransmit the reassembler dropped, which nothing else in
+    the file can express.
+    """
+    finished(HEADER, CAP, SESS, PART, raw_record(), against_capture())
+
+
+def test_a_capture_sourced_undecoded_has_no_id_namespace():
+    """One struct, one rule: the body is read by the source's kind.
+
+    A capture has no `.zpf` inside it, so there are no ids to name and the
+    offsets are byte offsets into the capture file.
+    """
+    reject(
+        HEADER, CAP, SESS, PART, raw_record(), against_capture(session_id=7),
+        match="unused and MUST be written 0",
+    )
+    reject(
+        HEADER, CAP, SESS, PART, raw_record(), against_capture(participant_id=1),
+        match="unused and MUST be written 0",
+    )
+
+
+def test_only_the_bytes_exist_class_is_available_against_a_capture():
+    """``isolate-hole-against-capture``, and why the bar is not about layers.
+
+    A hole needs no block there: the reassembled stream is a transport
+    layer whose hole-inclusive offsets already carry the gap, and the
+    sequence numbers already carry its extent. Declaring it again is a
+    second account of the same missing bytes with no rule for which to
+    believe — the contradiction that also bars a Discontinuity from such a
+    stream.
+    """
+    for reason in ("gap", "truncated"):
+        reject(
+            HEADER, CAP, SESS, PART, raw_record(),
+            against_capture(reason=reason, reason_class=None),
+            match="only the bytes-exist class is available",
+        )
+    # A non-canonical reason declaring the hole class is caught the same way:
+    # the class is what decides, not the word.
+    reject(
+        HEADER, CAP, SESS, PART, raw_record(),
+        against_capture(reason="never-captured", reason_class="hole"),
+        match="only the bytes-exist class is available",
+    )
+
+
+def test_a_capture_sourced_undecoded_discharges_no_coverage_obligation():
+    """Purely declarative: it neither satisfies a guarantee nor creates one.
+
+    The guarantee is scoped within each input participant stream, and a
+    capture has none. Counting the block would invent a stream whose only
+    covered range is the block itself, and report everything below it as an
+    unaccounted hole.
+    """
+    checker = finished(HEADER, CAP, SESS, PART, raw_record(), against_capture())
+    assert checker.coverage_findings() == []
 
 
 def undecoded(**kwargs: object) -> zpf.Undecoded:

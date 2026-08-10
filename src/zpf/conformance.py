@@ -169,19 +169,32 @@ class CoverageLedger:
 
     def __init__(self) -> None:
         self._streams: dict[tuple[int, int, int], _StreamLedger] = {}
+        # Source kinds, so a capture-sourced Undecoded block can be told
+        # apart and left out. Declare-on-first-use guarantees the Source
+        # arrives before anything referencing it.
+        self._sources: dict[int, SourceKind | int] = {}
 
     def _for(self, key: tuple[int, int, int]) -> _StreamLedger:
         return self._streams.setdefault(key, _StreamLedger())
 
     def observe(self, block: Block) -> None:
         """Absorb one block's coverage statements, if it makes any."""
-        if isinstance(block, Record):
+        if isinstance(block, Source):
+            self._sources[block.source_id] = block.kind
+        elif isinstance(block, Record):
             for span in block.spans:
                 if span.off_start < span.off_end:
                     key = (span.source_id, span.session_id, span.participant_id)
                     self._for(key).spans.append((span.off_start, span.off_end))
         elif isinstance(block, Undecoded):
-            if block.off_start < block.off_end:
+            # Against a `capture` source the block discharges no coverage
+            # obligation and creates none: the guarantee is scoped within
+            # each input participant stream, and a capture has none. Letting
+            # it in would invent a stream keyed (source, 0, 0) whose only
+            # covered range is this block, and then report everything below
+            # it as an unaccounted hole.
+            capture = self._sources.get(block.source_id) == SourceKind.CAPTURE
+            if block.off_start < block.off_end and not capture:
                 key = (block.source_id, block.session_id, block.participant_id)
                 self._for(key).undecoded.append((block.off_start, block.off_end))
         elif isinstance(block, SessionEnd):
@@ -537,18 +550,56 @@ class ConformanceChecker:
     def _on_undecoded(self, block: Undecoded) -> None:
         described = _describe(block)
         kind = self._require_source(block.source_id, described)
-        if kind != SourceKind.ZPF_INPUT:
-            msg = f"{described} must reference a zpf-input source, not {kind!r}"
+        if kind not in (SourceKind.CAPTURE, SourceKind.ZPF_INPUT):
+            msg = f"{described} references source {block.source_id} of unknown kind {kind}"
             raise SemanticError(msg)
         if block.decoder_id is not None and block.decoder_id not in self._decoders:
             msg = f"{described} names undeclared decoder {block.decoder_id}"
             raise SemanticError(msg)
         self._check_reason_class(block, described)
-        # Not a decode-stage marker any more: a pass-through preserving a
-        # decoded layer re-emits its input's Undecoded blocks unchanged,
-        # which is what carries the input's coverage guarantee forward. All
-        # that follows is that the file names an input `.zpf`.
+        if kind == SourceKind.CAPTURE:
+            self._check_against_capture(block, described)
+            return
+        # Against a `zpf-input` source. Not a decode-stage marker any more:
+        # a pass-through preserving a decoded layer re-emits its input's
+        # Undecoded blocks unchanged, which is what carries the input's
+        # coverage guarantee forward. All that follows is that the file
+        # names an input `.zpf`.
         self._require_derived_header(described)
+
+    def _check_against_capture(self, block: Undecoded, described: str) -> None:
+        """Check an Undecoded block naming a `capture` Source.
+
+        The body is read by the referenced source's ``kind``, exactly as a
+        ``spans`` entry is — one rule for one struct. A capture has no `.zpf`
+        inside it, so there is no id namespace to name: the ids are unused
+        and the offsets are byte offsets into the capture file.
+
+        The block is legal here because reassembly **is** a transform, and a
+        destructive one. What it adds at this position is an overlap the
+        reassembler discarded — bytes that are in the capture and did not
+        reach the output, which nothing else in the file can express.
+        """
+        if block.session_id != 0 or block.participant_id != 0:
+            msg = (
+                f"{described} names a capture source, where there is no id namespace: "
+                f"session_id and participant_id are unused and MUST be written 0, "
+                f"got {block.session_id} and {block.participant_id}"
+            )
+            raise SemanticError(msg)
+        if _reason_class(block) == "hole":
+            msg = (
+                f"{described} declares a hole-class region ({block.reason!r}) against a "
+                f"capture source, where only the bytes-exist class is available: the "
+                f"reassembled stream is a transport layer whose offsets already carry "
+                f"the gap, and a second account of the same missing bytes has no rule "
+                f"for which to believe"
+            )
+            raise SemanticError(msg)
+        # Nothing else follows. Against a capture source the block discharges
+        # no coverage obligation and creates none — the guarantee is scoped
+        # within each input participant stream and a capture has none — so it
+        # is purely declarative, and the file need not be derived to carry it.
 
     def _check_reason_class(self, block: Undecoded, described: str) -> None:
         """Check the reason names a recoverability class a consumer can act on.
@@ -763,6 +814,27 @@ class ConformanceChecker:
                 "produced_by and produced_at"
             )
             raise SemanticError(msg)
+
+
+def _reason_class(block: Undecoded) -> str | None:
+    """Return an Undecoded block's recoverability class, or None if unknown.
+
+    An explicit ``reason_class`` wins; otherwise a canonical ``reason``
+    implies its class. An unrecognised reason with no class is a writer
+    error caught separately, and is reported as unknown here rather than
+    guessed — in particular never as ``hole``, which would silently discard
+    bytes that may well exist.
+
+    Args:
+        block: The Undecoded block to classify.
+
+    Returns:
+        ``"bytes"``, ``"hole"``, or ``None``.
+
+    """
+    if block.reason_class is not None:
+        return block.reason_class
+    return UNDECODED_REASONS.get(block.reason or "")
 
 
 def _prim_finding(block: Record, described: str) -> str | None:

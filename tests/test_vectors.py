@@ -55,9 +55,15 @@ VECTORS = Path(__file__).parent / "vectors"
 #: participant bound to no input, and a decoder declaring a layer this
 #: version does not define.
 #:
-#: Two still out, both Phase 5, and both the same rule: an Undecoded block
-#: naming a ``capture`` Source. ``undecoded-in-capture`` is the conformant
-#: case and ``isolate-hole-against-capture`` the barred one.
+#: Phase 5: the Undecoded body read by the referenced source's ``kind``.
+#: ``undecoded-in-capture`` is the conformant case — a reassembler declaring
+#: an overlap it discarded, with no ids and no derived header — and
+#: ``isolate-hole-against-capture`` the barred one, where the gap is already
+#: carried by the reassembled stream's own hole-inclusive offsets.
+#:
+#: Two vectors are still out and both are Phase 6's: ``isolate-unmarked-break``
+#: needs the Discontinuity predicate, and ``isolate-self-derived`` a check
+#: only a reader that knows the path it opened can make.
 #:
 #: ``splice`` is one name for two files, because its violation belongs to
 #: neither of them — 52 names for 59 files, which is the honest arithmetic.
@@ -89,6 +95,7 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "isolate-duplicate-id",
         "isolate-extent-exceeds-coverage",
         "isolate-extents-disagree",
+        "isolate-hole-against-capture",
         "isolate-mixed-layer-participant",
         "isolate-sequenced-no-basis",
         "isolate-unbound-zpf-stream",
@@ -115,6 +122,7 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "splice",
         "tunnel/http",
         "tunnel/packets",
+        "undecoded-in-capture",
         "undecoded-reason-class",
         "undecoded-skipped",
     }
@@ -174,6 +182,7 @@ _ISOLATE_REASONS: dict[str, str] = {
     "isolate-duplicate-id": "twice",
     "isolate-extent-exceeds-coverage": "declared extent",
     "isolate-extents-disagree": "disagree",
+    "isolate-hole-against-capture": "only the bytes-exist class is available",
     "isolate-mixed-layer-participant": "resolves to two layers",
     "isolate-sequenced-no-basis": "sequenced_basis",
     "isolate-unbound-zpf-stream": "neither origin nor records with spans",
