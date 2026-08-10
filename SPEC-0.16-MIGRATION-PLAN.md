@@ -349,7 +349,7 @@ kept in step.
 | # | Defect | Found | Kind | Upstream |
 |---|---|---|---|---|
 | 1 | §Layers still asserts a derived file is "never a mix", which §Conformance and `mixed-derivation` contradict | reading `0.16` | text | **filed**, [#103](https://github.com/adamkjonsson/zipline/issues/103) |
-| 2 | `tunnel/{inner,outer}.jsonl` spell the flow key `flow_key`, where the JSONL mapping's alias table says `key` and `descriptive-metadata.jsonl` writes `key`. The tunnel walkthrough (spec `:1183`, `:1194`) has the same slip | Phase 1 | vector + text | to file — `VECTOR-DEFECTS.md` defect 4 |
+| 2 | `tunnel/{inner,outer}.jsonl` spell the flow key `flow_key`, where the JSONL mapping's alias table says `key` and `descriptive-metadata.jsonl` writes `key`. The tunnel walkthrough (spec `:1183`, `:1194`) has the same slip | Phase 1 | vector + text | **filed**, [#104](https://github.com/adamkjonsson/zipline/issues/104) |
 
 Phase 8 is done when every row reads **filed** and carries its issue number.
 

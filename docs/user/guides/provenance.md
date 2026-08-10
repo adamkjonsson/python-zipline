@@ -21,8 +21,8 @@ the input for you; {meth}`~zpf.FileReader.digest` is the same hash a consumer
 uses to check the match:
 
 ```python
-with zpf.open("rest_raw.zpf") as raw:
-    expected = raw.digest()                 # "sha256:..."
+with zpf.open("rest_transport.zpf") as upstream:
+    expected = upstream.digest()            # "sha256:..."
 with zpf.open("rest_decoded.zpf") as decoded:
     (source,) = [s for s in decoded.sources.values() if s.kind is zpf.SourceKind.ZPF_INPUT]
     assert source.digest == expected        # the input is the one it was built from
@@ -97,10 +97,10 @@ guarantee by construction (see [decoding](decoding.md#coverage-is-handled-for-yo
 ## Following the chain
 
 Because a derived file cites its input in the input's own coordinate system,
-provenance **recurses**. `raw → tls-records → http` is two decode stages; a
+provenance **recurses**. `transport → tls-records → http` is two decode stages; a
 consumer holding an HTTP record follows its span into the TLS-record stream, and
 if that range is itself a derived file's output, follows *its* provenance one
-level further — until it reaches the capture-sourced raw file that holds the
+level further — until it reaches the capture-sourced file that holds the
 bytes of the region it arrived at. The `digest` at each hop confirms the link
 is still valid.
 

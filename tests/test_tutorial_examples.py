@@ -53,11 +53,11 @@ def _run(script: str, cwd: Path) -> subprocess.CompletedProcess[str]:
             ('"type":"record"', "round trip: byte-identical"),
         ),
         (
-            ("05_rest_raw_input.py",),
+            ("05_rest_transport_input.py",),
             ("participant 0 (10.0.0.1:51000)", "offset  46:"),
         ),
         (
-            ("05_rest_raw_input.py", "06_write_decoder.py"),
+            ("05_rest_transport_input.py", "06_write_decoder.py"),
             (
                 "stream 0:  zpf_input decoded",
                 "dec:http-request",

@@ -1,6 +1,6 @@
 """Decoder tutorial stage 2: write a decode-stage file.
 
-Reads ``rest_raw.zpf`` (run ``05_rest_raw_input.py`` first, same directory),
+Reads ``rest_transport.zpf`` (run ``05_rest_transport_input.py`` first, same directory),
 reassembles each participant's byte stream, splits it into HTTP messages,
 and writes ``rest_decoded.zpf`` -- a *decode-stage* file whose records are
 whole HTTP messages instead of transport chunks. Each decoded record cites
@@ -49,12 +49,12 @@ def decode_stream(stream: bytes) -> tuple[list[tuple[int, int, str]], int]:
     return messages, pos
 
 
-# --- the decoder: rest_raw.zpf -> rest_decoded.zpf ----------------------
+# --- the decoder: rest_transport.zpf -> rest_decoded.zpf ----------------------
 # `decode_stage` opens the input, copies its time base, declares it as a
 # zpf-input source (hashing it for the digest), re-declares the participants
 # under the same ids, and hands back one context per input stream.
 
-RAW = "rest_raw.zpf"
+RAW = "rest_transport.zpf"
 
 with zpf.decode_stage(
     RAW,

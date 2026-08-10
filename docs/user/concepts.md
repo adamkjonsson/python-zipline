@@ -4,7 +4,7 @@ This page is the mental model behind the Zipline Payload Format and this
 library. The [tutorial](tutorial.md) walks you through the API; this page
 explains *why* the format looks the way it does, and defines the vocabulary
 the rest of the documentation uses. Deep links go to the
-[v0.14 specification](https://github.com/adamkjonsson/zipline/blob/v0.14/docs/zipline-payload-format.md),
+[v0.16 specification](https://github.com/adamkjonsson/zipline/blob/v0.16/docs/zipline-payload-format.md),
 which is normative for this library.
 
 ## What a `.zpf` file holds
@@ -137,29 +137,63 @@ run backwards in any session, and a reader must not reject a file or
 re-sort a sequenced session because they do. They order records in exactly
 one place — the tie-break between concurrent records during a merge.
 
-## File kinds: raw, decode stage, pass-through
+## Two axes: provenance and layer
 
-Every `.zpf` file is exactly one of three kinds, told by what its records
-reference:
+**Where a stream's bytes came from and what shape they have are different
+questions, and neither answers the other.** The unit for both is the *stream*
+— one participant — not the file, so one file may hold streams at different
+positions on the two axes and needs no syntax to say so.
+
+- **Provenance** — was this stream *captured* or *derived*? Told by the `kind`
+  of the Source its records reference: `capture` or `zpf-input`.
+- **Layer** — is this stream *transport*-shaped or *decoded*-shaped? The rule
+  is *layer = decoder present ? that decoder's declared `output_layer` :
+  transport*. The layer fixes the stream's **offset space**, which is the
+  consequence that matters.
+
+All four combinations occur, and none implies another:
+
+|                     | capture-sourced | `zpf`-sourced |
+|---------------------|-----------------|---------------|
+| **transport layer** | a capture's reassembled streams | a *sessionization stage* — a reassembler run over a `.zpf`; or a pass-through preserving one |
+| **decoded layer**   | a decoder with no predecessor file: a TLS-terminating proxy, an `SSL_write` uprobe | a decode stage's output, or a pass-through preserving one |
+
+Reading the layer off the provenance is the mistake this table exists to
+prevent, and the bottom-left cell is where it bit: a proxy's decoded output has
+no predecessor `.zpf` and never will, so a rule that inferred "decoded" from
+"derived" left it with no honest encoding at all.
+
+{meth}`FileReader.stream_kind <zpf.reader.FileReader.stream_kind>` reports both
+axes for one stream.
+
+```{admonition} If you knew the old model
+:class: note
+
+Through `0.14` this library reported a single `file_kind` per file — *raw*,
+*decode stage*, or *pass-through* — and "raw" carried a statement about
+provenance while reading as one about how processed the bytes were. `0.15`
+retired the term and split the question in two. `file_kind` is gone, because
+there is no file-wide property left to name.
+```
+
+## Created or preserved
+
+A `zpf`-sourced stream is produced one of two ways, and the difference is
+whether its stage **creates** a layer or **preserves** one:
 
 ```
-tap.pcap ──[ sessionizer ]──▶ raw.zpf ──[ http decoder ]──▶ decoded.zpf
-                                                             (decode stage)
+tap.pcap ──[ sessionizer ]──▶ transport.zpf ──[ http decoder ]──▶ decoded.zpf
+                                                                  (creates)
 sideA.zpf ─┐                              decoded.zpf
            ├─[ merge ]──▶ merged.zpf          │
-sideB.zpf ─┘              (pass-through)      ├─[ annotate ]──▶ annotated.zpf
-                                              │                 (pass-through,
-                                              │                  decoded layer)
+sideB.zpf ─┘              (preserves)         ├─[ annotate ]──▶ annotated.zpf
+                                              │                 (preserves)
                                               └─[ filter ]────▶ requests.zpf
-                                                                (decode stage)
+                                                                (creates)
 ```
 
-- A **raw** file is capture-sourced: its records are *byte runs* — chunks of
-  the reassembled stream, with boundaries wherever reassembly happened to
-  produce them — referencing a *capture* source (a pcap file, an
-  interface).
-- A **decode stage** *creates* a layer. Its records are decoder-imposed
-  units (an HTTP message, a TLS record) whose boundaries follow application
+- A **decode stage** *creates* a layer. Its records are decoder-imposed units
+  (an HTTP message, a TLS record) whose boundaries follow application
   semantics, and each cites the input ranges it was built from in `spans`.
   {func}`zpf.decode_stage <zpf.decode.decode_stage>` writes one end to end.
 - A **pass-through** *preserves* the layer its input had. The merge is the
@@ -168,33 +202,37 @@ sideB.zpf ─┘              (pass-through)      ├─[ annotate ]──▶ an
   file it re-emits the decoded records unchanged, `decoder_id` values and
   Undecoded blocks included.
 
-Two shapes are easier to misplace than they look, and both are decode
-stages:
+**The discriminator is `spans` versus `origin`, not `decoder_id`.** A record
+carrying `spans` was built by this file's stage; a record without them, whose
+participant carries `origin`, was re-emitted from the input. `decoder_id`
+answers a different question — *which decoder's layer* a record belongs to —
+and a pass-through carries inherited ones forward, so it says nothing about
+which stage ran.
+
+**It binds per participant, so one file may do both.** A participant must not
+both carry `origin` and hold records carrying `spans` — one stream is created
+or preserved, never half of each — but across streams there is no such rule. A
+transform that decodes one session while passing another through is ordinary:
+it is what a tool does when it has a decoder for one protocol and not the
+other.
+
+Two shapes are easier to misplace than they look, and both *create*:
 
 - **Filtering or reordering a decoded file** is not a pass-through, however
   byte-preserving it appears. Stored order is what *defines* a decoded
   stream's offsets, so dropping or moving a record rewrites them, and the
   output cannot claim to have preserved what it just moved.
   {func}`zpf.rewrite_decoded <zpf.transform.rewrite_decoded>` writes one:
-  survivors cite their input ranges, dropped ranges are marked `skipped`,
-  and the input's decoders are inherited rather than re-invented.
-- **A second decode over a decoded file** (`raw → tls-records → http`) is
-  just the same mechanism applied again.
+  survivors cite their input ranges, dropped ranges are marked `skipped`, the
+  input's decoders are inherited rather than re-invented, and every seam the
+  stage itself made is declared.
+- **A second decode over a decoded file** (`transport → tls-records → http`)
+  is just the same mechanism applied again.
 
-**The discriminator is `spans` versus `origin`, not `decoder_id`.** A record
-carrying `spans` was built by this file's stage; a record without them,
-whose participant carries `origin`, was re-emitted from the input.
-`decoder_id` answers a different question — *which decoder's layer* a record
-belongs to — and a pass-through carries inherited ones forward, so it says
-nothing about which stage ran. Whether a stream is *decoded* is **not** told by whether its records carry a
-`decoder_id` — reassembly is a decoder too. It comes from that decoder's
-declared `output_layer`; {meth}`FileReader.stream_kind
-<zpf.reader.FileReader.stream_kind>` reports both axes for one stream.
-
-Raw and decoded views live in **separate files** because their boundaries
-rarely align — one HTTP message can start and end mid-way through raw
-records. Chaining is uniform: `raw → tls-records → http` is the same
-file → file mechanism applied twice.
+Transport and decoded views live in **separate files** because their
+boundaries rarely align — one HTTP message can start and end mid-way through a
+transport record. Chaining is uniform: `transport → tls-records → http` is the
+same file → file mechanism applied twice.
 
 ## Typing a payload: `content_type`
 

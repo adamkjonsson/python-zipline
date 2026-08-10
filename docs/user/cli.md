@@ -33,19 +33,25 @@ a nonconformant file (`1`) from one it couldn't open at all (`2`).
 
 ## `zpf info FILE`
 
-Summarize a file: its face and [kind](concepts.md#file-kinds-raw-decode-stage-pass-through),
-whether it is complete, the capture clock, header provenance, and one line
-per source, decoder, and session. Wraps {func}`zpf.open`.
+Summarize a file: its face, whether it is complete, the capture clock, header
+provenance, and one line per source, decoder, and session — with a line per
+**stream** giving its [two axes](concepts.md#two-axes-provenance-and-layer).
+Wraps {func}`zpf.open`.
 
 ```console
 $ zpf info session.zpf
 face:      binary
-kind:      raw
 complete:  True
 clock:     1000000 ticks/s
 source 0: capture capture.pcap
-session 0: proto=tcp key='10.0.0.1:51000 <-> 93.184.216.34:80' participants=[10.0.0.1:51000, 93.184.216.34:80] records=2 end=yes
+session 0: proto=tcp key='10.0.0.1:51000 <-> 93.184.216.34:80' participants=[10.0.0.1:51000, 93.184.216.34:80] records=2 end=fin
+  stream 0: capture transport
+  stream 1: capture transport
 ```
+
+There is no file-wide kind line, because there is no file-wide answer: one
+file may hold a decoded stream beside a transport one, and a captured stream
+beside a derived one.
 
 A truncated file reports `complete:  False  (truncated)` and prints any
 reader diagnostics as `note:` lines on **stderr**, so the summary on stdout
@@ -55,7 +61,6 @@ stays parseable:
 $ zpf info truncated.zpf
 note: truncated: stream ends inside a block's content
 face:      binary
-kind:      raw
 complete:  False  (truncated)
 ...
 ```
@@ -134,7 +139,7 @@ truncated.zpf: truncated: stream ends inside a block's content
 | `--input RAW` | Additionally check the [decode-stage coverage guarantee](howto/decode_stage.md) against the cited input file `RAW`; wraps {func}`zpf.check_coverage`. |
 
 ```console
-$ zpf validate rest_decoded.zpf --input rest_raw.zpf
+$ zpf validate rest_decoded.zpf --input rest_transport.zpf
 rest_decoded.zpf: OK
 ```
 

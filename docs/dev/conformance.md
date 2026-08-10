@@ -59,7 +59,7 @@ Three design points worth preserving when editing it:
   set of ended session ids is retained (to police the nothing-after-Session-
   End rule). The checker runs on unbounded streams.
 - **Consistent-on-raise.** Each handler runs its pure checks *before* mutating
-  state or locking the file kind, so a raised violation leaves the checker
+  state, so a raised violation leaves the checker
   consistent and a lenient reader can isolate the offending block and carry
   on.
 - **Isolating versus advisory findings.** A few MUSTs bind the writer only,
@@ -105,27 +105,73 @@ subject, from the reader's side.
 ## Going beyond the standard
 
 Per `CLAUDE.md`, support must stay complete *and* must not silently exceed the
-v0.14 spec: any behavior beyond the standard has to be flagged to the user with
+v0.16 spec: any behavior beyond the standard has to be flagged to the user with
 an explicit callout. As of this version nothing does — the checker's rules are
 the spec's, and the two out-of-band checks (sequenced order, coverage) are
 spec requirements enforced elsewhere, not extensions. A new rule that isn't in
-v0.14 does not belong in the `ConformanceChecker`.
+v0.16 does not belong in the `ConformanceChecker`.
+
+### What the standard asks for and no reader can check
+
+Two `0.16` rules are **writer-only**, and their absence from the checker is a
+decision rather than an oversight.
+
+**A stage emitting a transport layer MUST NOT withhold content from a stream
+whose offsets are not sequence-anchored.** In a message-oriented or `N = 1`
+stream with no `isn` — `tunnel/outer.zpf` is one — offsets are the
+accumulation of what arrived, so a withheld datagram leaves no trace, and the
+Discontinuity that would say so is barred by the layer. A file that withheld
+and one that did not are byte-identical, which is precisely the defect. The
+specification says outright that no reader can check it, and it ships no
+vector for the same reason. A stage that needs to withhold from such a stream
+emits a decoded layer instead, where the break is expressible.
+
+**Most of the origination duty.** The rule is *do these two adjacent units
+join?*, and it rests on producer knowledge: only the stage knows what it did
+with its input. One case is decidable from a single file — a `hole`-class
+Undecoded region between two adjacent units' input regions — and that one is
+implemented, as the predicate in `_check_unmarked_breaks`. Satisfying it is
+**not** satisfying the duty; it is the minimum a checker owes, deliberately
+conservative, and every pair it declines to test may still be one where the
+duty binds. On the write side {meth}`~zpf.DecodeStage.record` asks the
+producer directly, through `seam=`.
+
+### One recommendation the standard did not take
+
+Our [review of `0.15`](https://github.com/adamkjonsson/python-zipline/blob/main/SPEC-0.15-REVIEW.md)
+argued (Finding 5) for splitting the bytes-exist vocabulary in two — `skipped`
+for content withheld where the survivors still join, and something else for
+content removed where they do not — so that a filter's duty would be decidable
+from one file. `0.16` did not take it, on the grounds that the reason word must
+not decide the duty. The consequence is worth knowing when reading the checker:
+`undecoded-skipped` and `filtered-decoded` are byte-shaped alike — a
+bytes-class region between two adjacent units — and one owes a Discontinuity
+while the other does not. Nothing here can tell them apart, and nothing is
+missing that could.
 
 ## Conformance vectors
 
-The specification ships 39 hand-built vectors, vendored verbatim into
+The specification ships 53 hand-built vectors, vendored verbatim into
 [`tests/vectors/`](https://github.com/adamkjonsson/python-zipline/tree/main/tests/vectors)
 and run by `tests/test_vectors.py` across the three tiers — `accept` (a
 conformant file, with its expected JSONL projection), `reject` (structural
 corruption), and `isolate` (a semantic violation the reader must not pass
 silently).
 
+`0.16` adds a key rather than a fourth tier: an `accept` entry marked
+`advisory` declares **one** violation instead of none, and the reader must
+both accept the file completely *and* report it. It is a key because a tier
+names what a reader *does*, and a reader accepts these files. It is the
+format's first violation that accepts, and the harness asserts both halves —
+silence fails the case as loudly as rejecting it would.
+
 Two habits keep them honest. The harness asserts what each negative vector is
 refused or diagnosed *for*, not merely that something was raised — which matters
 most at the start of a port, when the version gate is still behind the vectors
 and fires before the check each one is testing. Three `reject` vectors passed for
 that wrong reason during the 0.12 port, and two did again at the start of the
-0.14 one — held out of the harness's known-passing set until the gate moved. And
+0.14 and 0.16 ones — held out of the harness's known-passing set until the gate
+moved. And
 a vector is never edited to make a test pass: they are subordinate to the
 normative text, so a vector that looks wrong is a question for the spec
 repository. Two that were defective upstream have since been fixed there;

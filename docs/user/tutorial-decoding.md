@@ -1,30 +1,30 @@
 # Tutorial: writing a decoder
 
-The [main tutorial](tutorial.md) captured and read *raw* files: records
+The [main tutorial](tutorial.md) captured and read *transport-layer* files: records
 that are byte runs straight off the wire. This companion tutorial takes the
-next step — turning a raw file into a **decode stage**, where records are
+next step — turning one into a **decode stage**, where records are
 whole application messages instead of transport chunks. We'll decode a small
 REST call: one HTTP `GET` and its JSON response.
 
-A decode stage is a separate file derived from the raw one by a decoder:
+A decode stage is a separate file derived from that one by a decoder:
 
 ```
-rest.pcap ──[ sessionizer ]──▶ rest_raw.zpf ──[ http decoder ]──▶ rest_decoded.zpf
+rest.pcap ──[ sessionizer ]──▶ rest_transport.zpf ──[ http decoder ]──▶ rest_decoded.zpf
 ```
 
-This is exactly the shape [Concepts](concepts.md#file-kinds-raw-decode-stage-pass-through)
+This is exactly the shape [Concepts](concepts.md#created-or-preserved)
 calls a decode stage. It assumes you've done the main tutorial; the three
 scripts here live under
 [`docs/user/examples/`](https://github.com/adamkjonsson/python-zipline/tree/main/docs/user/examples)
 and run with plain `python`.
 
-## 1. The raw input a decoder consumes
+## 1. The input a decoder consumes
 
 A decoder reads its input one **participant stream** at a time.
 {meth}`~zpf.SessionReader.reassemble` hands back one {class}`~zpf.StreamView`
 per stream and turns its byte-run records — whose boundaries came from
 reassembly, not the application — into contiguous {class}`~zpf.Segment`
-runs. The decoder parses those runs, never the raw `seq_start`/`isn`
+runs. The decoder parses those runs, never the `seq_start`/`isn`
 arithmetic. Offsets are **logical stream offsets**: 0-based positions in the
 reassembled stream, where byte 0 is the stream's first application byte
 (`isn + 1` when the TCP handshake was seen). Where a lost segment left a
@@ -50,12 +50,12 @@ Checking `is_stream_oriented` is how a general decoder picks the right
 idiom; this HTTP decoder knows its input is TCP and goes straight to
 `segments()`.
 
-```{literalinclude} examples/05_rest_raw_input.py
+```{literalinclude} examples/05_rest_transport_input.py
 :language: python
 ```
 
 ```console
-$ python 05_rest_raw_input.py
+$ python 05_rest_transport_input.py
 participant 0 (10.0.0.1:51000):
   offset   0: b'GET /users/1 HTTP/1.1\r\nHost: api.example.com\r\n'
   offset  46: b'Accept: application/json\r\n\r\n'
@@ -78,7 +78,7 @@ enforced by the {class}`~zpf.conformance.ConformanceChecker`:
 
 - `produced_by`/`produced_at` on the header — required the moment a file
   becomes derived;
-- a `zpf-input` **source** citing the raw file, with a `digest` so a
+- a `zpf-input` **source** citing the input file, with a `digest` so a
   consumer can confirm the input hasn't changed;
 - `decoder=` on each record — a record is *decoded* precisely because it
   names the decoder that produced it.
@@ -150,17 +150,17 @@ The same check is available from the command line, which is how you'd
 validate a decoder's output against its input in a pipeline:
 
 ```console
-$ zpf validate rest_decoded.zpf --input rest_raw.zpf
+$ zpf validate rest_decoded.zpf --input rest_transport.zpf
 rest_decoded.zpf: OK
 ```
 
 ## Where to go next
 
 - [Concepts](concepts.md) — the normative model: [file
-  kinds](concepts.md#file-kinds-raw-decode-stage-pass-through),
+  axes](concepts.md#two-axes-provenance-and-layer),
   [spans, coverage, and
   origins](concepts.md#provenance-spans-coverage-origins), and how chaining
-  (`raw → tls-records → http`) is the same file-to-file mechanism applied
+  (`transport → tls-records → http`) is the same file-to-file mechanism applied
   twice.
 - The [decode-stage how-to](howto/decode_stage.md) for the task-shaped
   recipe, and the [validate how-to](howto/validate.md) for reading coverage

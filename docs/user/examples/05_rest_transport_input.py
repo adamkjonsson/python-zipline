@@ -1,9 +1,9 @@
 """Decoder tutorial stage 1: the raw input a decoder consumes.
 
-Writes ``rest_raw.zpf`` -- a raw capture of one REST call (a GET and its
+Writes ``rest_transport.zpf`` -- a raw capture of one REST call (a GET and its
 JSON response) -- then reads it back to show what a decoder sees: two
 participant streams of byte-run records, and the logical stream offset of
-each record. Run with ``python 05_rest_raw_input.py``; the next stage reads
+each record. Run with ``python 05_rest_transport_input.py``; the next stage reads
 the file it leaves behind.
 """
 
@@ -25,7 +25,7 @@ RESP = (
     b"Content-Length: " + str(len(BODY)).encode() + b"\r\n\r\n" + BODY
 )
 
-with zpf.create("rest_raw.zpf", tick_hz=1_000_000) as writer:
+with zpf.create("rest_transport.zpf", tick_hz=1_000_000) as writer:
     writer.add_source("capture", uri="rest.pcap")
     with writer.begin_session(
         proto="tcp", key="10.0.0.1:51000 <-> 93.184.216.34:80", session_id=7
@@ -47,7 +47,7 @@ with zpf.create("rest_raw.zpf", tick_hz=1_000_000) as writer:
 # into logical-offset segments, so the decoder never touches seq_start/isn
 # arithmetic itself. (This file holds one session, but a decoder handles
 # whatever the input contains.)
-with zpf.open("rest_raw.zpf") as reader:
+with zpf.open("rest_transport.zpf") as reader:
     for session in reader.sessions():
         for stream in session.reassemble():
             participant = stream.participant

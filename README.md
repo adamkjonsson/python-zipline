@@ -5,13 +5,13 @@
 The Zipline Payload Format (`.zpf`) stores the payload of network traffic —
 the bytes exchanged between endpoints once packets have been reassembled into
 sessions, plus the metadata needed to consume them. This library implements
-[version 0.14](https://github.com/adamkjonsson/zipline/blob/v0.14/docs/zipline-payload-format.md)
+[version 0.16](https://github.com/adamkjonsson/zipline/blob/v0.16/docs/zipline-payload-format.md)
 of the format, specified in the
 [zipline repository](https://github.com/adamkjonsson/zipline).
 
 > ⚠️ **Not ready for production — neither the format nor this library.**
 >
-> The specification is at `0.14` and says so itself: it is *a design in
+> The specification is at `0.16` and says so itself: it is *a design in
 > progress*, `1.0` is reserved for a version that has survived implementation,
 > and any minor release may change anything, including in ways that break
 > existing readers. Several already have. This library is pre-1.0 in its own
@@ -30,11 +30,13 @@ belongs to an unrelated project.
 
 ## Features
 
-- Complete 0.14 support: the binary container and the JSON-Lines projection,
-  raw, decode-stage, and pass-through files, with lossless converters.
-- Verified against the specification's own 39 conformance vectors, vendored in
+- Complete 0.16 support: the binary container and the JSON-Lines projection,
+  captured and derived streams at the transport and decoded layers, with
+  lossless converters.
+- Verified against the specification's own 53 conformance vectors, vendored in
   [`tests/vectors/`](tests/vectors/) and run by the test suite — every one of
-  them passing, negative tiers included.
+  them passing, negative tiers included, bar two held out by an open upstream
+  defect ([`VECTOR-DEFECTS.md`](VECTOR-DEFECTS.md)).
 - An ergonomic writer (`zpf.create`) that makes non-conformant files hard to
   write, and a session-first reader (`zpf.open`) with lazy record access.
 - Causal ordering: `session.timeline()` orders records by TCP seq/ack
