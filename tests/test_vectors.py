@@ -61,9 +61,14 @@ VECTORS = Path(__file__).parent / "vectors"
 #: ``isolate-hole-against-capture`` the barred one, where the gap is already
 #: carried by the reassembled stream's own hole-inclusive offsets.
 #:
-#: Two vectors are still out and both are Phase 6's: ``isolate-unmarked-break``
-#: needs the Discontinuity predicate, and ``isolate-self-derived`` a check
-#: only a reader that knows the path it opened can make.
+#: Phase 6: ``isolate-unmarked-break`` for the Discontinuity predicate, and
+#: ``isolate-self-derived`` for a check only a reader that knows the path it
+#: opened can make. ``advisory-transport-content-type`` was already here and
+#: now passes for the right reason — accepted *and* reported, which is the
+#: format's first violation that accepts.
+#:
+#: **Every vector name is now in this set.** What stays xfailed is
+#: :data:`DEFECTIVE`, which is upstream's to fix and not a phase to wait for.
 #:
 #: ``splice`` is one name for two files, because its violation belongs to
 #: neither of them — 52 names for 59 files, which is the honest arithmetic.
@@ -97,11 +102,13 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "isolate-extents-disagree",
         "isolate-hole-against-capture",
         "isolate-mixed-layer-participant",
+        "isolate-self-derived",
         "isolate-sequenced-no-basis",
         "isolate-unbound-zpf-stream",
         "isolate-undeclared-session",
         "isolate-unknown-output-layer",
         "isolate-unknown-source-kind",
+        "isolate-unmarked-break",
         "merge-timestamp-tie",
         "mixed-derivation",
         "partially-hinted-sequenced",
@@ -184,10 +191,12 @@ _ISOLATE_REASONS: dict[str, str] = {
     "isolate-extents-disagree": "disagree",
     "isolate-hole-against-capture": "only the bytes-exist class is available",
     "isolate-mixed-layer-participant": "resolves to two layers",
+    "isolate-self-derived": "which is this file",
     "isolate-sequenced-no-basis": "sequenced_basis",
     "isolate-unbound-zpf-stream": "neither origin nor records with spans",
     "isolate-unknown-output-layer": "does not define",
     "isolate-undeclared-session": "undeclared session",
+    "isolate-unmarked-break": "a Discontinuity between them is required",
     "isolate-unknown-source-kind": "unknown kind",
 }
 
@@ -241,6 +250,10 @@ class Case:
         path: The binary file under test.
         expected_jsonl: Its expected projection, if the tier defines one.
         summary: The manifest's one-line description, for failure messages.
+        advisory: Whether the manifest marks the entry ``advisory`` — an
+            ``accept`` entry declaring **1** violation rather than 0. It is
+            a key rather than a fourth tier because a tier names what a
+            *reader does*, and a reader accepts these files completely.
 
     """
 
@@ -249,6 +262,7 @@ class Case:
     path: Path
     expected_jsonl: Path | None
     summary: str
+    advisory: bool = False
 
 
 def _pairwise_vectors() -> list[str]:
@@ -299,6 +313,7 @@ def _load_cases() -> list[Case]:
                     path=path,
                     expected_jsonl=jsonl if entry.get("has_jsonl") and jsonl.exists() else None,
                     summary=entry["summary"],
+                    advisory=bool(entry.get("advisory")),
                 )
             )
     return sorted(cases, key=lambda case: case.name)
@@ -519,11 +534,25 @@ def test_a_vector_survives_a_canonical_re_encode(case: Case) -> None:
 
 @pytest.mark.parametrize("case", _params("accept"))
 def test_accept(case: Case) -> None:
-    """A conformant file reads cleanly and projects to its expected JSONL."""
+    """A conformant file reads cleanly and projects to its expected JSONL.
+
+    An **advisory** entry is the one shape that both accepts and reports,
+    and it is the format's first. The file is fully readable and its
+    projection round-trips — the label a reader is told to ignore still
+    survives, because a reader preserves what it does not act on — but a
+    diagnostic is owed, so silence fails the case just as loudly as
+    rejecting it would.
+    """
     with zpf.open(case.path) as reader:
         for session in reader.sessions():
             list(session.records())
-        assert reader.diagnostics == [], f"{case.name}: {case.summary}"
+        if case.advisory:
+            assert reader.diagnostics, (
+                f"{case.name}: accepted silently, but the manifest declares a "
+                f"violation a reader SHOULD report — {case.summary}"
+            )
+        else:
+            assert reader.diagnostics == [], f"{case.name}: {case.summary}"
     if case.expected_jsonl is not None:
         actual = _projection(case.path)
         expected = _expected(case.expected_jsonl)
@@ -637,3 +666,30 @@ def test_a_clean_pair_reports_nothing() -> None:
     chain = VECTORS / "chain"
     assert zpf.check_splice(chain / "annotated.zpf", chain / "decoded.zpf") == []
     assert zpf.check_splice(chain / "decoded.zpf", chain / "raw.zpf") == []
+
+
+def test_the_unmarked_break_predicate_fires_on_exactly_one_vector() -> None:
+    """The claim the predicate is only worth having if it holds.
+
+    A conservative check is useless if it also fires on conformant files, so
+    this asserts the whole suite rather than the one vector: every near-miss
+    is excluded by the clause that exists for it — ``sessionization-stage``
+    and ``tunnel/inner`` by the layer test, ``reordered-decoded`` and
+    ``session-fan-out`` by the overlap clause, ``filtered-decoded`` because
+    its region between records is bytes-class.
+    """
+    wanted = "a Discontinuity between them is required"
+    fired = set()
+    for case in CASES:
+        if case.tier == "reject":
+            continue
+        try:
+            with zpf.open(case.path) as reader:
+                for session in reader.sessions():
+                    list(session.records())
+                reported = " ".join(d.message for d in reader.diagnostics)
+        except zpf.SemanticError as exc:
+            reported = str(exc)
+        if wanted in reported:
+            fired.add(case.name)
+    assert fired == {"isolate-unmarked-break"}

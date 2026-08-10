@@ -69,6 +69,19 @@ def advise(*blocks: zpf.Block, match: str) -> zpf.ConformanceChecker:
 
 RAW_PRELUDE = (HEADER, CAP, SESS, PART)
 
+#: A capture-sourced *decoded* stream — ``proxy-decoded``'s shape, which needs
+#: no derived header. Anything asserting about ``content_type`` belongs here
+#: rather than in :data:`RAW_PRELUDE`: since 0.16 a transport-layer record MUST
+#: NOT carry the label at all, so a decoder-less fixture would be testing the
+#: prim: rules through a violation of a different one.
+DECODED_PRELUDE = (HEADER, CAP, DEC, SESS, PART)
+
+
+def decoded_record(**kwargs: object) -> zpf.Record:
+    """Build a record at the decoded layer, for the ``content_type`` rules."""
+    kwargs.setdefault("decoder_id", 3)
+    return raw_record(**kwargs)
+
 
 # --- Declare-before-use and id uniqueness --------------------------------------
 
@@ -509,17 +522,18 @@ def test_a_block_with_reserved_bits_is_still_absorbed():
 
 
 def test_prim_width_binds_payload_len():
-    accept(*RAW_PRELUDE, raw_record(payload=b"abcd", content_type="prim:u32"))
-    accept(*RAW_PRELUDE, raw_record(payload=b"anything", content_type="prim:bytes"))
-    accept(*RAW_PRELUDE, raw_record(content_type="mime:text/plain"))  # width binds prim: only
+    accept(*DECODED_PRELUDE, decoded_record(payload=b"abcd", content_type="prim:u32"))
+    accept(*DECODED_PRELUDE, decoded_record(payload=b"anything", content_type="prim:bytes"))
+    # width binds prim: only
+    accept(*DECODED_PRELUDE, decoded_record(content_type="mime:text/plain"))
     # A writer MUST NOT emit these, so the finding stands — but it is advisory:
     # the reader is told to ignore the label, not to drop the bytes.
     advise(
-        *RAW_PRELUDE, raw_record(payload=b"abc", content_type="prim:u32"),
+        *DECODED_PRELUDE, decoded_record(payload=b"abc", content_type="prim:u32"),
         match="requires payload_len 4",
     )
     advise(
-        *RAW_PRELUDE, raw_record(payload=b"abcd", content_type="prim:u128"),
+        *DECODED_PRELUDE, decoded_record(payload=b"abcd", content_type="prim:u128"),
         match="not a legal prim: token",
     )
 
@@ -867,4 +881,111 @@ def test_a_capture_only_file_may_not_carry_a_transform_params_digest():
                        transform_params_digest="sha256:ab"),
         INP, SESS, zpf.Participant(session_id=5, participant_id=0, origin=ORIGIN),
         raw_record(source_id=2),
+    )
+
+
+# --- The unmarked-break predicate (0.16) -----------------------------------------------
+
+def _range(start: int, end: int, pid: int = 0) -> Span:
+    return Span(source_id=2, session_id=9, participant_id=pid, off_start=start, off_end=end)
+
+
+def _unit(*spans: Span, ts: int = 0) -> zpf.Record:
+    return raw_record(source_id=2, decoder_id=3, timestamp=ts, spans=spans)
+
+
+def _hole(start: int, end: int, pid: int = 0) -> zpf.Undecoded:
+    return zpf.Undecoded(
+        source_id=2, session_id=9, participant_id=pid,
+        off_start=start, off_end=end, reason="gap",
+    )
+
+
+DECODE_PRELUDE = (DERIVED_HEADER, INP, DEC, SESS, PART)
+
+
+def test_a_hole_between_adjacent_units_requires_a_discontinuity():
+    """``isolate-unmarked-break``: the one case decidable from a single file.
+
+    No bytes existed there, so no content can have been carried forward and
+    the two units cannot join.
+    """
+    reject(
+        *DECODE_PRELUDE,
+        _unit(_range(0, 100)), _hole(100, 139), _unit(_range(139, 200), ts=1),
+        match="a Discontinuity between them is required",
+    )
+
+
+def test_the_break_is_satisfied_by_a_discontinuity_between_them():
+    """``filtered-decoded``'s shape: the duty discharged, so nothing is owed."""
+    finished(
+        *DECODE_PRELUDE,
+        _unit(_range(0, 100)),
+        _hole(100, 139),
+        zpf.Discontinuity(session_id=5, participant_id=0, width=39),
+        _unit(_range(139, 200), ts=1),
+    )
+
+
+def test_a_bytes_class_region_between_two_units_owes_nothing():
+    """``undecoded-skipped``: a discarded BOM, and the survivors do join.
+
+    The reason word is not what decides it — the class is. This is the
+    contrast the predicate is deliberately silent about.
+    """
+    finished(
+        *DECODE_PRELUDE,
+        _unit(_range(0, 100)),
+        zpf.Undecoded(source_id=2, session_id=9, participant_id=0,
+                      off_start=100, off_end=139, reason="skipped"),
+        _unit(_range(139, 200), ts=1),
+    )
+
+
+def test_the_predicate_does_not_reach_a_transport_stream():
+    """``sessionization-stage`` and ``tunnel/inner``, excluded by the layer test.
+
+    Such a stream expresses the same break in its hole-inclusive offsets and
+    is *forbidden* the block, so a checker without this clause rejects a
+    conformant file.
+    """
+    reassembler = zpf.Decoder(decoder_id=3, output_layer=zpf.OutputLayer.TRANSPORT)
+    finished(
+        DERIVED_HEADER, INP, reassembler, SESS, PART,
+        _unit(_range(0, 50)), _hole(50, 75), _unit(_range(75, 105), ts=1),
+    )
+
+
+def test_a_stream_only_one_of_the_pair_cites_says_nothing():
+    """``session-fan-out``: adjacent units may cite different input streams.
+
+    A hole in a stream only one of them names says nothing about whether
+    *they* join.
+    """
+    finished(
+        *DECODE_PRELUDE,
+        _unit(_range(0, 100, pid=0)),
+        _hole(100, 139, pid=0),
+        _unit(_range(0, 100, pid=1), ts=1),
+    )
+
+
+def test_input_regions_running_backwards_are_not_tested():
+    """``reordered-decoded``: where A >= B, "the region between them" names nothing."""
+    finished(
+        *DECODE_PRELUDE,
+        _unit(_range(139, 200)),
+        _hole(100, 139),
+        _unit(_range(0, 100), ts=1),
+    )
+
+
+def test_overlapping_spans_are_reduced_by_max_and_min():
+    """Legal since 0.14, and the reduction is what keeps them from firing."""
+    finished(
+        *DECODE_PRELUDE,
+        _unit(_range(0, 100), _range(80, 150)),  # A = max(100, 150) = 150
+        _hole(100, 139),
+        _unit(_range(120, 200), _range(150, 260), ts=1),  # B = min(120, 150) = 120
     )

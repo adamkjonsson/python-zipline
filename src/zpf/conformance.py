@@ -32,13 +32,16 @@ the specification tells a reader that meets them to ignore the offending
 label and keep the bytes — and those raise
 :class:`~zpf.errors.AdvisoryError`, a :class:`~zpf.errors.SemanticError`
 subclass, so writers still refuse the block while a lenient reader can
-report it and hand the block over. Two rules are advisory today: reserved
+report it and hand the block over. Three rules are advisory today: reserved
 flag bits set in any flags field (the format gives them no meaning a reader
-could act on, so ignoring them is the only reading available), and the
+could act on, so ignoring them is the only reading available); the
 ``prim:`` content-type ones (illegal token, width against ``payload_len``
 — the label grammar and the vocabulary they check against live in
-:mod:`zpf.content`). A block with several such findings reports them all in
-one message.
+:mod:`zpf.content`); and a ``content_type`` at the **transport** layer,
+which 0.16 made a MUST NOT with this strength deliberately — dropping the
+label loses nothing and the record stays fully readable, so there is no
+unit a reader could soundly discard. A block with several such findings
+reports them all in one message.
 
 Memory stays bounded on unbounded streams: per-session state is freed at
 the session's Session End; only the set of ended session ids is retained
@@ -112,6 +115,14 @@ class _ParticipantState:
             Whether that is legal depends on the layer, which is not known
             until the records are in.
         last_seq: Its most recent ``seq_start``, for the stored-order rule.
+        prev_reach: Per input stream, the maximum ``off_end`` the previous
+            record's spans reached on it — the ``A`` of the unmarked-break
+            predicate.
+        broke_since: Whether a Discontinuity has appeared since that record,
+            which is what satisfies the duty for the pair.
+        candidates: Adjacent pairs whose input regions leave a gap and which
+            carry no Discontinuity — the only pairs the predicate can fire
+            on, held until the holes are all in.
 
     """
 
@@ -122,6 +133,32 @@ class _ParticipantState:
     layers: set[OutputLayer | int] = field(default_factory=set)
     has_discontinuity: str | None = None
     last_seq: int | None = None
+    prev_reach: dict[tuple[int, int, int], int] = field(default_factory=dict)
+    broke_since: bool = False
+    candidates: list[_BreakCandidate] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _BreakCandidate:
+    """One adjacent pair with an unexplained gap in an input stream.
+
+    Held rather than judged, because whether the gap is a *hole* depends on
+    Undecoded blocks that may not have arrived yet: they sit under
+    declare-on-first-use alone, so nothing puts them near the records whose
+    seam they explain.
+
+    Attributes:
+        stream: The input stream ``(source_id, session_id, participant_id)``
+            both records cite.
+        gap: ``[A, B)`` — one past the first record's reach, up to where the
+            second begins.
+        described: The second record of the pair, for the message.
+
+    """
+
+    stream: tuple[int, int, int]
+    gap: tuple[int, int]
+    described: str
 
 
 @dataclass
@@ -301,6 +338,8 @@ class ConformanceChecker:
         self._decoders: dict[int, OutputLayer | int] = {}
         self._live: dict[int, _SessionState] = {}
         self._ended: set[int] = set()
+        self._holes: dict[tuple[int, int, int], list[tuple[int, int]]] = {}
+        self._breaks: list[_BreakCandidate] = []
         self._transform_digest: str | None = None
         self._saw_zpf_sourced = False
         self._file_ended = False
@@ -405,6 +444,7 @@ class ConformanceChecker:
                 f"its configuration recorded declares itself as a Decoder instead"
             )
             raise SemanticError(msg)
+        self._check_unmarked_breaks()
         for _offset, _category, message in self.coverage_findings():
             raise SemanticError(message)
 
@@ -545,7 +585,9 @@ class ConformanceChecker:
         # would contradict each other. The bar is the layer, which is only
         # known once the participant's records are all in — so this is noted
         # here and ruled on at the stream's close.
-        state.participants[block.participant_id].has_discontinuity = described
+        stream = state.participants[block.participant_id]
+        stream.has_discontinuity = described
+        stream.broke_since = True
 
     def _on_undecoded(self, block: Undecoded) -> None:
         described = _describe(block)
@@ -560,6 +602,9 @@ class ConformanceChecker:
         if kind == SourceKind.CAPTURE:
             self._check_against_capture(block, described)
             return
+        if _reason_class(block) == "hole" and block.off_start < block.off_end:
+            key = (block.source_id, block.session_id, block.participant_id)
+            self._holes.setdefault(key, []).append((block.off_start, block.off_end))
         # Against a `zpf-input` source. Not a decode-stage marker any more:
         # a pass-through preserving a decoded layer re-emits its input's
         # Undecoded blocks unchanged, which is what carries the input's
@@ -679,6 +724,7 @@ class ConformanceChecker:
                 msg = f"{described} names undeclared decoder {block.decoder_id}"
                 raise SemanticError(msg)
             layer = declared
+        self._note(_transport_content_type(block, layer, described))
         self._check_spans(block.spans, described=described)
         if source_kind == SourceKind.ZPF_INPUT:
             self._require_derived_header(described)
@@ -686,6 +732,46 @@ class ConformanceChecker:
         stream.provenances.add(source_kind)
         stream.layers.add(layer)
         stream.has_spans = stream.has_spans or bool(block.spans)
+        self._track_break_candidates(block, stream, described)
+
+    def _track_break_candidates(
+        self, block: Record, stream: _ParticipantState, described: str
+    ) -> None:
+        """Note whether this record and its predecessor leave an input gap.
+
+        The single-file half of the origination duty, stated as a predicate
+        so that two checkers agree. Each clause below is load-bearing and
+        excludes a conformant vector that would otherwise fire:
+
+        * **cited by both** — a unit may span several input streams, and
+          fan-out means adjacent units may cite different ones. A stream
+          only one of them names says nothing about whether they join
+          (``session-fan-out``).
+        * **max and min** — ``spans`` may overlap, legal since 0.14.
+        * **A ≥ B not tested** — a stage that reorders or overlaps its input
+          produces pairs whose input regions run backwards, where "the
+          region between them" names nothing (``reordered-decoded``).
+        * **a Discontinuity between them** discharges the duty, so the pair
+          is not a candidate at all (``filtered-decoded``).
+
+        The layer test is applied later, when the stream closes: it is the
+        first clause of the predicate but the last thing knowable.
+        """
+        reach: dict[tuple[int, int, int], int] = {}
+        starts: dict[tuple[int, int, int], int] = {}
+        for span in block.spans:
+            key = (span.source_id, span.session_id, span.participant_id)
+            reach[key] = max(reach.get(key, span.off_end), span.off_end)
+            starts[key] = min(starts.get(key, span.off_start), span.off_start)
+        if not stream.broke_since:
+            for key, begins in starts.items():
+                ends = stream.prev_reach.get(key)
+                if ends is not None and ends < begins:
+                    stream.candidates.append(
+                        _BreakCandidate(stream=key, gap=(ends, begins), described=described)
+                    )
+        stream.prev_reach = reach
+        stream.broke_since = False
 
     def _check_spans(self, spans: tuple[Span, ...], *, described: str) -> None:
         """Check a record's spans name an input this file declared as a `.zpf`.
@@ -743,6 +829,35 @@ class ConformanceChecker:
             raise SemanticError(msg)
         return kind
 
+    def _check_unmarked_breaks(self) -> None:
+        """Rule on the held pairs, once every Undecoded block is in.
+
+        Where a ``hole``-class region lies between the input regions of two
+        adjacent output units, no other reading is available: no bytes
+        existed there, so no content can have been carried forward, and the
+        two units cannot join.
+
+        **Satisfying this is not satisfying the duty.** It is the minimum a
+        checker owes, deliberately conservative, and every pair it declines
+        to test may still be one where the duty binds — which rests on
+        producer knowledge and is mostly not mechanically decidable. A
+        producer that emits the block only where this fires has misread it.
+        """
+        for candidate in self._breaks:
+            start, end = candidate.gap
+            for hole_start, hole_end in self._holes.get(candidate.stream, ()):
+                if hole_start < end and start < hole_end:
+                    source_id, session_id, pid = candidate.stream
+                    msg = (
+                        f"{candidate.described} and the record before it are stored as "
+                        f"neighbours, but a hole-class Undecoded region lies between "
+                        f"their input regions on (source {source_id}, session "
+                        f"{session_id}, pid {pid}): no bytes existed in [{start}, "
+                        f"{end}), so the two cannot join and a Discontinuity between "
+                        f"them is required"
+                    )
+                    raise SemanticError(msg)
+
     def _close_participants(self, state: _SessionState) -> None:
         """Rule on every stream of a session, once its records are all in.
 
@@ -783,6 +898,12 @@ class ConformanceChecker:
                 f"the break is already expressible as the space no payload covers"
             )
             raise SemanticError(msg)
+        # The predicate's first clause: decoded-layer output streams only.
+        # A transport stream expresses the same break in its offsets and is
+        # forbidden the block, so a checker without this rejects a conformant
+        # sessionization stage.
+        if OutputLayer.DECODED in stream.layers:
+            self._breaks.extend(stream.candidates)
         # Created or preserved, never half of each, and never neither.
         if stream.origin_source is not None and stream.has_spans:
             msg = (
@@ -814,6 +935,45 @@ class ConformanceChecker:
                 "produced_by and produced_at"
             )
             raise SemanticError(msg)
+
+
+def _transport_content_type(
+    block: Record, layer: OutputLayer | int, described: str
+) -> str | None:
+    """Return the advisory finding for a `content_type` at the transport layer.
+
+    ``content_type`` types a *value* — what this unit **is** — and a
+    transport record's boundaries are wherever the reassembler happened to
+    chunk the stream. Two conformant reassemblers chunk one stream
+    differently and both are right, which is the property the logical offset
+    space exists to neutralise; labelling an arbitrary window ``prim:bytes``
+    asserts it is a unit when it is a slice.
+
+    **Advisory, and it is the only MUST NOT in the specification with that
+    strength.** Dropping the label loses nothing and the record stays fully
+    readable, so there is no unit a reader could soundly discard and nothing
+    it would gain by discarding one — the treatment ``tcp_role`` gets, not
+    the one an ``origin`` on a capture-sourced stream gets. A reader MUST
+    ignore the label and SHOULD report it; what it MUST NOT do is take the
+    label as evidence that the stream is decoded after all, which would put
+    every later offset in that participant in the wrong space.
+
+    Args:
+        block: The record to check.
+        layer: The layer its decoder declares, already resolved.
+        described: The block, for the message.
+
+    Returns:
+        The finding, or ``None`` where there is nothing to report.
+
+    """
+    if block.content_type is None or layer is OutputLayer.DECODED:
+        return None
+    return (
+        f"{described} is at the transport layer and MUST NOT carry a content_type "
+        f"({block.content_type!r}); the label is ignored and the record kept, and it "
+        f"is not evidence that the stream is decoded"
+    )
 
 
 def _reason_class(block: Undecoded) -> str | None:
