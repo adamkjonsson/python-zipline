@@ -4,13 +4,18 @@ build-backend = "hatchling.build"
 
 [project]
 name = "zpf"
+# The single source of truth for the library's version. `zpf.__version__`
+# reads it back out of the installed metadata; nothing else states it.
+# This counter is the library's own — it is not the spec version, which
+# `zpf.SPEC_VERSION` states — but it follows the same rule the format does:
+# while we are in 0.x, every minor is a break with no upgrade path promised.
+version = "0.2.0"
 description = "A Python implementation of the Zipline Payload Format (.zpf)"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
 authors = [{ name = "Adam Jonsson", email = "akj426@gmail.com" }]
-dynamic = ["version"]
 classifiers = [
     # The format itself is 0.x and explicitly not production-ready, so the
     # package page should not promise more than the README does.
@@ -29,10 +34,8 @@ classifiers = [
 zpf = "zpf.cli:main"
 
 [project.urls]
-Specification = "https://github.com/adamkjonsson/zipline/blob/v0.12/docs/zipline-payload-format.md"
-
-[tool.hatch.version]
-path = "src/zpf/__init__.py"
+Specification = "https://github.com/adamkjonsson/zipline/blob/v0.16/docs/zipline-payload-format.md"
+Changelog = "https://github.com/adamkjonsson/python-zipline/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/zpf"]
