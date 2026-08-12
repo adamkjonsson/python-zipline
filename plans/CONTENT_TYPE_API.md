@@ -63,9 +63,9 @@ records surviving: 1 (wrote 3)
 ```
 
 `ConformanceChecker._check_record_options` raises `SemanticError`
-([conformance.py:287](src/zpf/conformance.py#L287)), and `FileReader._admit`
+([conformance.py:287](../src/zpf/conformance.py#L287)), and `FileReader._admit`
 turns any `SemanticError` into "record dropped + diagnostic"
-([reader.py:427](src/zpf/reader.py#L427)). The spec says the opposite: keep the
+([reader.py:427](../src/zpf/reader.py#L427)). The spec says the opposite: keep the
 bytes, ignore the label. The conformance *finding* is right — a **writer** MUST
 NOT emit such a record — but the reader's reaction is not, and it loses data.
 
@@ -191,9 +191,9 @@ Each step is independently shippable and leaves the tree green.
   as numbers instead of base64. Skip if the JSONL face should stay a byte-exact
   projection — worth a decision at the time.
 - [x] **7. Docs.** A "Reading payload content" section in
-  [`guides/decoding.md`](docs/user/guides/decoding.md) (it already owns
+  [`guides/decoding.md`](../docs/user/guides/decoding.md) (it already owns
   `content_type` on the write side), the `dec:`-namespace rule in
-  [`concepts.md`](docs/user/concepts.md), and a how-to if the registry needs a
+  [`concepts.md`](../docs/user/concepts.md), and a how-to if the registry needs a
   worked example. (`api/content.md` landed with stage 2 — a `-W` nitpicky
   build fails on the first unresolved reference to a new module.)
   Cite the beyond-the-standard boundary explicitly.

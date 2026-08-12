@@ -95,7 +95,7 @@ The rule that stops Guides, Concepts, and How-to from overlapping:
 Nothing has to be deleted:
 
 - **New:** `guides/index.md` + the guide pages, plus a new toctree caption in
-  [`docs/index.md`](docs/index.md) between "Getting started" and "Concepts".
+  [`docs/index.md`](../docs/index.md) between "Getting started" and "Concepts".
 - **Absorb, don't duplicate:** each existing how-to has a natural guide parent
   (`convert` → faces-and-io, `validate` → provenance, `merge` → ordering,
   `decode_stage` → decoding, `robustness` → faces-and-io). The guide owns the
@@ -113,7 +113,7 @@ gives multiple decoders its home immediately.
 - [x] **1. Scaffold the Guides layer.** Created `docs/user/guides/index.md` (the
   landing page explaining the guide/concept/how-to split) with an empty toctree
   that stages 2–6 populate. Split the flat "User guide" toctree in
-  [`docs/index.md`](docs/index.md) into captioned groups — **Getting started**,
+  [`docs/index.md`](../docs/index.md) into captioned groups — **Getting started**,
   **Guides**, **Concepts**, **How-to guides** — with `cli`/`errors` folded into a
   renamed **Reference** caption alongside `api/index` (matching the plan tree).
   Added a "Want a feature in depth?" pointer to the landing links. Builds clean
@@ -157,7 +157,7 @@ gives multiple decoders its home immediately.
   library; builds clean under `-W`.
 - [x] **7. Reconcile how-tos + advanced index.** Every guide/how-to pair is now
   linked both ways: each how-to opens by naming its parent guide and repeats the
-  link under "Where to go next", and [`howto/index.md`](docs/user/howto/index.md)
+  link under "Where to go next", and [`howto/index.md`](../docs/user/howto/index.md)
   carries the full recipe → guide table. `decode_stage` was the only how-to with
   real duplication — its orchestrator, stream-vs-datagram, span and coverage
   narratives are now one-line pointers into `guides/decoding.md`, keeping every
@@ -190,6 +190,6 @@ gives multiple decoders its home immediately.
     `reader.py` (×2), `transform.py`, and `decode.py`: a colon on the first
     line of a `Returns:` block makes napoleon read the text before it as the
     *return type*, so that prose was being dropped from the rendered page. The
-    trap is now written down in [`dev/contributing.md`](docs/dev/contributing.md)
+    trap is now written down in [`dev/contributing.md`](../docs/dev/contributing.md)
     alongside the re-export and `nitpicky` conventions. `ruff check` clean on
     every touched file; 308 tests pass.

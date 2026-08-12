@@ -22,7 +22,7 @@ Make suggstions for how to make the API for working with decoding more ergonomic
 ## Claude's response
 
 The friction in the current decoder path (see
-[`docs/user/examples/06_write_decoder.py`](docs/user/examples/06_write_decoder.py))
+[`docs/user/examples/06_write_decoder.py`](../docs/user/examples/06_write_decoder.py))
 falls into two clusters, and your observations map onto both:
 
 1. **Consuming the input** — the decoder reassembles streams by hand and does
@@ -90,7 +90,7 @@ class StreamView:
 ```
 
 The view computes offsets from `isn`/`seq_start` internally using the serial
-arithmetic already in [`zpf/order.py`](src/zpf/order.py) (`record_end`,
+arithmetic already in [`zpf/order.py`](../src/zpf/order.py) (`record_end`,
 `SEQ_SPACE`), so the user never sees a sequence number. Gaps become first-class
 objects instead of a silent hazard, which is precisely the "expose data gaps in
 a natural way" you asked for. A decoder loop becomes:
@@ -133,7 +133,7 @@ an `isn` / `seq_start` hints) lets generic code choose automatically.
 A decoded record almost always cites one contiguous range of the stream it was
 reading. Building that `Span` by hand means repeating the input's `source_id`,
 `session_id`, and `participant_id` on every call
-([`06_write_decoder.py:92-100`](docs/user/examples/06_write_decoder.py#L92-L100)).
+([`06_write_decoder.py:92-100`](../docs/user/examples/06_write_decoder.py#L92-L100)).
 Since the `StreamView` already knows all three, let it mint the span:
 
 ```python
@@ -190,7 +190,7 @@ participant map without owning the control flow.
 ### 4. Make the coverage guarantee hold by construction
 
 The coverage guarantee (every input offset either cited or marked `Undecoded`)
-is enforced by [`check_coverage`](src/zpf/transform.py) *after the fact*. The
+is enforced by [`check_coverage`](../src/zpf/transform.py) *after the fact*. The
 decoder still has to remember to emit an `Undecoded` for every gap and every
 trailing un-parsed region — the example even carries a `# nothing left
 undecoded here, but be honest` branch to show how easy it is to forget.
@@ -211,7 +211,7 @@ specific reason, a comment) can still call `dec.undecoded(...)` explicitly, and
 the auto-fill only covers what's left.
 
 **Standard note:** `"tcp-gap"` / `"undecodable"` are the open-vocabulary reasons
-already shown in [`zpf/writer.py`](src/zpf/writer.py) and the how-to, so this
+already shown in [`zpf/writer.py`](../src/zpf/writer.py) and the how-to, so this
 stays within the standard. The auto-fill should be *opt-in* (a flag on
 `decode_stage`, default on) and must never *replace* an explicit marker — I'd
 have it raise if the decoder both cites and marks the same region, mirroring the
@@ -220,7 +220,7 @@ have it raise if the decoder both cites and marks the same region, mirroring the
 ### 5. Accept `datetime` for `produced_at`
 
 Small and self-contained. `produced_at` is documented as "Unix seconds"
-([`zpf/writer.py:598`](src/zpf/writer.py)), so today the user writes a magic
+([`zpf/writer.py:598`](../src/zpf/writer.py)), so today the user writes a magic
 integer (`produced_at=1_700_000_000`). Let `create` / `decode_stage` accept a
 `datetime` and convert:
 
@@ -278,7 +278,7 @@ timestamp order
 ```
 
 That is the sting. The skewed two-sided capture in
-[`test_reader.py`](tests/test_reader.py) — response stamped *before* the request
+[`test_reader.py`](../tests/test_reader.py) — response stamped *before* the request
 it answers — is precisely the case ack-based sequencing exists to fix, and its
 true causal order has **decreasing** timestamps. Marking such an output
 `SEQUENCED` would be unverifiable and forbidden: a producer MUST NOT mark a
@@ -324,7 +324,7 @@ Proposals 1–2 are independent and could ship first (pure reader additions).
 Proposal 3 depends on 1; proposal 4 depends on 3; proposal 6 depends on 3.
 Proposal 5 is independent and trivial. Proposal 7 (documentation) depends on
 1–5 being implemented. All are backward compatible: the existing handle-based
-path in [`06_write_decoder.py`](docs/user/examples/06_write_decoder.py) keeps
+path in [`06_write_decoder.py`](../docs/user/examples/06_write_decoder.py) keeps
 working unchanged.
 
 ## Implementation checklist
@@ -334,7 +334,7 @@ Ordered to respect the dependencies above (5 can be done at any point).
 - [x] **1. Reassembly view (reader).** Add `Segment`, `Gap`, `Datagram`, and
   `StreamView`; expose `SessionReader.reassemble()` returning one view per
   participant. Compute logical offsets internally via `record_end` / `SEQ_SPACE`
-  ([`zpf/order.py`](src/zpf/order.py)); surface gaps as `Gap` objects instead of
+  ([`zpf/order.py`](../src/zpf/order.py)); surface gaps as `Gap` objects instead of
   welding across them. Implement `segments()`, `chunks()`, `datagrams()`,
   `reassembled()`, and `is_stream_oriented`. *(Accessor named `reassemble()`,
   not `streams()`; stream-only methods raise on packet-oriented streams.)*
@@ -421,26 +421,27 @@ Ordered to respect the dependencies above (5 can be done at any point).
   there would have been the wrong altitude. Scope:
   - **API reference.** Add autodoc pages `docs/api/reassembly.md` (`zpf.reassembly`)
     and `docs/api/decode.md` (`zpf.decode`), and list them in the
-    [`docs/api/index.md`](docs/api/index.md) toctree. `zpf/_intervals.py` is
+    [`docs/api/index.md`](../docs/api/index.md) toctree. `zpf/_intervals.py` is
     private — leave it out. The other pages are `automodule`, so the new public
     members on existing modules (`SessionReader.reassemble`, `FileReader.path` /
     `digest`, `FileWriter.derive_from`, `DerivedInput`, `unix_seconds`) surface
     once they have docstrings (they do) — just verify the build.
   - **Decoder tutorial & how-to.** Rewrite
-    [`docs/user/tutorial-decoding.md`](docs/user/tutorial-decoding.md) and
-    [`docs/user/howto/decode_stage.md`](docs/user/howto/decode_stage.md) around
+    [`docs/user/tutorial-decoding.md`](../docs/user/tutorial-decoding.md) and
+    [`docs/user/howto/decode_stage.md`](../docs/user/howto/decode_stage.md) around
     `zpf.decode_stage` + `reassemble()`/`segments()` + `cite()`, replacing the
     hand-rolled `hashlib`, participant-map dict, and manual-`Undecoded` steps.
     Show `fill_undecoded` covering the rest by construction, and the
     `skipped` vs `tcp-gap` vs explicit-`undecodable` reason distinction.
-  - **Examples.** Update [`05_rest_raw_input.py`](docs/user/examples/05_rest_raw_input.py),
-    [`06_write_decoder.py`](docs/user/examples/06_write_decoder.py), and
-    [`07_coverage.py`](docs/user/examples/07_coverage.py) to the ergonomic path.
+  - **Examples.** Update [`05_rest_raw_input.py`](../docs/user/examples/05_rest_transport_input.py)
+    (since renamed `05_rest_transport_input.py` by the 0.16 port),
+    [`06_write_decoder.py`](../docs/user/examples/06_write_decoder.py), and
+    [`07_coverage.py`](../docs/user/examples/07_coverage.py) to the ergonomic path.
     These are executed verbatim by
-    [`tests/test_tutorial_examples.py`](tests/test_tutorial_examples.py) and
+    [`tests/test_tutorial_examples.py`](../tests/test_tutorial_examples.py) and
     `{literalinclude}`-d into the tutorials, so keep them runnable and update
     that test's expected-output assertions in lockstep.
-  - **Concepts.** Note in [`docs/user/concepts.md`](docs/user/concepts.md) that
+  - **Concepts.** Note in [`docs/user/concepts.md`](../docs/user/concepts.md) that
     `produced_at` accepts a `datetime`, and that the reassembly view is the
     intended way to consume input streams.
   - **Verify.** `.venv/bin/sphinx-build docs docs/_build/html` clean (no new
