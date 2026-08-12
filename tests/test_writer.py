@@ -209,6 +209,86 @@ def test_jsonl_face_matches_the_binary_conversion():
     assert text.getvalue() == converted.getvalue()
 
 
+def test_record_carries_ts_first_through_the_keyword_api():
+    """A coalesced record can say when it *started*, not only when it finished.
+
+    The point of the keyword is that reaching it no longer costs the handle
+    API: a capture converter emits `ts_first` without hand-managing the ids
+    `SessionWriter` exists to manage.
+    """
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1_000_000) as writer:
+        writer.add_source("capture", uri="sideA.pcap")
+        with writer.begin_session(proto="tcp") as session:
+            alice = session.participant("10.0.0.1:51000", isn=1000)
+            session.record(
+                alice,
+                ts=5_000_000,
+                payload=b"x" * 40,
+                seq_start=1001,
+                ts_first=3_000_000,
+            )
+            session.record(alice, ts=6_000_000, payload=b"y", seq_start=1041)
+            session.end(reason="fin")
+    records = [
+        block
+        for block in zpf.BlockReader(io.BytesIO(sink.getvalue()))
+        if isinstance(block, zpf.Record)
+    ]
+    assert [record.ts_first for record in records] == [3_000_000, None]
+    # ts stays the *last* contributing packet; ts_first does not displace it.
+    assert [record.timestamp for record in records] == [5_000_000, 6_000_000]
+
+
+def test_ts_first_is_the_only_start_time_a_capture_file_can_carry():
+    """Why the keyword matters: spans are unavailable to a capture converter.
+
+    Every span must reference a ``zpf-input`` Source, so a capture-sourced
+    record cannot recover its first-packet time from provenance the way a
+    derived one can. That is the whole argument for the option.
+    """
+    with zpf.create(io.BytesIO(), tick_hz=1) as writer:
+        source = writer.add_source("capture", uri="sideA.pcap")
+        with writer.begin_session(proto="tcp") as session:
+            alice = session.participant("alice", isn=0)
+            with pytest.raises(zpf.SemanticError, match="ZPF_INPUT"):
+                session.record(
+                    alice,
+                    ts=5,
+                    payload=b"x",
+                    seq_start=1,
+                    spans=(
+                        zpf.Span(
+                            source_id=source.source_id,
+                            session_id=0,
+                            participant_id=0,
+                            off_start=0,
+                            off_end=1,
+                        ),
+                    ),
+                )
+
+
+def test_jsonl_face_matches_the_binary_conversion_for_ts_first():
+    def build(writer: zpf.FileWriter) -> None:
+        writer.add_source("capture", uri="sideA.pcap")
+        with writer.begin_session(proto="tcp") as session:
+            alice = session.participant("alice", isn=0)
+            session.record(alice, ts=9, payload=b"hello", seq_start=1, ts_first=4)
+            session.end(reason="fin")
+
+    binary = io.BytesIO()
+    with zpf.create(binary, tick_hz=1_000_000) as writer:
+        build(writer)
+    text = io.StringIO()
+    with zpf.create(text, tick_hz=1_000_000, face="jsonl") as writer:
+        build(writer)
+    converted = io.StringIO()
+    zpf.binary_to_jsonl(io.BytesIO(binary.getvalue()), converted)
+    assert text.getvalue() == converted.getvalue()
+    assert '"ts_first":4' in text.getvalue()
+
+
 def test_escape_hatches_are_checked():
     with zpf.create(io.BytesIO(), tick_hz=1) as writer:
         writer.write_custom(pen=32473, subtype=7, payload=b"vend")

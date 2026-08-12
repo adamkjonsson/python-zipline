@@ -17,7 +17,7 @@ Example:
     ...         s.end(reason="fin")
     ... # End block written on clean exit; skipped if the body raised
 
-The rare Record options without a keyword here (``ts_first``, ``comment``,
+The rare Record options without a keyword here (``comment``,
 ``extra_options``) go through the :meth:`FileWriter.write_block` escape
 hatch, which is checked exactly like everything else.
 
@@ -696,7 +696,11 @@ class SessionWriter:
         self._pids.add(chosen)
         return ParticipantHandle(session_id=self.session_id, pid=chosen)
 
-    def record(
+    def record(  # noqa: PLR0913
+        # Eleven parameters, one over the limit, and deliberately so: these
+        # are the Record block's own options, and the format is what decides
+        # how many there are. Bundling some into a struct to get under a
+        # count would hide the block's shape rather than simplify it.
         self,
         sender: ParticipantHandle,
         ts: int,
@@ -705,6 +709,7 @@ class SessionWriter:
         source: SourceHandle | None = None,
         seq_start: int | None = None,
         ack: int | None = None,
+        ts_first: int | None = None,
         flags: RecordFlags | int = 0,
         decoder: DecoderHandle | None = None,
         content_type: str | None = None,
@@ -721,14 +726,22 @@ class SessionWriter:
                 omitted when the file declares exactly one.
             seq_start: Absolute TCP sequence number of the first byte.
             ack: The acknowledgement number from the wire.
+            ts_first: Time of the **first** packet contributing bytes to
+                this record, where ``ts`` is the last. Optional, and only
+                meaningful for a record coalesced from several packets.
+                The first-packet time is otherwise recoverable from
+                capture-source ``spans`` — but a capture-sourced file
+                cannot carry spans at all, since every span must reference
+                a ``zpf-input`` Source, so for a capture converter this is
+                the only place that time can be recorded.
             flags: Record flags.
             decoder: The decoder that produced this record (decoded
                 records only; its presence is what makes a record decoded).
             content_type: ``mime:``/``prim:``/``dec:`` payload label.
             spans: Source ranges the bytes were built from.
 
-        Rare options without a keyword here (``ts_first``, ``comment``,
-        ``extra_options``) go through :meth:`FileWriter.write_block`.
+        Rare options without a keyword here (``comment``, ``extra_options``)
+        go through :meth:`FileWriter.write_block`.
 
         """
         if sender.session_id != self.session_id:
@@ -748,6 +761,7 @@ class SessionWriter:
                 flags=flags,
                 seq_start=seq_start,
                 ack=ack,
+                ts_first=ts_first,
                 spans=spans,
                 decoder_id=None if decoder is None else decoder.decoder_id,
                 content_type=content_type,

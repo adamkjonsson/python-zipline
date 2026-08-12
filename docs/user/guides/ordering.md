@@ -76,6 +76,34 @@ so the merge is fully deterministic — every reader of the same file computes t
 same interleaving. The merge is also **stable**: one participant's own records
 keep their stored order whatever their stamps do.
 
+## When a record started, not just when it finished
+
+A record's `timestamp` is the **last** packet that contributed bytes to it. For
+a record reassembled from one packet that is the whole story; for a 40 KB
+response coalesced from thirty, it is only the moment the last byte landed, and
+the two-second stream that produced it is invisible.
+
+The first-packet time is normally recoverable from provenance — capture-source
+`spans` say which input ranges the bytes came from, and those ranges carry their
+own times. But a **capture-sourced file cannot carry spans at all**: every span
+must reference a `zpf-input` Source, and a converter reading a pcap has none. So
+for a capture converter the optional `ts_first` is the only place that time can
+go:
+
+```python
+session.record(alice, ts=5_000_000, payload=response,
+               seq_start=1001, ts_first=3_000_000)
+```
+
+That records a response which *completed* at `5.0 s` having *started* at `3.0 s`
+— the difference between knowing when a transfer landed and knowing it streamed.
+Leave it off when a record came from a single packet, where it would only repeat
+`ts`.
+
+`ts_first` is an optional TLV: nothing requires it, no reader may depend on it,
+and it takes no part in ordering. In particular it is not a second ordering key
+— the rule above still holds, and stored order is never a time sort.
+
 ## What a hint-less sequenced session rests on
 
 A session with no `seq/ack` hints — a chat room, a one-way UDP feed — has no

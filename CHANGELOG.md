@@ -22,6 +22,16 @@ it back from the installed distribution metadata.
 
 ## [Unreleased]
 
+### Added
+
+- `ts_first=` on `SessionWriter.record()`, so a record can say when it
+  *started* as well as when it finished without dropping to
+  `FileWriter.write_block` and hand-managing ids. The field and both faces
+  already existed; only the ergonomic writer omitted it. This is the only
+  way a **capture**-sourced file can record a coalesced record's start time,
+  since spans must reference a `zpf-input` Source and a capture converter
+  has none. ([#47](https://github.com/adamkjonsson/python-zipline/issues/47))
+
 ## [0.2.0] - 2026-08-12
 
 Implements spec **v0.16** (`SPEC_VERSION == (0, 16)`).
