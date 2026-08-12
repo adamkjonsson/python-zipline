@@ -138,7 +138,7 @@ producer directly, through `seam=`.
 
 ### One recommendation the standard did not take
 
-Our [review of `0.15`](https://github.com/adamkjonsson/python-zipline/blob/main/SPEC-0.15-REVIEW.md)
+Our [review of `0.15`](https://github.com/adamkjonsson/python-zipline/blob/main/plans/SPEC-0.15-REVIEW.md)
 argued (Finding 5) for splitting the bytes-exist vocabulary in two — `skipped`
 for content withheld where the survivors still join, and something else for
 content removed where they do not — so that a filter's duty would be decidable

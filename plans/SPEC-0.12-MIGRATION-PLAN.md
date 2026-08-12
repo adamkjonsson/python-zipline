@@ -109,7 +109,7 @@ Two vectors deserve specific mention:
   verification together. It is the acceptance test for Phase 5, our highest-risk
   phase, and the only place the coverage guarantee is genuinely checkable.
 - **`raw-minimal`** is byte-for-byte the spec's worked example — which is what
-  [tests/test_golden.py](tests/test_golden.py) currently hand-maintains as an
+  [tests/test_golden.py](../tests/test_golden.py) currently hand-maintains as an
   inline hex blob. Vendoring the vector lets that blob be deleted rather than
   re-derived for the new version stamp.
 
@@ -189,7 +189,7 @@ Two things worth recording:
   failure. Auditing the rest of the tree for the same fault found two more
   (`undecoded-skipped`, `undecoded-reason-class`, both `accept` tier, both of
   which would fail a *correct* reader). All are catalogued in
-  [VECTOR-DEFECTS.md](VECTOR-DEFECTS.md) for one batch report upstream.
+  [VECTOR-DEFECTS.md](../VECTOR-DEFECTS.md) for one batch report upstream.
 
 *Verification:* `439 passed, 20 xfailed`; `ruff check` clean; docs build clean
 under `-W`. Test updates landed with the change, per the phase rule.
@@ -428,7 +428,7 @@ under `-W`; both spec URLs return 200.
 **The migration is complete.** All seven phases have landed; the library
 implements 0.12 and passes every conformance vector it can — 25 of 28, with the
 other three blocked on the upstream defects in
-[VECTOR-DEFECTS.md](VECTOR-DEFECTS.md).
+[VECTOR-DEFECTS.md](../VECTOR-DEFECTS.md).
 
 One deliberate gap remains, [D2](#d2--implement-the-filterreorder-transform-now--decided-defer):
 this library **reads** a decoded-layer filter or reordering stage correctly but

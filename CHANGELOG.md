@@ -1,0 +1,120 @@
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/).
+
+## Versioning
+
+This library follows the same numbering rule as the format it implements,
+on its own counter: while we are in `0.x`, **every minor is a break**, and
+no upgrade path between two minors is promised. Patch releases are
+backwards-compatible fixes against the same API and the same spec version.
+
+The library version and the spec version are separate numbers and are not
+expected to match. `zpf.SPEC_VERSION` states which version of the Zipline
+Payload Format a release implements, and each entry below names it too. A
+release that ports to a new spec minor is always a library minor bump,
+because the format itself guarantees no upgrade path across one.
+
+The version is declared once, in `pyproject.toml`; `zpf.__version__` reads
+it back from the installed distribution metadata.
+
+## [Unreleased]
+
+## [0.2.0] - 2026-08-12
+
+Implements spec **v0.16** (`SPEC_VERSION == (0, 16)`).
+
+A break in both directions. Files written by 0.1.0 are stamped for spec 0.9
+and are refused at the version gate, and files written by 0.2.0 are
+unreadable by 0.1.0. The reading and writing APIs moved with it: what 0.1.0
+answered per *file*, 0.2.0 answers per *stream*, because the specification
+made that the only unit at which the questions have an answer.
+
+### Added
+
+- `zpf.content`: the `content_type` label grammar and the `prim:` decode —
+  `ContentType`, `ContentRegistry`, `decode_prim`, `PRIM_WIDTHS`,
+  `ContentError`, `Record.content()`, and `FileReader.content()`.
+- A decoder-facing API for reading a stream as a decoder needs it:
+  reassembly views (`StreamView`, `Segment`, `Gap`, `Datagram`), span
+  helpers (`resolve_spans`, `record_ranges`, `stream_extent`), and the
+  decode-stage orchestrator (`decode_stage`, `DecodeStage`, `DecodeStream`,
+  `DerivedInput`, `Hints`) whose coverage guarantee holds by construction.
+- `rewrite_decoded`: a decoded-layer filter and reordering stage.
+- The 0.13/0.14 syntax — `Discontinuity`, `InputExtent`, `Break`,
+  `check_extents`, the `sequenced_basis` and `reason_class` options, and the
+  `SEQUENCED_BASES`, `REASON_CLASSES` and `UNDECODED_REASONS` vocabularies.
+- `check_splice`: the splice duty, which is only visible across a *pair* of
+  files and so cannot be checked one file at a time.
+- `OutputLayer` and `stream_layer`: a decoder declares the layer it outputs,
+  and an unrecognised value is reported as a plain `int`, never guessed.
+- `Seam` — a break declared on the record whose seam it is, via
+  `dec.record(..., seam=...)`.
+- `AdvisoryError` and an advisory conformance tier, for the format's first
+  violation class that must be *accepted* and reported rather than rejected.
+- `unix_seconds`, and `datetime` accepted directly for `produced_at`.
+- The conformance harness over the vendored spec vectors, with a
+  `KNOWN_PASSING` ratchet that no name is ever removed from.
+- A Sphinx/MyST documentation site, a CI workflow, and this changelog.
+
+### Changed
+
+- **The implemented spec version moved from 0.9 to 0.16**, through 0.12 and
+  0.14. Every minor of the format is a separate format, so this is three
+  breaks, not an upgrade.
+- The Decoder body split from `<HH>` to `<HBB>` to carry `output_layer`;
+  `add_decoder()` gained an `output_layer` parameter. The default is
+  `DECODED`, numbered 0, so a decoder that names no layer encodes the same
+  four bytes it always did.
+- `SessionReader.is_decoded_stream(pid)` became `SessionReader.layer(pid)`,
+  and the module-level equivalent became `stream_layer(records, decoders)` —
+  resolving a layer needs the Decoder table, which a record sequence does not
+  carry. It raises rather than guessing when records mix layers or name an
+  undeclared `decoder_id`.
+- `FileReader.file_kind()` became `FileReader.stream_kind(session_id, pid)`,
+  returning `(provenance, layer)`. There is no file-wide answer, so `zpf
+  info` now prints a line per stream.
+- `record_ranges` and `stream_extent` take the layer as a **required**
+  argument — no default, because a wrong one misplaces every record silently.
+- `CoverageLedger.findings()` no longer takes a `file_kind` argument; the
+  interior-gap check is now keyed per input stream.
+- The package is classified `Development Status :: 3 - Alpha`, and the README
+  warns that neither the format nor this library is production-ready.
+- The version is declared in `pyproject.toml` instead of in
+  `src/zpf/__init__.py`.
+
+### Removed
+
+- `mark_gaps`. 0.15 made the origination duty a MUST, so the switch could
+  only ever produce non-conformant output.
+- The file-kind machinery, in full: file-level purity locking, the
+  raw / decode-stage / pass-through constants, and the rule that inferred a
+  stream's provenance from its layer. Both steps of that inference were wrong.
+
+### Fixed
+
+- Reserved bits set in record flags are ignored rather than isolating the
+  block, and the writer generates only the flag bits the format names.
+- A record whose `content_type` label is unusable is kept rather than
+  dropped.
+
+## [0.1.0] - 2026-07-10
+
+The first release. Implements spec **v0.9** — which stamps
+`version_major = 1`, `version_minor = 0`, because that version was published
+as "1.0" and renumbered without rewriting its bytes.
+
+### Added
+
+- The typed block model and the binary container reader/writer.
+- The JSON-Lines projection with lossless converters in both directions.
+- Conformance checking and the ergonomic writer API.
+- The session-first reader, `zpf.open`.
+- The streaming causal merge and `SEQUENCED` verification.
+- The merge transform, the coverage validator, and the `zpf` CLI.
+
+[Unreleased]: https://github.com/adamkjonsson/python-zipline/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/adamkjonsson/python-zipline/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/adamkjonsson/python-zipline/releases/tag/v0.1.0

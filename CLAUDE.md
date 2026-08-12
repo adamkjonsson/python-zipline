@@ -33,7 +33,7 @@ pass. `VECTOR-DEFECTS.md` records four defects found against them: three closed,
 and defect 4 open at `v0.16`, which holds `tunnel/inner` and `tunnel/outer` in
 `DEFECTIVE`. Never bend the implementation to match a fixture in `DEFECTIVE`.
 
-The 0.14 → 0.16 port is **complete** (`SPEC-0.16-MIGRATION-PLAN.md`, phases 0–8).
+The 0.14 → 0.16 port is **complete** (`plans/SPEC-0.16-MIGRATION-PLAN.md`, phases 0–8).
 The vectors are vendored at `v0.16` — 53 of them, 59 files — and every name is in
 `KNOWN_PASSING`. The ratchet in `tests/test_vectors.py` stays as the regression
 guard: a name is never removed from that set.

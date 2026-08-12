@@ -71,19 +71,39 @@ The rules in `CLAUDE.md` and `ruff.toml` are enforced, not aspirational:
 
 ## Releasing
 
-The version is **dynamic**: hatch reads `__version__` from
-`src/zpf/__init__.py` (`[tool.hatch.version]` in `pyproject.toml`). To cut a
-release:
+The version is declared **once**, as `version` under `[project]` in
+`pyproject.toml`. `zpf.__version__` reads it back from the installed
+distribution metadata, so nothing in `src/` restates it and the two can
+never disagree.
 
-1. Bump `__version__` in `src/zpf/__init__.py` (PEP 440;
-   `test_package.py` checks the shape).
-2. Run the full quality gate above — all green.
-3. Build the artifacts:
+Numbering follows the same rule as the format, on its own counter: while we
+are in `0.x`, every minor is a break and no upgrade path is promised. A port
+to a new spec minor is therefore always a library minor bump — the format
+guarantees no upgrade path across one, so neither can we. The library number
+and `zpf.SPEC_VERSION` are separate and are not expected to match.
+
+To cut a release:
+
+1. Bump `version` in `pyproject.toml` (PEP 440; `test_package.py` checks the
+   shape).
+2. Move the `[Unreleased]` entries in `CHANGELOG.md` under the new version
+   with today's date, note the spec version it implements, and add a fresh
+   empty `[Unreleased]` section plus the compare links at the foot.
+3. Run the full quality gate above — all green.
+4. Build the artifacts:
    ```bash
    .venv/bin/python -m build          # wheel + sdist into dist/
    ```
-4. Tag the commit and write the release notes on the tag / GitHub release
-   (the repo keeps no separate changelog file).
+5. Tag the commit `vX.Y.Z` and use that version's changelog section as the
+   GitHub release notes.
+
+Changelog entries follow [Keep a Changelog 1.1.0][kac]: written for the
+people consuming the library, grouped under Added / Changed / Deprecated /
+Removed / Fixed / Security, and never a dump of the commit log. Add the entry
+under `[Unreleased]` in the same pull request that makes the change, so the
+release step is only a rename.
+
+[kac]: https://keepachangelog.com/en/1.1.0/
 
 ## Git conventions
 

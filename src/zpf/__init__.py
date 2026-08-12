@@ -16,6 +16,8 @@ the package top level.
 
 from __future__ import annotations
 
+from importlib.metadata import version as _distribution_version
+
 from zpf._frame import RawOption
 from zpf.binary import BlockReader, BlockWriter
 from zpf.blocks import (
@@ -101,7 +103,13 @@ from zpf.writer import (
     unix_seconds,
 )
 
-__version__ = "0.1.0"
+#: The library's version, read from the installed distribution metadata so
+#: that ``pyproject.toml`` states it once and nothing restates it. This is the
+#: version of *this package*, not of the format it implements — for that, see
+#: :data:`SPEC_VERSION`. Requires zpf to be installed (``pip install -e .``);
+#: importing it from an unbuilt source tree raises
+#: :exc:`~importlib.metadata.PackageNotFoundError`.
+__version__: str = _distribution_version("zpf")
 
 __all__ = [
     "AdvisoryError",

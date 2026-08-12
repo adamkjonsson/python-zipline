@@ -89,7 +89,7 @@ the vector was fixed or we got the mapping wrong.
 Reported at Phase 8 as
 [zipline#104](https://github.com/adamkjonsson/zipline/issues/104), with the rest
 of the port's findings — see the register in
-[`SPEC-0.16-MIGRATION-PLAN.md`](SPEC-0.16-MIGRATION-PLAN.md#phase-8--prose-and-the-upstream-report).
+[`SPEC-0.16-MIGRATION-PLAN.md`](plans/SPEC-0.16-MIGRATION-PLAN.md#phase-8--prose-and-the-upstream-report).
 Batching was deliberate: a defect reported after the rule is implemented and the
 vectors pass is a report backed by a working reader rather than a guess about
 what the text means. That paid off here — the issue could say which two of the
@@ -102,7 +102,7 @@ either way; the issue is the report.
 ## Defect 3 — `undecoded-in-capture` could not be parsed from the `0.15` text
 
 **The one defect so far that was not vector-side alone**, which is why it is
-recorded here rather than only in [`SPEC-0.15-REVIEW.md`](SPEC-0.15-REVIEW.md)
+recorded here rather than only in [`SPEC-0.15-REVIEW.md`](plans/SPEC-0.15-REVIEW.md)
 (Finding 2). Every other entry in this file rests on the vectors' own ground rule
 2 — a vector that disagrees with the specification is the thing that is wrong.
 Here the specification disagreed with *itself*, so no reading could have produced
@@ -153,7 +153,7 @@ it removes the second account rather than relocating it — and
 
 We vendored `v0.14` and then `v0.16`, never `v0.15`, so `undecoded-in-capture`
 arrives here already carrying `session_id = 0`. It is catalogued because the
-defect is the reason [`SPEC-0.15-REVIEW.md`](SPEC-0.15-REVIEW.md) called `0.15`
+defect is the reason [`SPEC-0.15-REVIEW.md`](plans/SPEC-0.15-REVIEW.md) called `0.15`
 unimplementable-as-written, and because it is the precedent for what to do when
 a vector and the text cannot both be right: report it, and do not guess.
 
