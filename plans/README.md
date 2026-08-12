@@ -35,3 +35,9 @@ the test suite.
 | [`DECODER_API.md`](DECODER_API.md) | The decoder-facing read API — reassembly views, span helpers, the decode-stage orchestrator. |
 | [`CONTENT_TYPE_API.md`](CONTENT_TYPE_API.md) | Reading a record's payload per its `content_type` label. |
 | [`DOCS_STRUCTURE.md`](DOCS_STRUCTURE.md) | The guides layer, and how the documentation tree is arranged. |
+
+## Open work
+
+| Document | What it is |
+| --- | --- |
+| [`V0.2.0-ISSUES-PLAN.md`](V0.2.0-ISSUES-PLAN.md) | The three zpfwire issues on the `v0.2.0` milestone (#47, #48, #49). **Live, not yet historical.** |
