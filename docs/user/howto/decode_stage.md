@@ -121,6 +121,39 @@ A missing marker surfaces as a `coverage-gap`; a redundant one as a
 `coverage-overlap`. See [Validate a
 file](validate.md#reading-the-diagnostics).
 
+## Emit the conversation, not two monologues
+
+A stage decodes one stream at a time, so its output lands client-side-first,
+server-side-second — an order the input never had. Pass `sequenced=True` to get
+the input's own timeline back:
+
+```python
+with zpf.decode_stage(src, out, decoder="http/1.1", produced_by="d 1",
+                      produced_at=1, sequenced=True) as dec:
+    ...
+```
+
+Records are buffered per session and interleaved when it ends. The key is the
+record's `ts`, which the format defines as the completion time of the last input
+record its payload came from — so ordering by it *is* ordering by the input's
+timeline.
+
+Decoded records are hint-less (decoding replaces `seq`/`ack` with positional
+offsets), so each session must declare what its order rests on. That is derived
+from the input rather than guessed:
+
+| Input | Declared basis |
+|-------|----------------|
+| one participant | `trivial` — nothing to interleave |
+| records carried `seq`/`ack` | `protocol` — the order came from those edges |
+| itself sequenced, with a basis | that same basis |
+| file declares `SINGLE_CLOCK` | `clock` |
+
+An input matching none of them supports no causal order, and the stage raises
+rather than claiming one. Two costs to know about: the session is held in memory
+until it ends, and `discontinuity()` is refused while `sequenced=True`, since a
+break's meaning is positional and reordering is exactly what would move it.
+
 ## Where to go next
 
 - [Decoding](../guides/decoding.md) — the feature in full, including reassembly

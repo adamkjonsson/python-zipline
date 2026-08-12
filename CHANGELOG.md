@@ -50,6 +50,20 @@ it back from the installed distribution metadata.
   incompatible with reordering.
   ([#49](https://github.com/adamkjonsson/python-zipline/issues/49))
 
+- `sequenced=True` on `decode_stage` and `FileWriter.derive_from`: a decode
+  stage emits its records in the input's own timeline instead of stream by
+  stream, and marks each session SEQUENCED. A stage decodes one stream at a
+  time, so its natural output is two monologues rather than the conversation
+  the input recorded; a decoded record's timestamp is the completion time of
+  the last input record it came from, so ordering by it reproduces that
+  timeline. Derived records are hint-less, so `sequenced_basis` is required
+  — and it is **derived from the input** rather than guessed: `trivial` for
+  a single-participant session, `protocol` where the input's records carried
+  TCP hints, the input's own basis where it declared one, `clock` where the
+  input declares SINGLE_CLOCK. An input supporting none of those raises
+  rather than naming a basis that is not true.
+  ([#50](https://github.com/adamkjonsson/python-zipline/issues/50))
+
 ### Fixed
 
 - Producers could assert `SEQUENCED`, emit a badly interleaved session, and

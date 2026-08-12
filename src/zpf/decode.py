@@ -550,7 +550,10 @@ class DecodeStage:
                 )
 
 
-def decode_stage(
+def decode_stage(  # noqa: PLR0913
+    # The stage's own knobs, one over the limit. Same reasoning as
+    # SessionWriter.record(): bundling some into a struct to satisfy a count
+    # would obscure what a stage is configured by, not clarify it.
     source: str | os.PathLike[str] | IO[bytes] | IO[str] | FileReader,
     sink: str | os.PathLike[str] | IO[bytes] | IO[str],
     *,
@@ -559,6 +562,7 @@ def decode_stage(
     produced_at: int | datetime,
     output_layer: OutputLayer | int = OutputLayer.DECODED,
     proto: str | None = None,
+    sequenced: bool = False,
     input_ref: InputRef | None = None,
     comment: str | None = None,
     fill_undecoded: bool = True,
@@ -593,6 +597,22 @@ def decode_stage(
             or a timezone-aware :class:`~datetime.datetime`.
         proto: Protocol for the output sessions, e.g. ``"http"``; defaults
             to the input's.
+        sequenced: Emit each session's records in causal order and mark it
+            SEQUENCED, instead of writing them stream by stream. A stage
+            decodes one stream at a time, so its natural output order is
+            two monologues rather than the conversation the input records;
+            with this, records are buffered per session and interleaved by
+            their timestamps — which for a decoded record is the completion
+            time of the last input record it came from, so the result is
+            the input's own timeline.
+
+            Costs: the session is held in memory until it ends, and a
+            :class:`~zpf.blocks.Discontinuity` cannot be emitted while it
+            is on (its meaning is positional, and reordering is what moves
+            it). Each session's ``sequenced_basis`` is derived from the
+            input — see :meth:`zpf.FileWriter.derive_from` — and a session
+            whose input supports no causal order raises rather than
+            claiming one.
         input_ref: How to describe the input in the output's Source — see
             :class:`~zpf.InputRef`. Both halves default: the URI to the path
             the input was opened from, the digest to SHA-256 of its bytes.
@@ -632,7 +652,9 @@ def decode_stage(
         raise
     try:
         ref = input_ref or InputRef()
-        derived = writer.derive_from(reader, uri=ref.uri, digest=ref.digest, proto=proto)
+        derived = writer.derive_from(
+            reader, uri=ref.uri, digest=ref.digest, proto=proto, sequenced=sequenced
+        )
         handle = _declare_decoder(writer, decoder, output_layer)
     except BaseException:
         writer.close(end=False)

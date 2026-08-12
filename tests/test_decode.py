@@ -683,3 +683,132 @@ def test_a_stages_first_record_has_no_seam_to_declare(tmp_path: Path):
         assert reader.diagnostics == []
         (session,) = reader.sessions()
         assert not [b for b in session.stream_blocks(0) if isinstance(b, zpf.Discontinuity)]
+
+
+# --- sequenced= : causal output order (#50) -------------------------------------------
+
+
+def hintless_file(*, single_clock: bool = False, sequenced_basis: str | None = None) -> bytes:
+    """Build a two-participant session whose records carry no seq/ack at all."""
+    sink = io.BytesIO()
+    with zpf.create(
+        sink, tick_hz=1_000_000, time_epoch=42, single_clock=single_clock
+    ) as writer:
+        writer.add_source("capture", uri="chat.pcap")
+        with writer.begin_session(
+            proto="irc",
+            session_id=7,
+            sequenced=sequenced_basis is not None,
+            sequenced_basis=sequenced_basis,
+        ) as session:
+            alice = session.participant("alice")
+            bob = session.participant("bob")
+            session.record(alice, ts=10, payload=b"hi\r\n\r\n")
+            session.record(bob, ts=11, payload=b"yo\r\n\r\n")
+    return sink.getvalue()
+
+
+def decoded_order(raw: bytes) -> list[tuple[int, int]]:
+    """Run a sequenced http decode over ``raw``; return (pid, ts) in stored order."""
+    sink = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw),
+        sink,
+        decoder=("http/1.1", "test"),
+        produced_by="http-decode 1.0",
+        produced_at=1_700_000_000,
+        sequenced=True,
+    ) as dec:
+        for stream in dec.streams():
+            for seg in stream.segments():
+                for start, end in split_lines(seg.data):
+                    dec.record(
+                        stream,
+                        seg.data[start:end],
+                        ts=seg.ts,
+                        content_type="dec:http-message",
+                        cites=(seg.off_start + start, seg.off_start + end),
+                    )
+    with zpf.open(io.BytesIO(sink.getvalue())) as reader:
+        assert reader.diagnostics == []
+        (session,) = reader.sessions()
+        assert session.sequenced
+        return [(r.sender_pid, r.timestamp) for r in session.records()]
+
+
+def test_sequenced_stage_emits_the_inputs_timeline_not_two_monologues():
+    """A stage decodes one stream at a time; sequenced= restores the conversation.
+
+    Without it the client's records all precede the server's, because that
+    is the order the streams were walked in. A decoded record's ts is the
+    completion time of the last input record it came from, so ordering by
+    it reproduces the input's own timeline.
+    """
+    order = decoded_order(raw_file())
+    assert order == sorted(order, key=lambda pair: pair[1])
+    assert [pid for pid, _ in order] == [0, 1]  # client, then server
+
+
+def test_sequenced_stage_derives_protocol_from_a_tcp_input():
+    """The input's records carried seq/ack, so the order rests on those edges."""
+    sink = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw_file()),
+        sink,
+        decoder="http/1.1",
+        produced_by="d 1",
+        produced_at=1,
+        sequenced=True,
+    ) as dec:
+        for stream in dec.streams():
+            whole = stream.reassembled()
+            dec.record(stream, whole, ts=1, cites=(0, len(whole)))
+    with zpf.open(io.BytesIO(sink.getvalue())) as reader:
+        (session,) = reader.sessions()
+        assert session.descriptor.sequenced_basis == "protocol"
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        ({"single_clock": True}, "clock"),
+        ({"sequenced_basis": "external"}, "external"),
+    ],
+)
+def test_sequenced_stage_derives_a_hintless_inputs_basis(kwargs: object, expected: str):
+    """No seq/ack: fall back to what the input itself says its order rests on."""
+    sink = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(hintless_file(**kwargs)),
+        sink,
+        decoder="chat",
+        produced_by="d 1",
+        produced_at=1,
+        sequenced=True,
+    ) as dec:
+        # A hint-less participant is packet-oriented: no seq_start, so no
+        # stream to reassemble — its records are datagrams.
+        for stream in dec.streams():
+            for datagram in stream.datagrams():
+                dec.record(
+                    stream,
+                    datagram.data,
+                    ts=datagram.ts,
+                    cites=(datagram.off_start, datagram.off_end),
+                )
+    with zpf.open(io.BytesIO(sink.getvalue())) as reader:
+        (session,) = reader.sessions()
+        assert session.descriptor.sequenced_basis == expected
+
+
+def test_sequenced_stage_refuses_an_input_that_supports_no_order():
+    """No hints, no declared basis, no SINGLE_CLOCK — so there is no honest answer."""
+    with pytest.raises(zpf.ZpfError, match="no basis for a causal order"):
+        zpf.decode_stage(
+            io.BytesIO(hintless_file()),
+            io.BytesIO(),
+            decoder="chat",
+            produced_by="d 1",
+            produced_at=1,
+            sequenced=True,
+        )

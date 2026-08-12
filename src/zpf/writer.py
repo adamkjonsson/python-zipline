@@ -64,7 +64,7 @@ if TYPE_CHECKING:
     from typing import Self
 
     from zpf.blocks import Origin, Span
-    from zpf.reader import FileReader
+    from zpf.reader import FileReader, SessionReader
 
 _KIND_NAMES = {"capture": SourceKind.CAPTURE, "zpf-input": SourceKind.ZPF_INPUT}
 
@@ -195,6 +195,63 @@ class DerivedInput:
 
         """
         return self.participants[participant.session_id, participant.participant_id]
+
+
+def _derive_sequenced_basis(session: SessionReader, *, single_clock: bool) -> str:
+    """Say what a derived session's causal order actually rests on.
+
+    A derived stage's records are hint-less — decoding replaces `seq`/`ack`
+    with positional offsets — so a SEQUENCED one must name its basis, and
+    the honest answer is whatever the **input's** order rested on. Each
+    branch below is a different such answer, tried most-specific first.
+
+    Args:
+        session: The input session being mirrored.
+        single_clock: Whether the input file declares SINGLE_CLOCK.
+
+    Returns:
+        The ``sequenced_basis`` to declare on the output session.
+
+    Raises:
+        ZpfError: If nothing about the input supports a causal order. The
+            alternative would be naming a basis that is not true, which is
+            worse than refusing: a reader may act on the flag.
+
+    """
+    if len(session.participants) <= 1:
+        # Nothing to interleave, so nothing to get wrong.
+        return "trivial"
+    if _has_ordering_hints(session):
+        # The interleaving came from seq/ack happens-before edges, which
+        # are the transport protocol's, carried in the input's records.
+        return "protocol"
+    if session.sequenced and session.descriptor.sequenced_basis is not None:
+        # The input already answered this question; re-answering it
+        # differently would be a second account of the same order.
+        return session.descriptor.sequenced_basis
+    if single_clock:
+        # No edges, but the input asserts one trustworthy clock — which is
+        # exactly what the (timestamp, pid) merge needs to be sound.
+        return "clock"
+    msg = (
+        f"session {session.session_id} gives no basis for a causal order: its "
+        "records carry no seq/ack, it is not itself sequenced with a declared "
+        "basis, and the input file does not declare SINGLE_CLOCK. Order it "
+        "yourself and pass sequenced_basis explicitly, or derive it unsequenced"
+    )
+    raise ZpfError(msg)
+
+
+def _has_ordering_hints(session: SessionReader) -> bool:
+    """Whether any of the session's records carries a seq/ack hint.
+
+    Stops at the first hint, so the common TCP case is O(1) — the opening
+    record carries one. Only a genuinely hint-less session is walked in
+    full, and only when ``sequenced=`` was asked for.
+    """
+    return any(
+        record.seq_start is not None or record.ack is not None for record in session.records()
+    )
 
 
 def _allocate(used: set[int], explicit: int | None, hint: int) -> tuple[int, int]:
@@ -476,6 +533,7 @@ class FileWriter:
         uri: str | None = None,
         digest: str | None = None,
         proto: str | None = None,
+        sequenced: bool = False,
         comment: str | None = None,
     ) -> DerivedInput:
         """Scaffold this file as one derived from ``reader``.
@@ -491,9 +549,7 @@ class FileWriter:
         to have the header set for you.
 
         ``isn`` is deliberately not copied: it describes the input's raw TCP
-        stream, which the derived records are no longer in. Sessions are not
-        marked sequenced, since a decoder that walks one stream at a time
-        does not emit a causal order across them.
+        stream, which the derived records are no longer in.
 
         Args:
             reader: The open input file.
@@ -503,6 +559,22 @@ class FileWriter:
                 omitted.
             proto: Protocol for the output sessions (e.g. ``"http"``);
                 defaults to the input's.
+            sequenced: Mark the output sessions SEQUENCED and emit their
+                records in causal order. Off by default, because a decoder
+                that walks one stream at a time does *not* produce one: the
+                sessions are opened with ``linearize=True``, so records are
+                buffered and interleaved when each session ends.
+
+                Derived records are hint-less — they carry no ``seq``/``ack``
+                — so each session must declare what its order rests on, and
+                that is **derived from the input** rather than guessed:
+                ``trivial`` for a single-participant session; ``protocol``
+                where the input's records carried TCP hints, since those
+                edges are what the order came from; the input's own
+                ``sequenced_basis`` where it declared one; and ``clock``
+                where the input file declares SINGLE_CLOCK. If none of those
+                holds, the input supports no causal order and this raises
+                rather than name a basis that is not true.
             comment: Free-text note for the Source.
 
         Returns:
@@ -532,6 +604,13 @@ class FileWriter:
                 proto=proto if proto is not None else session.proto,
                 key=session.key,
                 session_id=session.session_id,
+                sequenced=sequenced,
+                sequenced_basis=(
+                    _derive_sequenced_basis(session, single_clock=header.single_clock)
+                    if sequenced
+                    else None
+                ),
+                linearize=sequenced,
             )
             sessions[session.session_id] = out
             for participant in session.participants:
