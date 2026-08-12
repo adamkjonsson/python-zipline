@@ -69,6 +69,47 @@ The rules in `CLAUDE.md` and `ruff.toml` are enforced, not aspirational:
   run by `test_tutorial_examples.py` — extend that test when you add one, so
   examples can't rot.
 
+## Porting to a new spec version
+
+Every `0.x` minor of the format is a **separate format** with no upgrade path,
+so a port is never incremental: the version gate moves, files written by the
+previous version stop being readable, and the port lands as a library **minor**
+bump (see [Releasing](#releasing)).
+
+Work it as a phased plan in `plans/`, the way the 0.12, 0.14 and 0.16 ports
+were. What follows is not that plan — it is the list of places a version
+literal hides, which is what actually goes stale.
+
+1. **Re-vendor the conformance vectors** at the new tag and reset
+   `KNOWN_PASSING` in `tests/test_vectors.py`. Vectors are copied verbatim and
+   are the acceptance criteria; never edit one to make a test pass. A name is
+   never *removed* from the ratchet.
+2. **Move the gate.** `SPEC_VERSION` in `src/zpf/blocks.py` is the single
+   source of truth for the version, and the only place the number is decided.
+3. **Follow the tests.** With 1 and 2 done, the suite tells you what the port
+   actually requires; the rest of this list is what it can't tell you.
+4. **The packaging metadata.** `[project.urls] Specification` in
+   `pyproject.toml` must name the new tag. This is covered by
+   `test_specification_url_names_the_implemented_spec_version`, so the suite
+   catches it — it is listed here because it went stale anyway
+   ([#48](https://github.com/adamkjonsson/python-zipline/issues/48)): the 0.16
+   port had a phase for the prose sweep and missed this file, which is not
+   prose.
+5. **The prose surface**, none of which any test checks: `README.md`,
+   `CLAUDE.md`, `docs/index.md`, `docs/user/`, `docs/dev/`. Grep for the old
+   version across the repo and expect roughly twenty files. Most mentions are
+   a bare number to bump; some are arguments about *why* a rule reads as it
+   does, and those need rewriting rather than renumbering.
+6. **`VECTOR-DEFECTS.md`.** Vector defects are per-version: re-check whether
+   each open one still reproduces at the new tag, and whether the new vectors
+   introduce any.
+7. **`CHANGELOG.md`.** A new entry naming the spec version it implements, and
+   stating plainly that files written by the previous library version are
+   refused at the gate.
+
+Prefer a test over a line in this list wherever one is possible — step 4 exists
+because a checklist entry is exactly what failed the first time.
+
 ## Releasing
 
 The version is declared **once**, as `version` under `[project]` in
@@ -82,11 +123,16 @@ to a new spec minor is therefore always a library minor bump — the format
 guarantees no upgrade path across one, so neither can we. The library number
 and `zpf.SPEC_VERSION` are separate and are not expected to match.
 
+**Between releases the version carries a `.devN` suffix** — `0.2.0.dev0` while
+0.2.0 is being built. It says plainly that what is installed is not the release
+its number names, and it keeps `CHANGELOG.md` honest: the top section stays
+`[Unreleased]` and nothing claims a release date it has not earned.
+
 To cut a release:
 
-1. Bump `version` in `pyproject.toml` (PEP 440; `test_package.py` checks the
-   shape).
-2. Move the `[Unreleased]` entries in `CHANGELOG.md` under the new version
+1. Drop the `.devN` suffix from `version` in `pyproject.toml`, or bump to the
+   next version (PEP 440; `test_package.py` checks the shape).
+2. Retitle the `[Unreleased]` section in `CHANGELOG.md` to the new version
    with today's date, note the spec version it implements, and add a fresh
    empty `[Unreleased]` section plus the compare links at the foot.
 3. Run the full quality gate above — all green.
@@ -96,6 +142,8 @@ To cut a release:
    ```
 5. Tag the commit `vX.Y.Z` and use that version's changelog section as the
    GitHub release notes.
+6. Set `version` to the next `X.Y.Z.dev0`, so `main` is never mistaken for a
+   release.
 
 Changelog entries follow [Keep a Changelog 1.1.0][kac]: written for the
 people consuming the library, grouped under Added / Changed / Deprecated /

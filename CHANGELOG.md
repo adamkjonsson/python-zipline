@@ -20,19 +20,63 @@ because the format itself guarantees no upgrade path across one.
 The version is declared once, in `pyproject.toml`; `zpf.__version__` reads
 it back from the installed distribution metadata.
 
-## [Unreleased]
+## [Unreleased] — 0.2.0, in development
 
-## [0.2.0] - 2026-08-12
+Everything below is the **0.2.0** work. It is not released: `pyproject.toml`
+declares `0.2.0.dev0`, and `0.1.0` remains the only tagged version. The
+section becomes `## [0.2.0] - <date>` when it ships.
 
 Implements spec **v0.16** (`SPEC_VERSION == (0, 16)`).
 
 A break in both directions. Files written by 0.1.0 are stamped for spec 0.9
-and are refused at the version gate, and files written by 0.2.0 are
+and are refused at the version gate, and files written by 0.2.0 will be
 unreadable by 0.1.0. The reading and writing APIs moved with it: what 0.1.0
 answered per *file*, 0.2.0 answers per *stream*, because the specification
 made that the only unit at which the questions have an answer.
 
 ### Added
+
+- `ts_first=` on `SessionWriter.record()`, so a record can say when it
+  *started* as well as when it finished without dropping to
+  `FileWriter.write_block` and hand-managing ids. The field and both faces
+  already existed; only the ergonomic writer omitted it. This is the only
+  way a **capture**-sourced file can record a coalesced record's start time,
+  since spans must reference a `zpf-input` Source and a capture converter
+  has none. ([#47](https://github.com/adamkjonsson/python-zipline/issues/47))
+
+- A **write-time causal-order guard** on sequenced sessions. Asserting
+  `sequenced=True` is a promise about records not yet written, and it is now
+  checked as they arrive: the per-participant `seq_start` rule and, for a
+  two-participant session, that no record follows a peer record which
+  already acknowledged its bytes. On by default; `verify_order=False` on
+  `begin_session` switches it off for deliberately writing a non-conformant
+  file. The rule now has one implementation, driven reader-side by
+  `verify_sequenced` and writer-side by `SessionWriter`.
+  ([#49](https://github.com/adamkjonsson/python-zipline/issues/49))
+
+- `linearize=True` on `begin_session`: buffer a session's records and emit
+  them in causal order when it ends, so a producer supplies each direction
+  in its own order — what stream reassembly gives it — and `causal_merge`
+  computes the interleaving. Memory is unbounded for the session's lifetime,
+  and `discontinuity()` is refused while it is on, a positional block being
+  incompatible with reordering.
+  ([#49](https://github.com/adamkjonsson/python-zipline/issues/49))
+
+- `sequenced=True` on `decode_stage` and `FileWriter.derive_from`: a decode
+  stage emits its records in the input's own timeline instead of stream by
+  stream, and marks each session SEQUENCED. A stage decodes one stream at a
+  time, so its natural output is two monologues rather than the conversation
+  the input recorded; a decoded record's timestamp is the completion time of
+  the last input record it came from, so ordering by it reproduces that
+  timeline. Derived records are hint-less, so `sequenced_basis` is required
+  — and it is **derived from the input** rather than guessed: `trivial` for
+  a single-participant session, `protocol` where the input's records carried
+  TCP hints, the input's own basis where it declared one, `clock` where the
+  input declares SINGLE_CLOCK. An input supporting none of those raises
+  rather than naming a basis that is not true.
+  ([#50](https://github.com/adamkjonsson/python-zipline/issues/50))
+
+### Added — the 0.16 port
 
 - `zpf.content`: the `content_type` label grammar and the `prim:` decode —
   `ContentType`, `ContentRegistry`, `decode_prim`, `PRIM_WIDTHS`,
@@ -95,6 +139,20 @@ made that the only unit at which the questions have an answer.
 
 ### Fixed
 
+- Producers could assert `SEQUENCED`, emit a badly interleaved session, and
+  get a silently non-conformant file: the cross-participant ack rule was
+  checked nowhere on the write path, and the per-participant rule the
+  `ConformanceChecker` enforces cannot see an interleaving violation. Such a
+  file was then trusted and mis-ordered by readers, which skip the merge for
+  a sequenced session. See the guard above.
+  ([#49](https://github.com/adamkjonsson/python-zipline/issues/49))
+- The packaged `Specification` URL pointed at spec `v0.12` while the library
+  implemented `0.16` — following it from the package page gave the wrong
+  format, with nothing to signal it was wrong. Now pinned to `v0.16`, and
+  held there by a test that compares it against `zpf.SPEC_VERSION`. A
+  spec-bump checklist in `docs/dev/contributing.md` covers the places a
+  version literal hides that no test can reach.
+  ([#48](https://github.com/adamkjonsson/python-zipline/issues/48))
 - Reserved bits set in record flags are ignored rather than isolating the
   block, and the writer generates only the flag bits the format names.
 - A record whose `content_type` label is unusable is kept rather than
@@ -115,6 +173,5 @@ as "1.0" and renumbered without rewriting its bytes.
 - The streaming causal merge and `SEQUENCED` verification.
 - The merge transform, the coverage validator, and the `zpf` CLI.
 
-[Unreleased]: https://github.com/adamkjonsson/python-zipline/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/adamkjonsson/python-zipline/compare/v0.1.0...v0.2.0
+[Unreleased]: https://github.com/adamkjonsson/python-zipline/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/adamkjonsson/python-zipline/releases/tag/v0.1.0

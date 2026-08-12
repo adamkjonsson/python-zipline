@@ -209,6 +209,262 @@ def test_jsonl_face_matches_the_binary_conversion():
     assert text.getvalue() == converted.getvalue()
 
 
+def test_record_carries_ts_first_through_the_keyword_api():
+    """A coalesced record can say when it *started*, not only when it finished.
+
+    The point of the keyword is that reaching it no longer costs the handle
+    API: a capture converter emits `ts_first` without hand-managing the ids
+    `SessionWriter` exists to manage.
+    """
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1_000_000) as writer:
+        writer.add_source("capture", uri="sideA.pcap")
+        with writer.begin_session(proto="tcp") as session:
+            alice = session.participant("10.0.0.1:51000", isn=1000)
+            session.record(
+                alice,
+                ts=5_000_000,
+                payload=b"x" * 40,
+                seq_start=1001,
+                ts_first=3_000_000,
+            )
+            session.record(alice, ts=6_000_000, payload=b"y", seq_start=1041)
+            session.end(reason="fin")
+    records = [
+        block
+        for block in zpf.BlockReader(io.BytesIO(sink.getvalue()))
+        if isinstance(block, zpf.Record)
+    ]
+    assert [record.ts_first for record in records] == [3_000_000, None]
+    # ts stays the *last* contributing packet; ts_first does not displace it.
+    assert [record.timestamp for record in records] == [5_000_000, 6_000_000]
+
+
+def test_ts_first_is_the_only_start_time_a_capture_file_can_carry():
+    """Why the keyword matters: spans are unavailable to a capture converter.
+
+    Every span must reference a ``zpf-input`` Source, so a capture-sourced
+    record cannot recover its first-packet time from provenance the way a
+    derived one can. That is the whole argument for the option.
+    """
+    with zpf.create(io.BytesIO(), tick_hz=1) as writer:
+        source = writer.add_source("capture", uri="sideA.pcap")
+        with writer.begin_session(proto="tcp") as session:
+            alice = session.participant("alice", isn=0)
+            with pytest.raises(zpf.SemanticError, match="ZPF_INPUT"):
+                session.record(
+                    alice,
+                    ts=5,
+                    payload=b"x",
+                    seq_start=1,
+                    spans=(
+                        zpf.Span(
+                            source_id=source.source_id,
+                            session_id=0,
+                            participant_id=0,
+                            off_start=0,
+                            off_end=1,
+                        ),
+                    ),
+                )
+
+
+def test_jsonl_face_matches_the_binary_conversion_for_ts_first():
+    def build(writer: zpf.FileWriter) -> None:
+        writer.add_source("capture", uri="sideA.pcap")
+        with writer.begin_session(proto="tcp") as session:
+            alice = session.participant("alice", isn=0)
+            session.record(alice, ts=9, payload=b"hello", seq_start=1, ts_first=4)
+            session.end(reason="fin")
+
+    binary = io.BytesIO()
+    with zpf.create(binary, tick_hz=1_000_000) as writer:
+        build(writer)
+    text = io.StringIO()
+    with zpf.create(text, tick_hz=1_000_000, face="jsonl") as writer:
+        build(writer)
+    converted = io.StringIO()
+    zpf.binary_to_jsonl(io.BytesIO(binary.getvalue()), converted)
+    assert text.getvalue() == converted.getvalue()
+    assert '"ts_first":4' in text.getvalue()
+
+
+def _sequenced_session(
+    writer: zpf.FileWriter, **kwargs: bool
+) -> tuple[zpf.SessionWriter, zpf.ParticipantHandle, zpf.ParticipantHandle]:
+    """Build a two-participant TCP session for the causal-order cases."""
+    writer.add_source("capture", uri="sideA.pcap")
+    session = writer.begin_session(proto="tcp", sequenced=True, **kwargs)
+    alice = session.participant("10.0.0.1:51000", isn=1000)
+    bob = session.participant("10.0.0.2:80", isn=5000)
+    return session, alice, bob
+
+
+def test_sequenced_writer_refuses_an_order_that_is_not_causal():
+    """The write-time guard: a peer's ack proves what it had already seen.
+
+    Bob acking through 1020 proves he built that record *after* receiving
+    Alice's bytes up to 1020 — so Alice's record ending at 1020 cannot be
+    stored after his. Nothing else in the library catches this on the write
+    path: the ConformanceChecker's stored-order rule is per participant, and
+    both participants are individually in order here.
+    """
+    with zpf.create(io.BytesIO(), tick_hz=1) as writer:
+        session, alice, bob = _sequenced_session(writer)
+        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
+        session.record(bob, ts=2, payload=b"ok", seq_start=5000, ack=1020)
+        with pytest.raises(zpf.SemanticError, match="already acknowledged"):
+            session.record(alice, ts=3, payload=b"a" * 10, seq_start=1010)
+
+
+def test_sequenced_writer_accepts_the_same_records_in_causal_order():
+    """Same bytes, same acks — only the interleaving differs."""
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1) as writer:
+        session, alice, bob = _sequenced_session(writer)
+        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
+        session.record(alice, ts=3, payload=b"a" * 10, seq_start=1010)
+        session.record(bob, ts=2, payload=b"ok", seq_start=5000, ack=1020)
+        session.end(reason="fin")
+    records = [
+        block
+        for block in zpf.BlockReader(io.BytesIO(sink.getvalue()))
+        if isinstance(block, zpf.Record)
+    ]
+    zpf.verify_sequenced(records, participant_count=2)  # reader agrees
+
+
+def test_the_guard_is_what_the_reader_would_have_caught_later():
+    """Turning the guard off reproduces the gap it exists to close.
+
+    The file is written without complaint and is *not* conformant: the same
+    rule, run reader-side by `verify_sequenced`, rejects it. That gap is why
+    the guard defaults on.
+    """
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1) as writer:
+        session, alice, bob = _sequenced_session(writer, verify_order=False)
+        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
+        session.record(bob, ts=2, payload=b"ok", seq_start=5000, ack=1020)
+        session.record(alice, ts=3, payload=b"a" * 10, seq_start=1010)
+        session.end(reason="fin")
+    records = [
+        block
+        for block in zpf.BlockReader(io.BytesIO(sink.getvalue()))
+        if isinstance(block, zpf.Record)
+    ]
+    with pytest.raises(zpf.SemanticError, match="already acknowledged"):
+        zpf.verify_sequenced(records, participant_count=2)
+
+
+def test_an_unsequenced_session_is_not_guarded():
+    """The flag is the promise; without it there is no order to keep."""
+    with zpf.create(io.BytesIO(), tick_hz=1) as writer:
+        writer.add_source("capture", uri="sideA.pcap")
+        session = writer.begin_session(proto="tcp")
+        alice = session.participant("10.0.0.1:51000", isn=1000)
+        bob = session.participant("10.0.0.2:80", isn=5000)
+        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
+        session.record(bob, ts=2, payload=b"ok", seq_start=5000, ack=1020)
+        session.record(alice, ts=3, payload=b"a" * 10, seq_start=1010)
+
+
+def test_the_guard_drops_ack_checks_beyond_two_participants():
+    """The specification defines ack semantics pairwise only."""
+    with zpf.create(io.BytesIO(), tick_hz=1) as writer:
+        session, alice, bob = _sequenced_session(writer)
+        carol = session.participant("10.0.0.3:80", isn=9000)
+        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
+        session.record(bob, ts=2, payload=b"ok", seq_start=5000, ack=1020)
+        session.record(carol, ts=3, payload=b"hi", seq_start=9000)
+        # Would raise in a two-participant session; here there is no rule.
+        session.record(alice, ts=4, payload=b"a" * 10, seq_start=1010)
+
+
+def test_linearize_interleaves_two_directions_written_separately():
+    """The point: emit each direction in its own order, get a causal one.
+
+    Stream reassembly hands a converter one direction at a time, which is
+    exactly the shape that cannot be written directly — the guard would
+    refuse it, and rightly. Buffering turns it into the merge's problem.
+    """
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1) as writer:
+        session, alice, bob = _sequenced_session(writer, linearize=True)
+        # All of Alice, then all of Bob: stored order here is not causal.
+        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
+        session.record(alice, ts=3, payload=b"a" * 10, seq_start=1010)
+        session.record(bob, ts=2, payload=b"ok", seq_start=5000, ack=1010)
+        session.end(reason="fin")
+    records = [
+        block
+        for block in zpf.BlockReader(io.BytesIO(sink.getvalue()))
+        if isinstance(block, zpf.Record)
+    ]
+    # Bob's ack of 1010 places him after Alice's first record, before her second.
+    assert [(r.sender_pid, r.seq_start) for r in records] == [
+        (alice.pid, 1000),
+        (bob.pid, 5000),
+        (alice.pid, 1010),
+    ]
+    zpf.verify_sequenced(records, participant_count=2)
+
+
+def test_linearize_writes_nothing_until_the_session_ends():
+    """Buffering is observable: the records are not in the file yet."""
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1) as writer:
+        session, alice, _bob = _sequenced_session(writer, linearize=True)
+        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
+        assert not [
+            block
+            for block in zpf.BlockReader(io.BytesIO(sink.getvalue()), strict=False)
+            if isinstance(block, zpf.Record)
+        ]
+        session.end(reason="fin")
+    assert [
+        block
+        for block in zpf.BlockReader(io.BytesIO(sink.getvalue()))
+        if isinstance(block, zpf.Record)
+    ]
+
+
+def test_linearize_flushes_when_the_producer_forgets_to_end():
+    """Accepted records must reach the file even without an explicit end()."""
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1) as writer:
+        session, alice, bob = _sequenced_session(writer, linearize=True)
+        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
+        session.record(bob, ts=2, payload=b"ok", seq_start=5000, ack=1010)
+        # No session.end(), no context manager: close() has to drain it.
+    records = [
+        block
+        for block in zpf.BlockReader(io.BytesIO(sink.getvalue()))
+        if isinstance(block, zpf.Record)
+    ]
+    assert len(records) == 2
+
+
+def test_linearize_refuses_a_positional_block():
+    """A Discontinuity is placed by the records around it; reordering breaks that."""
+    with zpf.create(io.BytesIO(), tick_hz=1) as writer:
+        session, alice, _bob = _sequenced_session(writer, linearize=True)
+        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
+        with pytest.raises(zpf.ZpfError, match="positional"):
+            session.discontinuity(alice, reason="records-dropped")
+
+
+def test_linearize_propagates_a_stalled_merge():
+    """A merge that cannot resolve is the producer's error, raised at end()."""
+    with zpf.create(io.BytesIO(), tick_hz=1) as writer:
+        session, alice, bob = _sequenced_session(writer, linearize=True)
+        # Each acknowledges bytes the other never sent.
+        session.record(alice, ts=1, payload=b"a", seq_start=1000, ack=6000)
+        session.record(bob, ts=2, payload=b"b", seq_start=5000, ack=2000)
+        with pytest.raises(zpf.SemanticError, match="stalled"):
+            session.end(reason="fin")
+
+
 def test_escape_hatches_are_checked():
     with zpf.create(io.BytesIO(), tick_hz=1) as writer:
         writer.write_custom(pen=32473, subtype=7, payload=b"vend")

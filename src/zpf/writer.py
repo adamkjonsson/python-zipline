@@ -17,7 +17,7 @@ Example:
     ...         s.end(reason="fin")
     ... # End block written on clean exit; skipped if the body raised
 
-The rare Record options without a keyword here (``ts_first``, ``comment``,
+The rare Record options without a keyword here (``comment``,
 ``extra_options``) go through the :meth:`FileWriter.write_block` escape
 hatch, which is checked exactly like everything else.
 
@@ -55,6 +55,7 @@ from zpf.blocks import (
 from zpf.conformance import ConformanceChecker
 from zpf.errors import ZpfError
 from zpf.jsonl import JsonlWriter
+from zpf.order import _StoredOrder, causal_merge
 
 if TYPE_CHECKING:
     import os
@@ -63,7 +64,7 @@ if TYPE_CHECKING:
     from typing import Self
 
     from zpf.blocks import Origin, Span
-    from zpf.reader import FileReader
+    from zpf.reader import FileReader, SessionReader
 
 _KIND_NAMES = {"capture": SourceKind.CAPTURE, "zpf-input": SourceKind.ZPF_INPUT}
 
@@ -196,6 +197,63 @@ class DerivedInput:
         return self.participants[participant.session_id, participant.participant_id]
 
 
+def _derive_sequenced_basis(session: SessionReader, *, single_clock: bool) -> str:
+    """Say what a derived session's causal order actually rests on.
+
+    A derived stage's records are hint-less — decoding replaces `seq`/`ack`
+    with positional offsets — so a SEQUENCED one must name its basis, and
+    the honest answer is whatever the **input's** order rested on. Each
+    branch below is a different such answer, tried most-specific first.
+
+    Args:
+        session: The input session being mirrored.
+        single_clock: Whether the input file declares SINGLE_CLOCK.
+
+    Returns:
+        The ``sequenced_basis`` to declare on the output session.
+
+    Raises:
+        ZpfError: If nothing about the input supports a causal order. The
+            alternative would be naming a basis that is not true, which is
+            worse than refusing: a reader may act on the flag.
+
+    """
+    if len(session.participants) <= 1:
+        # Nothing to interleave, so nothing to get wrong.
+        return "trivial"
+    if _has_ordering_hints(session):
+        # The interleaving came from seq/ack happens-before edges, which
+        # are the transport protocol's, carried in the input's records.
+        return "protocol"
+    if session.sequenced and session.descriptor.sequenced_basis is not None:
+        # The input already answered this question; re-answering it
+        # differently would be a second account of the same order.
+        return session.descriptor.sequenced_basis
+    if single_clock:
+        # No edges, but the input asserts one trustworthy clock — which is
+        # exactly what the (timestamp, pid) merge needs to be sound.
+        return "clock"
+    msg = (
+        f"session {session.session_id} gives no basis for a causal order: its "
+        "records carry no seq/ack, it is not itself sequenced with a declared "
+        "basis, and the input file does not declare SINGLE_CLOCK. Order it "
+        "yourself and pass sequenced_basis explicitly, or derive it unsequenced"
+    )
+    raise ZpfError(msg)
+
+
+def _has_ordering_hints(session: SessionReader) -> bool:
+    """Whether any of the session's records carries a seq/ack hint.
+
+    Stops at the first hint, so the common TCP case is O(1) — the opening
+    record carries one. Only a genuinely hint-less session is walked in
+    full, and only when ``sequenced=`` was asked for.
+    """
+    return any(
+        record.seq_start is not None or record.ack is not None for record in session.records()
+    )
+
+
 def _allocate(used: set[int], explicit: int | None, hint: int) -> tuple[int, int]:
     """Pick an id: the explicit one, or the next free counter value.
 
@@ -254,6 +312,12 @@ class FileWriter:
         self._next_session = 0
         self._closed = False
         self._ended = False
+        # Flush callbacks from sessions buffering a causal linearization.
+        # Held so close() can drain one whose producer never called end():
+        # the records were accepted, so dropping them silently is not an
+        # option. Each session hands its own callback over, which is why
+        # this is a list of closures rather than of writers.
+        self._linearizing: list[Callable[[], None]] = []
         flags = FileFlags.SINGLE_CLOCK if single_clock else FileFlags(0)
         self._header = FileHeader(
             tick_hz=tick_hz,
@@ -375,6 +439,8 @@ class FileWriter:
         key: str | None = None,
         sequenced: bool = False,
         sequenced_basis: str | None = None,
+        verify_order: bool = True,
+        linearize: bool = False,
         external_session_id: bytes | None = None,
         comment: str | None = None,
         session_id: int | None = None,
@@ -385,7 +451,9 @@ class FileWriter:
             proto: Session protocol (lowercase; e.g. ``"tcp"``).
             key: Human-readable flow key.
             sequenced: Set the SEQUENCED flag — the caller asserts it will
-                emit this session's records in a valid causal order.
+                emit this session's records in a valid causal order. That
+                assertion is checked as the records are written; see
+                ``verify_order``.
             sequenced_basis: What that order rests on — ``"clock"``,
                 ``"protocol"``, ``"external"`` or ``"trivial"``. Required
                 when a sequenced session's records carry no ``seq``/``ack``,
@@ -393,6 +461,34 @@ class FileWriter:
                 to set here even though hint-lessness is not settled until
                 the records are written: a producer names what it is
                 *relying on*, which it knows the moment it sets the flag.
+            verify_order: Check, as each record is written, that a
+                ``sequenced`` session's stored order really is a valid
+                causal linearization — the per-participant ``seq_start``
+                rule and, for a two-participant session, that no record
+                follows a peer record which already acknowledged its bytes.
+                Ignored when ``sequenced`` is false, since the flag is what
+                makes the order a promise. On by default: the
+                :class:`~zpf.conformance.ConformanceChecker` cannot host
+                this rule (it must not raise on files it merely reads), so
+                without it a producer can assert SEQUENCED, emit a badly
+                interleaved session, and get a silently non-conformant file
+                that readers will trust and mis-order. Pass ``False`` to
+                write such a file deliberately — a test fixture, or a
+                deliberately malformed vector.
+            linearize: **Buffer** this session's records and emit them in
+                causal order at :meth:`SessionWriter.end` (or at
+                :meth:`FileWriter.close`), instead of writing each as it
+                arrives. This is the answer to "the interleaving has to be
+                right before the first ``record()`` call": with it, a
+                producer emits each direction in its own order — which
+                stream reassembly gives it for free — and the
+                :func:`~zpf.causal_merge` computes the interleaving.
+                **Memory is unbounded**: a whole session is held until it
+                ends, so this suits a converter working per completed
+                session, not an open-ended live capture. Positional blocks
+                cannot be buffered coherently, so
+                :meth:`SessionWriter.discontinuity` is refused while it is
+                on.
             external_session_id: An identity assigned outside this format
                 — a trace id, a capture orchestrator's UUID, a case
                 number. **Opaque bytes, not text**: nothing here
@@ -421,7 +517,14 @@ class FileWriter:
             )
         )
         self._session_ids.add(chosen)
-        return SessionWriter(self._emit, self._default_source, chosen)
+        return SessionWriter(
+            self._emit,
+            self._default_source,
+            chosen,
+            verify_order=sequenced and verify_order,
+            linearize=linearize,
+            register_flush=self._linearizing.append,
+        )
 
     def derive_from(
         self,
@@ -430,6 +533,7 @@ class FileWriter:
         uri: str | None = None,
         digest: str | None = None,
         proto: str | None = None,
+        sequenced: bool = False,
         comment: str | None = None,
     ) -> DerivedInput:
         """Scaffold this file as one derived from ``reader``.
@@ -445,9 +549,7 @@ class FileWriter:
         to have the header set for you.
 
         ``isn`` is deliberately not copied: it describes the input's raw TCP
-        stream, which the derived records are no longer in. Sessions are not
-        marked sequenced, since a decoder that walks one stream at a time
-        does not emit a causal order across them.
+        stream, which the derived records are no longer in.
 
         Args:
             reader: The open input file.
@@ -457,6 +559,22 @@ class FileWriter:
                 omitted.
             proto: Protocol for the output sessions (e.g. ``"http"``);
                 defaults to the input's.
+            sequenced: Mark the output sessions SEQUENCED and emit their
+                records in causal order. Off by default, because a decoder
+                that walks one stream at a time does *not* produce one: the
+                sessions are opened with ``linearize=True``, so records are
+                buffered and interleaved when each session ends.
+
+                Derived records are hint-less — they carry no ``seq``/``ack``
+                — so each session must declare what its order rests on, and
+                that is **derived from the input** rather than guessed:
+                ``trivial`` for a single-participant session; ``protocol``
+                where the input's records carried TCP hints, since those
+                edges are what the order came from; the input's own
+                ``sequenced_basis`` where it declared one; and ``clock``
+                where the input file declares SINGLE_CLOCK. If none of those
+                holds, the input supports no causal order and this raises
+                rather than name a basis that is not true.
             comment: Free-text note for the Source.
 
         Returns:
@@ -486,6 +604,13 @@ class FileWriter:
                 proto=proto if proto is not None else session.proto,
                 key=session.key,
                 session_id=session.session_id,
+                sequenced=sequenced,
+                sequenced_basis=(
+                    _derive_sequenced_basis(session, single_clock=header.single_clock)
+                    if sequenced
+                    else None
+                ),
+                linearize=sequenced,
             )
             sessions[session.session_id] = out
             for participant in session.participants:
@@ -586,6 +711,11 @@ class FileWriter:
         """
         if self._closed:
             return
+        if end:
+            # Only on a clean finish: when the body raised, the file is
+            # honestly incomplete and half a session is not worth inventing.
+            for flush in self._linearizing:
+                flush()
         if end and not self._ended:
             self._emit(End())
         self._closed = True
@@ -630,6 +760,9 @@ class SessionWriter:
         emit: Callable[[Block], None],
         default_source: Callable[[], SourceHandle],
         session_id: int,
+        verify_order: bool = False,
+        linearize: bool = False,
+        register_flush: Callable[[Callable[[], None]], None] | None = None,
     ) -> None:
         self._emit = emit
         self._default_source = default_source
@@ -637,6 +770,12 @@ class SessionWriter:
         self._pids: set[int] = set()
         self._next_pid = 0
         self._ended = False
+        # Only a sequenced session has an order to keep, so only a sequenced
+        # session carries the state; None is both "off" and "nothing to do".
+        self._order = _StoredOrder() if verify_order else None
+        self._pending: dict[int, list[Record]] | None = {} if linearize else None
+        if linearize and register_flush is not None:
+            register_flush(self._flush_pending)
 
     def __enter__(self) -> Self:
         return self
@@ -696,7 +835,11 @@ class SessionWriter:
         self._pids.add(chosen)
         return ParticipantHandle(session_id=self.session_id, pid=chosen)
 
-    def record(
+    def record(  # noqa: PLR0913
+        # Eleven parameters, one over the limit, and deliberately so: these
+        # are the Record block's own options, and the format is what decides
+        # how many there are. Bundling some into a struct to get under a
+        # count would hide the block's shape rather than simplify it.
         self,
         sender: ParticipantHandle,
         ts: int,
@@ -705,6 +848,7 @@ class SessionWriter:
         source: SourceHandle | None = None,
         seq_start: int | None = None,
         ack: int | None = None,
+        ts_first: int | None = None,
         flags: RecordFlags | int = 0,
         decoder: DecoderHandle | None = None,
         content_type: str | None = None,
@@ -721,14 +865,22 @@ class SessionWriter:
                 omitted when the file declares exactly one.
             seq_start: Absolute TCP sequence number of the first byte.
             ack: The acknowledgement number from the wire.
+            ts_first: Time of the **first** packet contributing bytes to
+                this record, where ``ts`` is the last. Optional, and only
+                meaningful for a record coalesced from several packets.
+                The first-packet time is otherwise recoverable from
+                capture-source ``spans`` — but a capture-sourced file
+                cannot carry spans at all, since every span must reference
+                a ``zpf-input`` Source, so for a capture converter this is
+                the only place that time can be recorded.
             flags: Record flags.
             decoder: The decoder that produced this record (decoded
                 records only; its presence is what makes a record decoded).
             content_type: ``mime:``/``prim:``/``dec:`` payload label.
             spans: Source ranges the bytes were built from.
 
-        Rare options without a keyword here (``ts_first``, ``comment``,
-        ``extra_options``) go through :meth:`FileWriter.write_block`.
+        Rare options without a keyword here (``comment``, ``extra_options``)
+        go through :meth:`FileWriter.write_block`.
 
         """
         if sender.session_id != self.session_id:
@@ -738,21 +890,49 @@ class SessionWriter:
             )
             raise ZpfError(msg)
         resolved = source if source is not None else self._default_source()
-        self._emit(
-            Record(
-                session_id=self.session_id,
-                sender_pid=sender.pid,
-                source_id=resolved.source_id,
-                timestamp=ts,
-                payload=payload,
-                flags=flags,
-                seq_start=seq_start,
-                ack=ack,
-                spans=spans,
-                decoder_id=None if decoder is None else decoder.decoder_id,
-                content_type=content_type,
-            )
+        block = Record(
+            session_id=self.session_id,
+            sender_pid=sender.pid,
+            source_id=resolved.source_id,
+            timestamp=ts,
+            payload=payload,
+            flags=flags,
+            seq_start=seq_start,
+            ack=ack,
+            ts_first=ts_first,
+            spans=spans,
+            decoder_id=None if decoder is None else decoder.decoder_id,
+            content_type=content_type,
         )
+        if self._pending is not None:
+            self._pending.setdefault(sender.pid, []).append(block)
+            return
+        self._emit_record(block)
+
+    def _emit_record(self, block: Record) -> None:
+        """Guard the stored order, then write."""
+        # Before the emit, so a refused record is not written and the guard's
+        # state stays consistent — the same block-isolation discipline the
+        # ConformanceChecker follows.
+        if self._order is not None:
+            self._order.observe(block)
+        self._emit(block)
+
+    def _flush_pending(self) -> None:
+        """Emit buffered records in causal order.
+
+        The merge needs each participant's own records in ``seq_start``
+        order, which is how they were buffered: a producer emits one
+        direction in order even when it cannot interleave the two.
+        """
+        if not self._pending:
+            return
+        pending, self._pending = self._pending, None
+        try:
+            for block in causal_merge(pending):
+                self._emit_record(block)
+        finally:
+            self._pending = {}
 
     def name(
         self,
@@ -817,6 +997,13 @@ class SessionWriter:
             >>> session.discontinuity(client, reason="tls-record-lost")
 
         """
+        if self._pending is not None:
+            msg = (
+                "a Discontinuity's meaning is positional — it is placed by the "
+                "records it separates — so it cannot be written while records "
+                "are buffered for linearize=True"
+            )
+            raise ZpfError(msg)
         pid = participant if isinstance(participant, int) else participant.pid
         self._emit(
             Discontinuity(
@@ -850,6 +1037,7 @@ class SessionWriter:
             comment: Free-text note.
 
         """
+        self._flush_pending()
         self._emit(
             SessionEnd(
                 session_id=self.session_id,

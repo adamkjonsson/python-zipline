@@ -60,6 +60,56 @@ with zpf.open("merged.zpf") as reader:
             session.verify()   # raises on an order that isn't causal
 ```
 
+### Writing one: the promise is checked as you make it
+
+`sequenced=True` is an assertion about records you have not written yet, so
+{meth}`~zpf.FileWriter.begin_session` checks it as they arrive — the same rule
+`verify()` runs on the reading side, folded in one record at a time:
+
+```python
+with w.begin_session(proto="tcp", sequenced=True) as session:
+    session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
+    session.record(bob, ts=2, payload=b"ok", seq_start=5000, ack=1020)
+    session.record(alice, ts=3, payload=b"a" * 10, seq_start=1010)
+    # SemanticError: ... already acknowledged its bytes
+```
+
+Bob acking through `1020` proves he built that record *after* receiving Alice's
+bytes up to `1020`, so Alice's record ending at `1020` cannot be stored after
+his. Note that both participants are individually in `seq_start` order — the
+violation is in the *interleaving*, which is why the per-participant rule the
+{class}`~zpf.ConformanceChecker` enforces does not see it.
+
+The guard costs two integers per participant and buffers nothing. Pass
+`verify_order=False` to switch it off, which is for deliberately writing a
+non-conformant file — a test fixture, a malformed vector — and nothing else.
+
+### Letting the merge do the interleaving
+
+The guard tells you the order is wrong; it does not fix it. But a producer
+often has each *direction* in order and no interleaving at all — that is what
+stream reassembly hands you. Pass `linearize=True` and the session buffers its
+records, runs {func}`~zpf.causal_merge` when it ends, and writes the result:
+
+```python
+with w.begin_session(proto="tcp", sequenced=True, linearize=True) as session:
+    for payload, seq in alice_stream:          # one direction, in its order
+        session.record(alice, ts=..., payload=payload, seq_start=seq)
+    for payload, seq, ack in bob_stream:       # then the other
+        session.record(bob, ts=..., payload=payload, seq_start=seq, ack=ack)
+# records are written here, interleaved by their causal edges
+```
+
+Two costs, both real. **Memory is unbounded** — a whole session is held until
+it ends, so this suits a converter working per completed session rather than an
+open-ended live capture. And a {class}`~zpf.blocks.Discontinuity` cannot be
+buffered coherently, because its meaning is positional and reordering is exactly
+what would move it, so `discontinuity()` is refused while `linearize=True`.
+
+If the two directions' hints are inconsistent — each acknowledging bytes the
+other never sent — the merge stalls and `end()` raises rather than inventing an
+order.
+
 ## Timestamps are not an ordering invariant
 
 Worth stating plainly, because it is the rule most readers get wrong: stored
@@ -75,6 +125,34 @@ Timestamps order records in exactly one place: as the tie-break between causally
 so the merge is fully deterministic — every reader of the same file computes the
 same interleaving. The merge is also **stable**: one participant's own records
 keep their stored order whatever their stamps do.
+
+## When a record started, not just when it finished
+
+A record's `timestamp` is the **last** packet that contributed bytes to it. For
+a record reassembled from one packet that is the whole story; for a 40 KB
+response coalesced from thirty, it is only the moment the last byte landed, and
+the two-second stream that produced it is invisible.
+
+The first-packet time is normally recoverable from provenance — capture-source
+`spans` say which input ranges the bytes came from, and those ranges carry their
+own times. But a **capture-sourced file cannot carry spans at all**: every span
+must reference a `zpf-input` Source, and a converter reading a pcap has none. So
+for a capture converter the optional `ts_first` is the only place that time can
+go:
+
+```python
+session.record(alice, ts=5_000_000, payload=response,
+               seq_start=1001, ts_first=3_000_000)
+```
+
+That records a response which *completed* at `5.0 s` having *started* at `3.0 s`
+— the difference between knowing when a transfer landed and knowing it streamed.
+Leave it off when a record came from a single packet, where it would only repeat
+`ts`.
+
+`ts_first` is an optional TLV: nothing requires it, no reader may depend on it,
+and it takes no part in ordering. In particular it is not a second ordering key
+— the rule above still holds, and stored order is never a time sort.
 
 ## What a hint-less sequenced session rests on
 

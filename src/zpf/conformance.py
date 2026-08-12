@@ -47,10 +47,16 @@ Memory stays bounded on unbounded streams: per-session state is freed at
 the session's Session End; only the set of ended session ids is retained
 (required to police the nothing-after-Session-End rule).
 
-Not checked here (out of single-pass reach): that a SEQUENCED session's
-stored order really is a causal linearization (needs the merge algorithm),
-and the decode-stage coverage guarantee (a whole-file property, enforced by
-the transform helpers).
+Not checked here, for two different reasons. The decode-stage coverage
+guarantee is a whole-file property and is enforced by the transform
+helpers. A SEQUENCED session's *interleaving* — that no record follows a
+peer record which already acknowledged its bytes — is single-pass and would
+fit, but this checker is shared with the read path, where the format lets a
+reader trust a sequenced session's stored order rather than re-derive it.
+So it is enforced where the promise is made, by
+:class:`~zpf.writer.SessionWriter` at write time, and offered on request by
+:func:`zpf.order.verify_sequenced`. The per-participant ``seq_start`` half
+of that rule *is* checked here, for every session.
 """
 
 from __future__ import annotations
