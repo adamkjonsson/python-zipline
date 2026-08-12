@@ -132,6 +132,12 @@ and must name that basis in **`sequenced_basis`** — `clock` (the
 never a cross-participant order to get wrong. See the
 [ordering guide](guides/ordering.md#what-a-hint-less-sequenced-session-rests-on).
 
+Setting the flag is a promise, so this library checks it as you make it:
+{meth}`~zpf.FileWriter.begin_session` verifies each record against the
+stored-order rules as it is written, rather than letting a bad interleaving
+reach a reader that will trust it. See [Writing one: the promise is checked as
+you make it](guides/ordering.md#writing-one-the-promise-is-checked-as-you-make-it).
+
 Timestamps themselves are **not** an ordering invariant: stored stamps may
 run backwards in any session, and a reader must not reject a file or
 re-sort a sequenced session because they do. They order records in exactly

@@ -111,6 +111,38 @@ To keep your own {func}`zpf.create` call instead of the orchestrator, use
 {meth}`zpf.FileWriter.derive_from`, which builds the same source + participant
 scaffolding and returns it, without owning the loop.
 
+### Output order: two monologues, or the conversation
+
+The loop above walks one stream to exhaustion before starting the next, so the
+output stores all of the client's records and then all of the server's. That is
+an order the input never had — and the input records the real one.
+
+Pass `sequenced=True` to get it back. Records are buffered per session and
+interleaved when it ends, keyed on `ts`, which is *already* the completion time
+of the last input record each payload came from — so ordering by it reproduces
+the input's timeline rather than approximating it:
+
+```python
+with zpf.decode_stage(..., sequenced=True) as dec:
+    ...
+```
+
+Decoded records are hint-less — decoding replaces `seq`/`ack` with positional
+offsets — so each session must declare what its order rests on. The stage
+derives that from the input rather than guessing: `trivial` for a
+single-participant session, `protocol` where the input's records carried TCP
+hints (those edges are where the order came from), the input's own
+`sequenced_basis` where it declared one, and `clock` where the input file
+declares `SINGLE_CLOCK`. An input supporting none of them raises, rather than
+naming a basis that is not true — the flag is something a reader may act on.
+
+Two costs. The session is held in memory until it ends, so this suits a stage
+working per completed session rather than an open-ended one. And
+{meth}`~zpf.DecodeStage.discontinuity` is refused while it is on: a break's
+meaning is positional, and reordering is exactly what moves it. If you need
+[your own output breaks](#saying-your-own-output-breaks), leave the stage
+unsequenced.
+
 ## Coverage is handled for you
 
 The **coverage guarantee** is that within each input stream every offset is

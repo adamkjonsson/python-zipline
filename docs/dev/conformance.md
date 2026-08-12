@@ -14,7 +14,7 @@ by the transform that owns them.
 | Value encodability | integer range, option ≤ 65 535 bytes, `Custom` length a multiple of 4 | `blocks.py` / `_frame.py` at construction/serialization | `EncodeError` — write side |
 | Semantic (single-pass) | declare-before-use, id uniqueness, session lifetime, per-participant `seq_start` order, file-kind purity | `conformance.py` (`ConformanceChecker`) | `SemanticError` — isolate or reject |
 | Semantic, writer-only | reserved flag bits, `prim:` payload widths and token vocabulary | `conformance.py` (`ConformanceChecker`) | `AdvisoryError` — report, but keep the block |
-| Sequenced order | a SEQUENCED session's stored order really is a causal linearization | `order.py` `verify_sequenced` / `SessionReader.verify()` | needs the merge algorithm |
+| Sequenced order | a SEQUENCED session's stored order really is a causal linearization | `order.py` `_StoredOrder`, driven by `SessionWriter` while writing and by `verify_sequenced` / `SessionReader.verify()` on request | `SemanticError` — write side always, read side opt-in |
 | Coverage, from the file alone | an interior range neither decoded nor marked; a declared `input_extents` its own spans contradict | `conformance.py` (`CoverageLedger`), ruled on at `finish()` | end-of-stream property |
 | Coverage, against the input | every input offset decoded or marked Undecoded, never both; a declared extent the input disagrees with | `transform.py` `check_coverage` | needs a second file |
 | The splice duty | a unit whose spans cross an input's declared break | `transform.py` `check_splice` | needs a second file |
@@ -28,9 +28,27 @@ the `ConformanceChecker` gathers as it observes and rules on at `finish()`, so
 `zpf.open` reports it. The rest genuinely needs the input in hand, and stays in
 the transform helpers.
 
-Sequenced order remains **out of the single-pass checker's reach** entirely: it
-needs the k-way merge to decide. The `ConformanceChecker` docstring calls that
-boundary out explicitly.
+**Sequenced order is enforced on the write side and offered on the read side**,
+and the asymmetry is deliberate. The rule is two clauses — each participant's
+`seq_start` non-decreasing, and (pairwise) no record after a peer record that
+already acknowledged its bytes — so it is single-pass and O(1) per participant,
+not the k-way merge. `order._StoredOrder` implements it once and both sides
+drive it.
+
+The writer runs it unconditionally for a `sequenced=True` session, because that
+flag is a promise the producer is *making*, and a promise nothing checks is one
+readers will trust and be misled by: a reader of a sequenced session skips the
+merge, so a bad interleaving is not merely unnoticed, it is acted on. Only the
+per-participant clause was ever enforced there — it lives in the
+`ConformanceChecker` and both participants can be individually in order while
+the interleaving is wrong, which is exactly the case that used to escape.
+
+The `ConformanceChecker` does not host the second clause, even though it could
+afford to. It is shared with the read path, where the format lets a reader
+**trust** a sequenced session's stored order rather than re-derive it; putting
+the rule there would make every `zpf.open` re-litigate a promise the file
+already makes. So on the read side it stays opt-in, as
+{meth}`~zpf.reader.SessionReader.verify` and `zpf validate --verify`.
 
 One guard is load-bearing enough to name here: the interior-hole check runs for
 a **decode stage** only. A pass-through re-emits records rather than citing
