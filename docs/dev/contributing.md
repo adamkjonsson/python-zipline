@@ -123,11 +123,16 @@ to a new spec minor is therefore always a library minor bump — the format
 guarantees no upgrade path across one, so neither can we. The library number
 and `zpf.SPEC_VERSION` are separate and are not expected to match.
 
+**Between releases the version carries a `.devN` suffix** — `0.2.0.dev0` while
+0.2.0 is being built. It says plainly that what is installed is not the release
+its number names, and it keeps `CHANGELOG.md` honest: the top section stays
+`[Unreleased]` and nothing claims a release date it has not earned.
+
 To cut a release:
 
-1. Bump `version` in `pyproject.toml` (PEP 440; `test_package.py` checks the
-   shape).
-2. Move the `[Unreleased]` entries in `CHANGELOG.md` under the new version
+1. Drop the `.devN` suffix from `version` in `pyproject.toml`, or bump to the
+   next version (PEP 440; `test_package.py` checks the shape).
+2. Retitle the `[Unreleased]` section in `CHANGELOG.md` to the new version
    with today's date, note the spec version it implements, and add a fresh
    empty `[Unreleased]` section plus the compare links at the foot.
 3. Run the full quality gate above — all green.
@@ -137,6 +142,8 @@ To cut a release:
    ```
 5. Tag the commit `vX.Y.Z` and use that version's changelog section as the
    GitHub release notes.
+6. Set `version` to the next `X.Y.Z.dev0`, so `main` is never mistaken for a
+   release.
 
 Changelog entries follow [Keep a Changelog 1.1.0][kac]: written for the
 people consuming the library, grouped under Added / Changed / Deprecated /

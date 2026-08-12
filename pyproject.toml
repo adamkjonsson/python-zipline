@@ -9,7 +9,7 @@ name = "zpf"
 # This counter is the library's own — it is not the spec version, which
 # `zpf.SPEC_VERSION` states — but it follows the same rule the format does:
 # while we are in 0.x, every minor is a break with no upgrade path promised.
-version = "0.2.0"
+version = "0.2.0.dev0"
 description = "A Python implementation of the Zipline Payload Format (.zpf)"
 readme = "README.md"
 license = "MIT"
