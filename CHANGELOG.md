@@ -32,6 +32,16 @@ it back from the installed distribution metadata.
   since spans must reference a `zpf-input` Source and a capture converter
   has none. ([#47](https://github.com/adamkjonsson/python-zipline/issues/47))
 
+### Fixed
+
+- The packaged `Specification` URL pointed at spec `v0.12` while the library
+  implemented `0.16` — following it from the package page gave the wrong
+  format, with nothing to signal it was wrong. Now pinned to `v0.16`, and
+  held there by a test that compares it against `zpf.SPEC_VERSION`. A
+  spec-bump checklist in `docs/dev/contributing.md` covers the places a
+  version literal hides that no test can reach.
+  ([#48](https://github.com/adamkjonsson/python-zipline/issues/48))
+
 ## [0.2.0] - 2026-08-12
 
 Implements spec **v0.16** (`SPEC_VERSION == (0, 16)`).

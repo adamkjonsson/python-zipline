@@ -69,6 +69,47 @@ The rules in `CLAUDE.md` and `ruff.toml` are enforced, not aspirational:
   run by `test_tutorial_examples.py` — extend that test when you add one, so
   examples can't rot.
 
+## Porting to a new spec version
+
+Every `0.x` minor of the format is a **separate format** with no upgrade path,
+so a port is never incremental: the version gate moves, files written by the
+previous version stop being readable, and the port lands as a library **minor**
+bump (see [Releasing](#releasing)).
+
+Work it as a phased plan in `plans/`, the way the 0.12, 0.14 and 0.16 ports
+were. What follows is not that plan — it is the list of places a version
+literal hides, which is what actually goes stale.
+
+1. **Re-vendor the conformance vectors** at the new tag and reset
+   `KNOWN_PASSING` in `tests/test_vectors.py`. Vectors are copied verbatim and
+   are the acceptance criteria; never edit one to make a test pass. A name is
+   never *removed* from the ratchet.
+2. **Move the gate.** `SPEC_VERSION` in `src/zpf/blocks.py` is the single
+   source of truth for the version, and the only place the number is decided.
+3. **Follow the tests.** With 1 and 2 done, the suite tells you what the port
+   actually requires; the rest of this list is what it can't tell you.
+4. **The packaging metadata.** `[project.urls] Specification` in
+   `pyproject.toml` must name the new tag. This is covered by
+   `test_specification_url_names_the_implemented_spec_version`, so the suite
+   catches it — it is listed here because it went stale anyway
+   ([#48](https://github.com/adamkjonsson/python-zipline/issues/48)): the 0.16
+   port had a phase for the prose sweep and missed this file, which is not
+   prose.
+5. **The prose surface**, none of which any test checks: `README.md`,
+   `CLAUDE.md`, `docs/index.md`, `docs/user/`, `docs/dev/`. Grep for the old
+   version across the repo and expect roughly twenty files. Most mentions are
+   a bare number to bump; some are arguments about *why* a rule reads as it
+   does, and those need rewriting rather than renumbering.
+6. **`VECTOR-DEFECTS.md`.** Vector defects are per-version: re-check whether
+   each open one still reproduces at the new tag, and whether the new vectors
+   introduce any.
+7. **`CHANGELOG.md`.** A new entry naming the spec version it implements, and
+   stating plainly that files written by the previous library version are
+   refused at the gate.
+
+Prefer a test over a line in this list wherever one is possible — step 4 exists
+because a checklist entry is exactly what failed the first time.
+
 ## Releasing
 
 The version is declared **once**, as `version` under `[project]` in
