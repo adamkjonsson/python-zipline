@@ -381,6 +381,90 @@ def test_the_guard_drops_ack_checks_beyond_two_participants():
         session.record(alice, ts=4, payload=b"a" * 10, seq_start=1010)
 
 
+def test_linearize_interleaves_two_directions_written_separately():
+    """The point: emit each direction in its own order, get a causal one.
+
+    Stream reassembly hands a converter one direction at a time, which is
+    exactly the shape that cannot be written directly — the guard would
+    refuse it, and rightly. Buffering turns it into the merge's problem.
+    """
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1) as writer:
+        session, alice, bob = _sequenced_session(writer, linearize=True)
+        # All of Alice, then all of Bob: stored order here is not causal.
+        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
+        session.record(alice, ts=3, payload=b"a" * 10, seq_start=1010)
+        session.record(bob, ts=2, payload=b"ok", seq_start=5000, ack=1010)
+        session.end(reason="fin")
+    records = [
+        block
+        for block in zpf.BlockReader(io.BytesIO(sink.getvalue()))
+        if isinstance(block, zpf.Record)
+    ]
+    # Bob's ack of 1010 places him after Alice's first record, before her second.
+    assert [(r.sender_pid, r.seq_start) for r in records] == [
+        (alice.pid, 1000),
+        (bob.pid, 5000),
+        (alice.pid, 1010),
+    ]
+    zpf.verify_sequenced(records, participant_count=2)
+
+
+def test_linearize_writes_nothing_until_the_session_ends():
+    """Buffering is observable: the records are not in the file yet."""
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1) as writer:
+        session, alice, _bob = _sequenced_session(writer, linearize=True)
+        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
+        assert not [
+            block
+            for block in zpf.BlockReader(io.BytesIO(sink.getvalue()), strict=False)
+            if isinstance(block, zpf.Record)
+        ]
+        session.end(reason="fin")
+    assert [
+        block
+        for block in zpf.BlockReader(io.BytesIO(sink.getvalue()))
+        if isinstance(block, zpf.Record)
+    ]
+
+
+def test_linearize_flushes_when_the_producer_forgets_to_end():
+    """Accepted records must reach the file even without an explicit end()."""
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1) as writer:
+        session, alice, bob = _sequenced_session(writer, linearize=True)
+        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
+        session.record(bob, ts=2, payload=b"ok", seq_start=5000, ack=1010)
+        # No session.end(), no context manager: close() has to drain it.
+    records = [
+        block
+        for block in zpf.BlockReader(io.BytesIO(sink.getvalue()))
+        if isinstance(block, zpf.Record)
+    ]
+    assert len(records) == 2
+
+
+def test_linearize_refuses_a_positional_block():
+    """A Discontinuity is placed by the records around it; reordering breaks that."""
+    with zpf.create(io.BytesIO(), tick_hz=1) as writer:
+        session, alice, _bob = _sequenced_session(writer, linearize=True)
+        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
+        with pytest.raises(zpf.ZpfError, match="positional"):
+            session.discontinuity(alice, reason="records-dropped")
+
+
+def test_linearize_propagates_a_stalled_merge():
+    """A merge that cannot resolve is the producer's error, raised at end()."""
+    with zpf.create(io.BytesIO(), tick_hz=1) as writer:
+        session, alice, bob = _sequenced_session(writer, linearize=True)
+        # Each acknowledges bytes the other never sent.
+        session.record(alice, ts=1, payload=b"a", seq_start=1000, ack=6000)
+        session.record(bob, ts=2, payload=b"b", seq_start=5000, ack=2000)
+        with pytest.raises(zpf.SemanticError, match="stalled"):
+            session.end(reason="fin")
+
+
 def test_escape_hatches_are_checked():
     with zpf.create(io.BytesIO(), tick_hz=1) as writer:
         writer.write_custom(pen=32473, subtype=7, payload=b"vend")

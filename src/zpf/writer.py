@@ -55,7 +55,7 @@ from zpf.blocks import (
 from zpf.conformance import ConformanceChecker
 from zpf.errors import ZpfError
 from zpf.jsonl import JsonlWriter
-from zpf.order import _StoredOrder
+from zpf.order import _StoredOrder, causal_merge
 
 if TYPE_CHECKING:
     import os
@@ -255,6 +255,12 @@ class FileWriter:
         self._next_session = 0
         self._closed = False
         self._ended = False
+        # Flush callbacks from sessions buffering a causal linearization.
+        # Held so close() can drain one whose producer never called end():
+        # the records were accepted, so dropping them silently is not an
+        # option. Each session hands its own callback over, which is why
+        # this is a list of closures rather than of writers.
+        self._linearizing: list[Callable[[], None]] = []
         flags = FileFlags.SINGLE_CLOCK if single_clock else FileFlags(0)
         self._header = FileHeader(
             tick_hz=tick_hz,
@@ -377,6 +383,7 @@ class FileWriter:
         sequenced: bool = False,
         sequenced_basis: str | None = None,
         verify_order: bool = True,
+        linearize: bool = False,
         external_session_id: bytes | None = None,
         comment: str | None = None,
         session_id: int | None = None,
@@ -411,6 +418,20 @@ class FileWriter:
                 that readers will trust and mis-order. Pass ``False`` to
                 write such a file deliberately — a test fixture, or a
                 deliberately malformed vector.
+            linearize: **Buffer** this session's records and emit them in
+                causal order at :meth:`SessionWriter.end` (or at
+                :meth:`FileWriter.close`), instead of writing each as it
+                arrives. This is the answer to "the interleaving has to be
+                right before the first ``record()`` call": with it, a
+                producer emits each direction in its own order — which
+                stream reassembly gives it for free — and the
+                :func:`~zpf.causal_merge` computes the interleaving.
+                **Memory is unbounded**: a whole session is held until it
+                ends, so this suits a converter working per completed
+                session, not an open-ended live capture. Positional blocks
+                cannot be buffered coherently, so
+                :meth:`SessionWriter.discontinuity` is refused while it is
+                on.
             external_session_id: An identity assigned outside this format
                 — a trace id, a capture orchestrator's UUID, a case
                 number. **Opaque bytes, not text**: nothing here
@@ -444,6 +465,8 @@ class FileWriter:
             self._default_source,
             chosen,
             verify_order=sequenced and verify_order,
+            linearize=linearize,
+            register_flush=self._linearizing.append,
         )
 
     def derive_from(
@@ -609,6 +632,11 @@ class FileWriter:
         """
         if self._closed:
             return
+        if end:
+            # Only on a clean finish: when the body raised, the file is
+            # honestly incomplete and half a session is not worth inventing.
+            for flush in self._linearizing:
+                flush()
         if end and not self._ended:
             self._emit(End())
         self._closed = True
@@ -654,6 +682,8 @@ class SessionWriter:
         default_source: Callable[[], SourceHandle],
         session_id: int,
         verify_order: bool = False,
+        linearize: bool = False,
+        register_flush: Callable[[Callable[[], None]], None] | None = None,
     ) -> None:
         self._emit = emit
         self._default_source = default_source
@@ -664,6 +694,9 @@ class SessionWriter:
         # Only a sequenced session has an order to keep, so only a sequenced
         # session carries the state; None is both "off" and "nothing to do".
         self._order = _StoredOrder() if verify_order else None
+        self._pending: dict[int, list[Record]] | None = {} if linearize else None
+        if linearize and register_flush is not None:
+            register_flush(self._flush_pending)
 
     def __enter__(self) -> Self:
         return self
@@ -792,12 +825,35 @@ class SessionWriter:
             decoder_id=None if decoder is None else decoder.decoder_id,
             content_type=content_type,
         )
+        if self._pending is not None:
+            self._pending.setdefault(sender.pid, []).append(block)
+            return
+        self._emit_record(block)
+
+    def _emit_record(self, block: Record) -> None:
+        """Guard the stored order, then write."""
         # Before the emit, so a refused record is not written and the guard's
         # state stays consistent — the same block-isolation discipline the
         # ConformanceChecker follows.
         if self._order is not None:
             self._order.observe(block)
         self._emit(block)
+
+    def _flush_pending(self) -> None:
+        """Emit buffered records in causal order.
+
+        The merge needs each participant's own records in ``seq_start``
+        order, which is how they were buffered: a producer emits one
+        direction in order even when it cannot interleave the two.
+        """
+        if not self._pending:
+            return
+        pending, self._pending = self._pending, None
+        try:
+            for block in causal_merge(pending):
+                self._emit_record(block)
+        finally:
+            self._pending = {}
 
     def name(
         self,
@@ -862,6 +918,13 @@ class SessionWriter:
             >>> session.discontinuity(client, reason="tls-record-lost")
 
         """
+        if self._pending is not None:
+            msg = (
+                "a Discontinuity's meaning is positional — it is placed by the "
+                "records it separates — so it cannot be written while records "
+                "are buffered for linearize=True"
+            )
+            raise ZpfError(msg)
         pid = participant if isinstance(participant, int) else participant.pid
         self._emit(
             Discontinuity(
@@ -895,6 +958,7 @@ class SessionWriter:
             comment: Free-text note.
 
         """
+        self._flush_pending()
         self._emit(
             SessionEnd(
                 session_id=self.session_id,

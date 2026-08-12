@@ -84,6 +84,32 @@ The guard costs two integers per participant and buffers nothing. Pass
 `verify_order=False` to switch it off, which is for deliberately writing a
 non-conformant file — a test fixture, a malformed vector — and nothing else.
 
+### Letting the merge do the interleaving
+
+The guard tells you the order is wrong; it does not fix it. But a producer
+often has each *direction* in order and no interleaving at all — that is what
+stream reassembly hands you. Pass `linearize=True` and the session buffers its
+records, runs {func}`~zpf.causal_merge` when it ends, and writes the result:
+
+```python
+with w.begin_session(proto="tcp", sequenced=True, linearize=True) as session:
+    for payload, seq in alice_stream:          # one direction, in its order
+        session.record(alice, ts=..., payload=payload, seq_start=seq)
+    for payload, seq, ack in bob_stream:       # then the other
+        session.record(bob, ts=..., payload=payload, seq_start=seq, ack=ack)
+# records are written here, interleaved by their causal edges
+```
+
+Two costs, both real. **Memory is unbounded** — a whole session is held until
+it ends, so this suits a converter working per completed session rather than an
+open-ended live capture. And a {class}`~zpf.blocks.Discontinuity` cannot be
+buffered coherently, because its meaning is positional and reordering is exactly
+what would move it, so `discontinuity()` is refused while `linearize=True`.
+
+If the two directions' hints are inconsistent — each acknowledging bytes the
+other never sent — the merge stalls and `end()` raises rather than inventing an
+order.
+
 ## Timestamps are not an ordering invariant
 
 Worth stating plainly, because it is the rule most readers get wrong: stored

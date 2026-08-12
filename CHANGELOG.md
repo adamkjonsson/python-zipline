@@ -42,6 +42,14 @@ it back from the installed distribution metadata.
   `verify_sequenced` and writer-side by `SessionWriter`.
   ([#49](https://github.com/adamkjonsson/python-zipline/issues/49))
 
+- `linearize=True` on `begin_session`: buffer a session's records and emit
+  them in causal order when it ends, so a producer supplies each direction
+  in its own order — what stream reassembly gives it — and `causal_merge`
+  computes the interleaving. Memory is unbounded for the session's lifetime,
+  and `discontinuity()` is refused while it is on, a positional block being
+  incompatible with reordering.
+  ([#49](https://github.com/adamkjonsson/python-zipline/issues/49))
+
 ### Fixed
 
 - Producers could assert `SEQUENCED`, emit a badly interleaved session, and
