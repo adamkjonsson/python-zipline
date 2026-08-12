@@ -32,8 +32,25 @@ it back from the installed distribution metadata.
   since spans must reference a `zpf-input` Source and a capture converter
   has none. ([#47](https://github.com/adamkjonsson/python-zipline/issues/47))
 
+- A **write-time causal-order guard** on sequenced sessions. Asserting
+  `sequenced=True` is a promise about records not yet written, and it is now
+  checked as they arrive: the per-participant `seq_start` rule and, for a
+  two-participant session, that no record follows a peer record which
+  already acknowledged its bytes. On by default; `verify_order=False` on
+  `begin_session` switches it off for deliberately writing a non-conformant
+  file. The rule now has one implementation, driven reader-side by
+  `verify_sequenced` and writer-side by `SessionWriter`.
+  ([#49](https://github.com/adamkjonsson/python-zipline/issues/49))
+
 ### Fixed
 
+- Producers could assert `SEQUENCED`, emit a badly interleaved session, and
+  get a silently non-conformant file: the cross-participant ack rule was
+  checked nowhere on the write path, and the per-participant rule the
+  `ConformanceChecker` enforces cannot see an interleaving violation. Such a
+  file was then trusted and mis-ordered by readers, which skip the merge for
+  a sequenced session. See the guard above.
+  ([#49](https://github.com/adamkjonsson/python-zipline/issues/49))
 - The packaged `Specification` URL pointed at spec `v0.12` while the library
   implemented `0.16` — following it from the package page gave the wrong
   format, with nothing to signal it was wrong. Now pinned to `v0.16`, and

@@ -214,6 +214,66 @@ def _merge_key(frontier: _Frontier) -> tuple[int, int]:
     return (head.timestamp if head is not None else 0, frontier.pid)
 
 
+class _StoredOrder:
+    """Incremental state for a SEQUENCED session's stored-order rules.
+
+    One implementation of the rules, driven from both sides: reader-side by
+    :func:`verify_sequenced` over a session already on disk, writer-side by
+    :class:`~zpf.writer.SessionWriter` one record at a time as they are
+    emitted. Single pass, O(1) state per participant, and it never buffers
+    a record — which is what lets the writer run it without changing the
+    streaming shape of the write path.
+
+    Args:
+        participant_count: The session's participant count, if known. Ack
+            cross-checks apply when it is 2; with ``None`` they apply while
+            at most two senders have appeared and are dropped from the
+            first record of a third sender on. A writer never knows the
+            count up front — participants are declared on first use — so
+            ``None`` is the writer's case, and its behaviour is exactly
+            what that needs.
+
+    """
+
+    def __init__(self, participant_count: int | None = None) -> None:
+        self._last_seq: dict[int, int] = {}
+        self._max_ack: dict[int, int] = {}
+        self._senders: set[int] = set()
+        self._count = participant_count
+        self._ack_checks = participant_count == 2 or participant_count is None
+
+    def observe(self, record: Record) -> None:
+        """Fold one record in, raising if it breaks the stored order.
+
+        Raises:
+            SemanticError: If this record precedes its participant's
+                previous ``seq_start``, or appears after a peer record that
+                already acknowledged its bytes.
+
+        """
+        pid = record.sender_pid
+        self._senders.add(pid)
+        if self._count is None and len(self._senders) > 2:
+            self._ack_checks = False
+        if record.seq_start is not None:
+            previous = self._last_seq.get(pid)
+            if previous is not None and not seq_leq(previous, record.seq_start):
+                msg = (
+                    f"{_describe(record)} precedes participant {pid}'s previous "
+                    f"seq_start ({previous}); the stored order violates the "
+                    "per-participant guarantee"
+                )
+                raise SemanticError(msg)
+            self._last_seq[pid] = record.seq_start
+            if self._ack_checks:
+                end = record_end(record.seq_start, len(record.payload))
+                _check_not_already_acked(record, end, self._max_ack)
+        if self._ack_checks and record.ack is not None:
+            current = self._max_ack.get(pid)
+            if current is None or seq_lt(current, record.ack):
+                self._max_ack[pid] = record.ack
+
+
 def verify_sequenced(
     records: Iterable[Record], *, participant_count: int | None = None
 ) -> None:
@@ -246,32 +306,9 @@ def verify_sequenced(
         SemanticError: On the first violation, naming the records involved.
 
     """
-    last_seq: dict[int, int] = {}
-    max_ack: dict[int, int] = {}
-    senders: set[int] = set()
-    ack_checks = participant_count == 2 or participant_count is None
+    state = _StoredOrder(participant_count)
     for record in records:
-        pid = record.sender_pid
-        senders.add(pid)
-        if participant_count is None and len(senders) > 2:
-            ack_checks = False
-        if record.seq_start is not None:
-            previous = last_seq.get(pid)
-            if previous is not None and not seq_leq(previous, record.seq_start):
-                msg = (
-                    f"{_describe(record)} precedes participant {pid}'s previous "
-                    f"seq_start ({previous}); the stored order violates the "
-                    "per-participant guarantee"
-                )
-                raise SemanticError(msg)
-            last_seq[pid] = record.seq_start
-            if ack_checks:
-                end = record_end(record.seq_start, len(record.payload))
-                _check_not_already_acked(record, end, max_ack)
-        if ack_checks and record.ack is not None:
-            current = max_ack.get(pid)
-            if current is None or seq_lt(current, record.ack):
-                max_ack[pid] = record.ack
+        state.observe(record)
 
 
 def _check_not_already_acked(record: Record, end: int, max_ack: dict[int, int]) -> None:

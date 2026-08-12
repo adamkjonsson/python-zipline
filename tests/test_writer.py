@@ -289,6 +289,98 @@ def test_jsonl_face_matches_the_binary_conversion_for_ts_first():
     assert '"ts_first":4' in text.getvalue()
 
 
+def _sequenced_session(
+    writer: zpf.FileWriter, **kwargs: bool
+) -> tuple[zpf.SessionWriter, zpf.ParticipantHandle, zpf.ParticipantHandle]:
+    """Build a two-participant TCP session for the causal-order cases."""
+    writer.add_source("capture", uri="sideA.pcap")
+    session = writer.begin_session(proto="tcp", sequenced=True, **kwargs)
+    alice = session.participant("10.0.0.1:51000", isn=1000)
+    bob = session.participant("10.0.0.2:80", isn=5000)
+    return session, alice, bob
+
+
+def test_sequenced_writer_refuses_an_order_that_is_not_causal():
+    """The write-time guard: a peer's ack proves what it had already seen.
+
+    Bob acking through 1020 proves he built that record *after* receiving
+    Alice's bytes up to 1020 — so Alice's record ending at 1020 cannot be
+    stored after his. Nothing else in the library catches this on the write
+    path: the ConformanceChecker's stored-order rule is per participant, and
+    both participants are individually in order here.
+    """
+    with zpf.create(io.BytesIO(), tick_hz=1) as writer:
+        session, alice, bob = _sequenced_session(writer)
+        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
+        session.record(bob, ts=2, payload=b"ok", seq_start=5000, ack=1020)
+        with pytest.raises(zpf.SemanticError, match="already acknowledged"):
+            session.record(alice, ts=3, payload=b"a" * 10, seq_start=1010)
+
+
+def test_sequenced_writer_accepts_the_same_records_in_causal_order():
+    """Same bytes, same acks — only the interleaving differs."""
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1) as writer:
+        session, alice, bob = _sequenced_session(writer)
+        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
+        session.record(alice, ts=3, payload=b"a" * 10, seq_start=1010)
+        session.record(bob, ts=2, payload=b"ok", seq_start=5000, ack=1020)
+        session.end(reason="fin")
+    records = [
+        block
+        for block in zpf.BlockReader(io.BytesIO(sink.getvalue()))
+        if isinstance(block, zpf.Record)
+    ]
+    zpf.verify_sequenced(records, participant_count=2)  # reader agrees
+
+
+def test_the_guard_is_what_the_reader_would_have_caught_later():
+    """Turning the guard off reproduces the gap it exists to close.
+
+    The file is written without complaint and is *not* conformant: the same
+    rule, run reader-side by `verify_sequenced`, rejects it. That gap is why
+    the guard defaults on.
+    """
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1) as writer:
+        session, alice, bob = _sequenced_session(writer, verify_order=False)
+        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
+        session.record(bob, ts=2, payload=b"ok", seq_start=5000, ack=1020)
+        session.record(alice, ts=3, payload=b"a" * 10, seq_start=1010)
+        session.end(reason="fin")
+    records = [
+        block
+        for block in zpf.BlockReader(io.BytesIO(sink.getvalue()))
+        if isinstance(block, zpf.Record)
+    ]
+    with pytest.raises(zpf.SemanticError, match="already acknowledged"):
+        zpf.verify_sequenced(records, participant_count=2)
+
+
+def test_an_unsequenced_session_is_not_guarded():
+    """The flag is the promise; without it there is no order to keep."""
+    with zpf.create(io.BytesIO(), tick_hz=1) as writer:
+        writer.add_source("capture", uri="sideA.pcap")
+        session = writer.begin_session(proto="tcp")
+        alice = session.participant("10.0.0.1:51000", isn=1000)
+        bob = session.participant("10.0.0.2:80", isn=5000)
+        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
+        session.record(bob, ts=2, payload=b"ok", seq_start=5000, ack=1020)
+        session.record(alice, ts=3, payload=b"a" * 10, seq_start=1010)
+
+
+def test_the_guard_drops_ack_checks_beyond_two_participants():
+    """The specification defines ack semantics pairwise only."""
+    with zpf.create(io.BytesIO(), tick_hz=1) as writer:
+        session, alice, bob = _sequenced_session(writer)
+        carol = session.participant("10.0.0.3:80", isn=9000)
+        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
+        session.record(bob, ts=2, payload=b"ok", seq_start=5000, ack=1020)
+        session.record(carol, ts=3, payload=b"hi", seq_start=9000)
+        # Would raise in a two-participant session; here there is no rule.
+        session.record(alice, ts=4, payload=b"a" * 10, seq_start=1010)
+
+
 def test_escape_hatches_are_checked():
     with zpf.create(io.BytesIO(), tick_hz=1) as writer:
         writer.write_custom(pen=32473, subtype=7, payload=b"vend")

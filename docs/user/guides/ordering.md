@@ -60,6 +60,30 @@ with zpf.open("merged.zpf") as reader:
             session.verify()   # raises on an order that isn't causal
 ```
 
+### Writing one: the promise is checked as you make it
+
+`sequenced=True` is an assertion about records you have not written yet, so
+{meth}`~zpf.FileWriter.begin_session` checks it as they arrive — the same rule
+`verify()` runs on the reading side, folded in one record at a time:
+
+```python
+with w.begin_session(proto="tcp", sequenced=True) as session:
+    session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
+    session.record(bob, ts=2, payload=b"ok", seq_start=5000, ack=1020)
+    session.record(alice, ts=3, payload=b"a" * 10, seq_start=1010)
+    # SemanticError: ... already acknowledged its bytes
+```
+
+Bob acking through `1020` proves he built that record *after* receiving Alice's
+bytes up to `1020`, so Alice's record ending at `1020` cannot be stored after
+his. Note that both participants are individually in `seq_start` order — the
+violation is in the *interleaving*, which is why the per-participant rule the
+{class}`~zpf.ConformanceChecker` enforces does not see it.
+
+The guard costs two integers per participant and buffers nothing. Pass
+`verify_order=False` to switch it off, which is for deliberately writing a
+non-conformant file — a test fixture, a malformed vector — and nothing else.
+
 ## Timestamps are not an ordering invariant
 
 Worth stating plainly, because it is the rule most readers get wrong: stored

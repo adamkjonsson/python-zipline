@@ -55,6 +55,7 @@ from zpf.blocks import (
 from zpf.conformance import ConformanceChecker
 from zpf.errors import ZpfError
 from zpf.jsonl import JsonlWriter
+from zpf.order import _StoredOrder
 
 if TYPE_CHECKING:
     import os
@@ -375,6 +376,7 @@ class FileWriter:
         key: str | None = None,
         sequenced: bool = False,
         sequenced_basis: str | None = None,
+        verify_order: bool = True,
         external_session_id: bytes | None = None,
         comment: str | None = None,
         session_id: int | None = None,
@@ -385,7 +387,9 @@ class FileWriter:
             proto: Session protocol (lowercase; e.g. ``"tcp"``).
             key: Human-readable flow key.
             sequenced: Set the SEQUENCED flag — the caller asserts it will
-                emit this session's records in a valid causal order.
+                emit this session's records in a valid causal order. That
+                assertion is checked as the records are written; see
+                ``verify_order``.
             sequenced_basis: What that order rests on — ``"clock"``,
                 ``"protocol"``, ``"external"`` or ``"trivial"``. Required
                 when a sequenced session's records carry no ``seq``/``ack``,
@@ -393,6 +397,20 @@ class FileWriter:
                 to set here even though hint-lessness is not settled until
                 the records are written: a producer names what it is
                 *relying on*, which it knows the moment it sets the flag.
+            verify_order: Check, as each record is written, that a
+                ``sequenced`` session's stored order really is a valid
+                causal linearization — the per-participant ``seq_start``
+                rule and, for a two-participant session, that no record
+                follows a peer record which already acknowledged its bytes.
+                Ignored when ``sequenced`` is false, since the flag is what
+                makes the order a promise. On by default: the
+                :class:`~zpf.conformance.ConformanceChecker` cannot host
+                this rule (it must not raise on files it merely reads), so
+                without it a producer can assert SEQUENCED, emit a badly
+                interleaved session, and get a silently non-conformant file
+                that readers will trust and mis-order. Pass ``False`` to
+                write such a file deliberately — a test fixture, or a
+                deliberately malformed vector.
             external_session_id: An identity assigned outside this format
                 — a trace id, a capture orchestrator's UUID, a case
                 number. **Opaque bytes, not text**: nothing here
@@ -421,7 +439,12 @@ class FileWriter:
             )
         )
         self._session_ids.add(chosen)
-        return SessionWriter(self._emit, self._default_source, chosen)
+        return SessionWriter(
+            self._emit,
+            self._default_source,
+            chosen,
+            verify_order=sequenced and verify_order,
+        )
 
     def derive_from(
         self,
@@ -630,6 +653,7 @@ class SessionWriter:
         emit: Callable[[Block], None],
         default_source: Callable[[], SourceHandle],
         session_id: int,
+        verify_order: bool = False,
     ) -> None:
         self._emit = emit
         self._default_source = default_source
@@ -637,6 +661,9 @@ class SessionWriter:
         self._pids: set[int] = set()
         self._next_pid = 0
         self._ended = False
+        # Only a sequenced session has an order to keep, so only a sequenced
+        # session carries the state; None is both "off" and "nothing to do".
+        self._order = _StoredOrder() if verify_order else None
 
     def __enter__(self) -> Self:
         return self
@@ -751,22 +778,26 @@ class SessionWriter:
             )
             raise ZpfError(msg)
         resolved = source if source is not None else self._default_source()
-        self._emit(
-            Record(
-                session_id=self.session_id,
-                sender_pid=sender.pid,
-                source_id=resolved.source_id,
-                timestamp=ts,
-                payload=payload,
-                flags=flags,
-                seq_start=seq_start,
-                ack=ack,
-                ts_first=ts_first,
-                spans=spans,
-                decoder_id=None if decoder is None else decoder.decoder_id,
-                content_type=content_type,
-            )
+        block = Record(
+            session_id=self.session_id,
+            sender_pid=sender.pid,
+            source_id=resolved.source_id,
+            timestamp=ts,
+            payload=payload,
+            flags=flags,
+            seq_start=seq_start,
+            ack=ack,
+            ts_first=ts_first,
+            spans=spans,
+            decoder_id=None if decoder is None else decoder.decoder_id,
+            content_type=content_type,
         )
+        # Before the emit, so a refused record is not written and the guard's
+        # state stays consistent — the same block-isolation discipline the
+        # ConformanceChecker follows.
+        if self._order is not None:
+            self._order.observe(block)
+        self._emit(block)
 
     def name(
         self,
