@@ -812,3 +812,63 @@ def test_sequenced_stage_refuses_an_input_that_supports_no_order():
             produced_at=1,
             sequenced=True,
         )
+
+
+# --- chained stages: input shape follows the records (#56) ----------------------------
+
+
+def test_a_decoded_file_is_packet_oriented_as_the_next_stages_input(tmp_path: Path):
+    """#56: the trap that only fires once stages are chained.
+
+    Stage 1 reads a TCP capture and uses `segments()`. Stage 2 reads stage 1's
+    output and cannot: decoded records carry no `seq_start`, and `derive_from`
+    does not copy `isn`, so the stream is packet-oriented.
+    """
+    src, stage1 = tmp_path / "raw.zpf", tmp_path / "stage1.zpf"
+    src.write_bytes(raw_file())
+    run_http_decode(src, stage1_sink := io.BytesIO())
+    stage1.write_bytes(stage1_sink.getvalue())
+
+    with zpf.decode_stage(
+        stage1, tmp_path / "stage2.zpf", decoder="field", produced_by="d 1", produced_at=1
+    ) as stage:
+        for stream in stage.streams():
+            assert not stream.is_stream_oriented
+            with pytest.raises(zpf.ZpfError, match="packet-oriented"):
+                list(stream.segments())
+            # The documented idiom for this shape works.
+            assert list(stream.datagrams())
+
+
+def test_a_transport_layer_stage_output_stays_stream_oriented(tmp_path: Path):
+    """The exception that makes it "decoded file", not "stage output".
+
+    A sessionization stage emits a transport layer and carries seq_start
+    through Hints, so its output reassembles like any capture.
+    """
+    src, sess = tmp_path / "raw.zpf", tmp_path / "sessionized.zpf"
+    src.write_bytes(raw_file())
+    with zpf.decode_stage(
+        src,
+        sess,
+        decoder="sessionize",
+        produced_by="d 1",
+        produced_at=1,
+        output_layer=zpf.OutputLayer.TRANSPORT,
+    ) as stage:
+        for stream in stage.streams():
+            whole = stream.reassembled()
+            stage.record(
+                stream,
+                whole,
+                ts=1,
+                cites=(0, len(whole)),
+                hints=zpf.Hints(seq_start=1000),
+            )
+
+    with zpf.decode_stage(
+        sess, tmp_path / "next.zpf", decoder="app", produced_by="d 1", produced_at=1
+    ) as stage:
+        for stream in stage.streams():
+            assert stream.is_stream_oriented
+            assert list(stream.segments())

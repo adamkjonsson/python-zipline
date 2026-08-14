@@ -258,6 +258,18 @@ class DecodeStage:
         One :class:`DecodeStream` per participant of every input session,
         in declaration order.
 
+        **Check** :attr:`DecodeStream.is_stream_oriented` **rather than
+        assuming** :meth:`~zpf.StreamView.segments`. A stage's input shape
+        follows its input's *records*, not the transport underneath them: a
+        **decoded** file is always packet-oriented, because decoding
+        replaces ``seq``/``ack`` with positional offsets and
+        :meth:`~zpf.FileWriter.derive_from` deliberately does not copy
+        ``isn``. So a decoder that works on a transport input raises on the
+        output of the stage before it, which is where chained stages bite.
+        A stage emitting a **transport** layer is the exception — its
+        records carry :class:`Hints`, so its output is stream-oriented like
+        any capture.
+
         Returns:
             The stage's streams.
 

@@ -150,6 +150,16 @@ made that the only unit at which the questions have an answer.
 
 ### Fixed
 
+- Documentation: nothing said that a **decoded file is always
+  packet-oriented** as the next stage's input, so a decoder written against
+  the tutorial worked at stage 1 and raised at stage 2 — a failure that only
+  appears once stages are chained, and looks like a caller bug. The decoding
+  tutorial now has a chaining section, and `DecodeStage.streams()` says to
+  dispatch on `is_stream_oriented`. The behaviour is unchanged and correct; a
+  decoded record is a self-contained unit. Note the exception: a
+  sessionization stage emits a transport layer whose records carry `Hints`,
+  so *its* output stays stream-oriented.
+  ([#56](https://github.com/adamkjonsson/python-zipline/issues/56))
 - Passing an open `FileReader` where a path or stream was expected — to
   `check_coverage`, `zpf.open`, or anything else routing through the same
   plumbing — raised an internal `AttributeError` about `seekable()`, which
