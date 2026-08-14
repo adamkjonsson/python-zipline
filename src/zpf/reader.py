@@ -857,6 +857,23 @@ def _as_stream(
     """Return a seekable stream for the source, and whether we own it."""
     if isinstance(source, (str, os.PathLike)):
         return Path(source).open("rb"), True
+    if isinstance(source, FileReader):
+        # Its own commonest confusion, so it gets its own sentence: several
+        # entry points *do* take an open reader (decode_stage, rewrite_decoded),
+        # so a caller holding one naturally tries it everywhere.
+        msg = (
+            "expected a path or a seekable stream, got an open FileReader. "
+            "This function opens the file itself — pass the path or stream you "
+            "opened the reader from. (zpf.decode_stage does accept a reader; "
+            "this is not that.)"
+        )
+        raise TypeError(msg)
+    if not hasattr(source, "read") or not hasattr(source, "seekable"):
+        msg = (
+            f"expected a path or a seekable binary/text stream, got "
+            f"{type(source).__name__}, which has no read()/seekable()"
+        )
+        raise TypeError(msg)
     if not source.seekable():
         msg = (
             "zpf.open() needs a seekable source; use BlockReader/JsonlReader "

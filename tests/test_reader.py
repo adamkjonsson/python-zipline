@@ -233,6 +233,22 @@ def test_non_seekable_source_is_rejected():
         zpf.open(Pipe())
 
 
+def test_an_open_reader_is_refused_by_name():
+    """#57: the mistake is natural, so the message has to be too.
+
+    `decode_stage` and `rewrite_decoded` do take an open reader, so a caller
+    holding one tries it everywhere. Before this it reached `source.seekable()`
+    and died with an AttributeError pointing into stream plumbing.
+    """
+    with zpf.open(io.BytesIO(GOLDEN)) as reader, pytest.raises(TypeError, match="FileReader"):
+        zpf.open(reader)
+
+
+def test_a_source_that_is_neither_path_nor_stream_is_refused():
+    with pytest.raises(TypeError, match="no read\\(\\)/seekable\\(\\)"):
+        zpf.open(42)
+
+
 # --- Validation modes ---------------------------------------------------------------
 
 

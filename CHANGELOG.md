@@ -150,6 +150,14 @@ made that the only unit at which the questions have an answer.
 
 ### Fixed
 
+- Passing an open `FileReader` where a path or stream was expected — to
+  `check_coverage`, `zpf.open`, or anything else routing through the same
+  plumbing — raised an internal `AttributeError` about `seekable()`, which
+  read as "your file object is wrong" rather than "this does not take
+  readers". It now raises a `TypeError` naming `FileReader` and saying what
+  to pass instead. The mistake is natural because `decode_stage` *does*
+  accept a reader; the message says so.
+  ([#57](https://github.com/adamkjonsson/python-zipline/issues/57))
 - Producers could assert `SEQUENCED`, emit a badly interleaved session, and
   get a silently non-conformant file: the cross-participant ack rule was
   checked nowhere on the write path, and the per-participant rule the
