@@ -872,3 +872,27 @@ def test_a_transport_layer_stage_output_stays_stream_oriented(tmp_path: Path):
         for stream in stage.streams():
             assert stream.is_stream_oriented
             assert list(stream.segments())
+
+
+def test_a_stage_can_name_its_records_with_a_comment(tmp_path: Path):
+    """#55: a per-field stage's stopgap until the format has a real label."""
+    src, out = tmp_path / "in.zpf", tmp_path / "out.zpf"
+    src.write_bytes(raw_file())
+    with zpf.decode_stage(
+        src, out, decoder="field", produced_by="d 1", produced_at=1
+    ) as dec:
+        for stream in dec.streams():
+            whole = stream.reassembled()
+            dec.record(
+                stream,
+                whole[:2],
+                ts=1,
+                content_type="prim:u16",
+                cites=(0, 2),
+                comment="dns.header.id",
+            )
+            dec.record(stream, whole[2:], ts=2, cites=(2, len(whole)))
+    with zpf.open(out) as reader:
+        assert reader.diagnostics == []
+        comments = [record.comment for record in reader.session(7).records()]
+    assert comments == ["dns.header.id", None, "dns.header.id", None]

@@ -47,6 +47,15 @@ made that the only unit at which the questions have an answer.
   Display and reporting only — timestamps are not an ordering key.
   ([#53](https://github.com/adamkjonsson/python-zipline/issues/53))
 
+- `comment=` on `SessionWriter.record()` and `DecodeStage.record()`.
+  `Record.comment` already encoded and read back, so the only way to emit
+  one was `write_block` and hand-managed ids. It stays **free text**: a
+  stage emitting one record per protocol field may use it to say which
+  field a record is, but that is a stopgap for a name the format does not
+  yet have ([#58](https://github.com/adamkjonsson/python-zipline/issues/58)).
+  `extra_options` is now the only Record option without a keyword.
+  ([#55](https://github.com/adamkjonsson/python-zipline/issues/55))
+
 - `ts_first=` on `SessionWriter.record()`, so a record can say when it
   *started* as well as when it finished without dropping to
   `FileWriter.write_block` and hand-managing ids. The field and both faces

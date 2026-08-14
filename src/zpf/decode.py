@@ -284,7 +284,12 @@ class DecodeStage:
             self._streams = tuple(paired)
         return self._streams
 
-    def record(
+    def record(  # noqa: PLR0913
+        # Eleven parameters, one over the limit. Two of them (seam, hints)
+        # are already bundles, so the count is the stage's genuine surface
+        # rather than a flat spill. Restructuring both record() signatures is
+        # tracked for v0.3.0, where a break is allowed; until then this is a
+        # suppression rather than a design.
         self,
         stream: DecodeStream,
         payload: bytes = b"",
@@ -297,6 +302,7 @@ class DecodeStage:
         flags: RecordFlags | int = 0,
         seam: Seam | None = None,
         hints: Hints | None = None,
+        comment: str | None = None,
     ) -> None:
         """Write one decoded record for ``stream``.
 
@@ -341,6 +347,12 @@ class DecodeStage:
                 a sessionization stage's ``zpf``-sourced output carries them
                 exactly as a capture's reassembled stream does. A decoded
                 record has no use for them — its offsets are positional.
+            comment: Free-text note on the record. **Free text**: nothing
+                parses it and no consumer may depend on its shape. A stage
+                emitting one record per protocol field may use it to say
+                which field a record is, but that is a stopgap — the name is
+                load-bearing semantics carried in a field that promises
+                none.
 
         Raises:
             SemanticError: If the record cites no input range.
@@ -377,6 +389,7 @@ class DecodeStage:
             flags=flags,
             seq_start=None if hints is None else hints.seq_start,
             ack=None if hints is None else hints.ack,
+            comment=comment,
         )
 
     def undecoded(
