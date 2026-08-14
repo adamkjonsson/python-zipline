@@ -35,8 +35,9 @@ import hashlib
 import io
 import os
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, Any, Literal
+from typing import IO, TYPE_CHECKING, Any, Literal, overload
 
 from zpf import _frame
 from zpf.binary import BlockReader
@@ -71,6 +72,71 @@ if TYPE_CHECKING:
 _DIGEST_CHUNK = 1 << 16
 
 _MAGIC_BYTES = b"FPIZ"  # the little-endian ZIPF magic, at file offset 8
+
+
+@overload
+def as_datetime(value: int, header: FileHeader) -> datetime: ...
+
+
+@overload
+def as_datetime(value: None, header: FileHeader) -> None: ...
+
+
+def as_datetime(value: int | None, header: FileHeader) -> datetime | None:
+    """Read a tick value as a timezone-aware UTC :class:`~datetime.datetime`.
+
+    The read-side counterpart of :func:`zpf.unix_seconds`. A record's
+    :attr:`~zpf.Record.timestamp` is in ``tick_hz`` ticks counted from the
+    file's ``time_epoch``, so turning one into wall-clock time needs the
+    File Header as well as the record — which is why this takes both and is
+    not a method on :class:`~zpf.Record`.
+
+    It is keyed on the *value*, not on the record, so it reads any field in
+    those units — :attr:`~zpf.Record.ts_first` as readily as
+    ``timestamp``. Passing ``None`` returns ``None``, so an absent optional
+    needs no guard::
+
+        started = zpf.as_datetime(record.ts_first, reader.header)
+
+    **For display and reporting, not for ordering.** Stored timestamps are
+    signed and may run backwards in any session, sequenced or not; that is
+    an expected consequence of skewed capture clocks and of causal
+    sequencing, not corruption. Sorting records by this is a bug — use
+    :meth:`SessionReader.timeline` for order.
+
+    Args:
+        value: A time in ``tick_hz`` ticks from the file's origin, or
+            ``None``.
+        header: The File Header carrying ``tick_hz`` and ``time_epoch``. An
+            absent ``time_epoch`` means the default origin, 0.
+
+    Returns:
+        The instant as a timezone-aware UTC datetime, or ``None`` if
+        ``value`` was ``None``. Resolution below one microsecond is lost,
+        since that is a datetime's own limit.
+
+    Example:
+        >>> with zpf.open("capture.zpf") as reader:  # doctest: +SKIP
+        ...     for session in reader.sessions():
+        ...         for record in session.records():
+        ...             print(zpf.as_datetime(record.timestamp, reader.header))
+
+    """
+    if value is None:
+        return None
+    # Integer division first: a float would lose sub-second precision on a
+    # nanosecond tick_hz, where (epoch + value) exceeds float64's 53-bit
+    # mantissa. divmod floors, so a negative total still yields a remainder
+    # in [0, tick_hz) and the seconds part carries the sign.
+    seconds, remainder = divmod(_epoch_ticks(header) + value, header.tick_hz)
+    return datetime.fromtimestamp(seconds, tz=UTC) + timedelta(
+        microseconds=remainder * 1_000_000 / header.tick_hz
+    )
+
+
+def _epoch_ticks(header: FileHeader) -> int:
+    """Return the file's time origin in ticks; absent means the default, 0."""
+    return header.time_epoch or 0
 
 
 @dataclass
