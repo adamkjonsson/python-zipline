@@ -47,6 +47,15 @@ made that the only unit at which the questions have an answer.
   Display and reporting only — timestamps are not an ordering key.
   ([#53](https://github.com/adamkjonsson/python-zipline/issues/53))
 
+- `comment=` on `SessionWriter.record()` and `DecodeStage.record()`.
+  `Record.comment` already encoded and read back, so the only way to emit
+  one was `write_block` and hand-managed ids. It stays **free text**: a
+  stage emitting one record per protocol field may use it to say which
+  field a record is, but that is a stopgap for a name the format does not
+  yet have ([#58](https://github.com/adamkjonsson/python-zipline/issues/58)).
+  `extra_options` is now the only Record option without a keyword.
+  ([#55](https://github.com/adamkjonsson/python-zipline/issues/55))
+
 - `ts_first=` on `SessionWriter.record()`, so a record can say when it
   *started* as well as when it finished without dropping to
   `FileWriter.write_block` and hand-managing ids. The field and both faces
@@ -150,6 +159,24 @@ made that the only unit at which the questions have an answer.
 
 ### Fixed
 
+- Documentation: nothing said that a **decoded file is always
+  packet-oriented** as the next stage's input, so a decoder written against
+  the tutorial worked at stage 1 and raised at stage 2 — a failure that only
+  appears once stages are chained, and looks like a caller bug. The decoding
+  tutorial now has a chaining section, and `DecodeStage.streams()` says to
+  dispatch on `is_stream_oriented`. The behaviour is unchanged and correct; a
+  decoded record is a self-contained unit. Note the exception: a
+  sessionization stage emits a transport layer whose records carry `Hints`,
+  so *its* output stays stream-oriented.
+  ([#56](https://github.com/adamkjonsson/python-zipline/issues/56))
+- Passing an open `FileReader` where a path or stream was expected — to
+  `check_coverage`, `zpf.open`, or anything else routing through the same
+  plumbing — raised an internal `AttributeError` about `seekable()`, which
+  read as "your file object is wrong" rather than "this does not take
+  readers". It now raises a `TypeError` naming `FileReader` and saying what
+  to pass instead. The mistake is natural because `decode_stage` *does*
+  accept a reader; the message says so.
+  ([#57](https://github.com/adamkjonsson/python-zipline/issues/57))
 - Producers could assert `SEQUENCED`, emit a badly interleaved session, and
   get a silently non-conformant file: the cross-participant ack rule was
   checked nowhere on the write path, and the per-participant rule the

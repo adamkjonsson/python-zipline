@@ -712,3 +712,18 @@ def test_a_rewrite_can_record_its_own_configuration(tmp_path: Path):
                         transform_params_digest="sha256:c0ffee")
     with zpf.open(out) as reader:
         assert reader.header.transform_params_digest == "sha256:c0ffee"
+
+
+def test_check_coverage_refuses_an_open_reader(tmp_path: Path):
+    """#57: this was an AttributeError from inside reader.py's stream plumbing.
+
+    Validating a stage's output against its input is exactly the moment both
+    files are already open, so the wrong call is the natural one to make.
+    """
+    raw = tmp_path / "raw.zpf"
+    write_raw(raw)
+    with (
+        zpf.open(raw) as reader,
+        pytest.raises(TypeError, match="FileReader"),
+    ):
+        zpf.check_coverage(reader, raw)

@@ -586,3 +586,20 @@ def test_the_writer_refuses_a_break_in_a_raw_file():
             client = s.participant("a")
             s.record(client, ts=0, payload=b"x")
             s.discontinuity(client)
+
+
+def test_record_carries_a_comment_through_the_keyword_api():
+    """#55: the last Record option the ergonomic writer could not reach."""
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1) as writer:
+        writer.add_source("capture", uri="dns.pcap")
+        with writer.begin_session(proto="udp") as session:
+            client = session.participant("10.0.0.1:5353")
+            session.record(client, ts=1, payload=b"\x12\x34", comment="dns.header.id")
+            session.record(client, ts=2, payload=b"\x00\x01")
+    records = [
+        block
+        for block in zpf.BlockReader(io.BytesIO(sink.getvalue()))
+        if isinstance(block, zpf.Record)
+    ]
+    assert [record.comment for record in records] == ["dns.header.id", None]

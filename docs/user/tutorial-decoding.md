@@ -50,6 +50,12 @@ Checking `is_stream_oriented` is how a general decoder picks the right
 idiom; this HTTP decoder knows its input is TCP and goes straight to
 `segments()`.
 
+```{note}
+That shortcut is safe here and stops being safe the moment stages are
+chained — see [Feeding a stage into another
+stage](#feeding-a-stage-into-another-stage) at the end.
+```
+
 ```{literalinclude} examples/05_rest_transport_input.py
 :language: python
 ```
@@ -154,6 +160,41 @@ $ zpf validate rest_decoded.zpf --input rest_transport.zpf
 rest_decoded.zpf: OK
 ```
 
+## Feeding a stage into another stage
+
+A decode stage's output is itself valid input to another stage — `transport →
+tls-records → http` — and that is how iterative decoding is built. One thing
+changes at the seam, and it is not obvious from either file:
+
+**A decoded file is always packet-oriented.** Decoding replaces `seq`/`ack`
+with positional offsets, so decoded records carry no `seq_start`, and
+{meth}`~zpf.FileWriter.derive_from` deliberately does not copy `isn` — it
+describes the input's TCP stream, which the derived records are no longer in.
+So `is_stream_oriented` is false whatever the transport underneath, each
+decoded record arrives as a {class}`~zpf.Datagram`, and `segments()` raises:
+
+```
+ZpfError: chunks() needs a stream-oriented participant (one whose records
+carry seq_start); participant 0 is packet-oriented — iterate datagrams() instead
+```
+
+This is the honest description rather than a limitation: a decoded record *is*
+a self-contained unit, which is exactly what a datagram is.
+
+The trap is *when* it fires. A decoder written like the one above works
+perfectly at stage 1 against a transport input and raises at stage 2 against
+its own output, so the failure surfaces only once someone chains stages — and
+it looks like a bug in the decoder rather than a property of decoded files. **A
+decoder meant to run at any stage should dispatch on `is_stream_oriented`**
+rather than assume `segments()`.
+
+One exception, and it is the reason to say "decoded file" rather than "stage
+output": a [sessionization
+stage](howto/decode_stage.md#emit-the-conversation-not-two-monologues) emits a
+**transport** layer, and its records carry `seq_start` through
+{class}`~zpf.Hints`. Its output is stream-oriented like any capture. The shape
+follows the records, not the fact that a stage produced them.
+
 ## Where to go next
 
 - [Concepts](concepts.md) — the normative model: [file
@@ -161,7 +202,7 @@ rest_decoded.zpf: OK
   [spans, coverage, and
   origins](concepts.md#provenance-spans-coverage-origins), and how chaining
   (`transport → tls-records → http`) is the same file-to-file mechanism applied
-  twice.
+  twice — with one difference at the seam, below.
 - The [decode-stage how-to](howto/decode_stage.md) for the task-shaped
   recipe, and the [validate how-to](howto/validate.md) for reading coverage
   diagnostics.

@@ -836,10 +836,12 @@ class SessionWriter:
         return ParticipantHandle(session_id=self.session_id, pid=chosen)
 
     def record(  # noqa: PLR0913
-        # Eleven parameters, one over the limit, and deliberately so: these
-        # are the Record block's own options, and the format is what decides
-        # how many there are. Bundling some into a struct to get under a
-        # count would hide the block's shape rather than simplify it.
+        # Twelve parameters, two over the limit. These are the Record block's
+        # own options and the format decides how many there are, so bundling
+        # some into a struct purely to get under a count would hide the
+        # block's shape rather than simplify it. The suppression is not the
+        # long-term answer either: restructuring both record() signatures is
+        # tracked for v0.3.0, where a break is allowed.
         self,
         sender: ParticipantHandle,
         ts: int,
@@ -853,6 +855,7 @@ class SessionWriter:
         decoder: DecoderHandle | None = None,
         content_type: str | None = None,
         spans: tuple[Span, ...] = (),
+        comment: str | None = None,
     ) -> None:
         """Write one record of this session.
 
@@ -878,9 +881,15 @@ class SessionWriter:
                 records only; its presence is what makes a record decoded).
             content_type: ``mime:``/``prim:``/``dec:`` payload label.
             spans: Source ranges the bytes were built from.
+            comment: Free-text note. **Free text**: nothing parses it and no
+                consumer may depend on its shape, so it is for a human
+                reading the file, not a channel for semantics another tool
+                will read back. A producer that needs a *load-bearing* name
+                per record — a protocol field path, say — is asking for
+                something the format does not yet have.
 
-        Rare options without a keyword here (``comment``, ``extra_options``)
-        go through :meth:`FileWriter.write_block`.
+        The one Record option without a keyword here (``extra_options``)
+        goes through :meth:`FileWriter.write_block`.
 
         """
         if sender.session_id != self.session_id:
@@ -903,6 +912,7 @@ class SessionWriter:
             spans=spans,
             decoder_id=None if decoder is None else decoder.decoder_id,
             content_type=content_type,
+            comment=comment,
         )
         if self._pending is not None:
             self._pending.setdefault(sender.pid, []).append(block)
