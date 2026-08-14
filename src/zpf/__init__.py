@@ -72,7 +72,7 @@ from zpf.jsonl import (
     loads_block,
 )
 from zpf.order import causal_merge, record_end, seq_geq, seq_leq, seq_lt, verify_sequenced
-from zpf.reader import FileReader, SessionReader, detect_face, open
+from zpf.reader import FileReader, SessionReader, as_datetime, detect_face, open
 from zpf.reassembly import (
     Break,
     Datagram,
@@ -174,6 +174,7 @@ __all__ = [
     "Undecoded",
     "UnknownBlock",
     "ZpfError",
+    "as_datetime",
     "binary_to_jsonl",
     "causal_merge",
     "check_coverage",

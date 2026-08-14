@@ -154,6 +154,37 @@ Leave it off when a record came from a single packet, where it would only repeat
 and it takes no part in ordering. In particular it is not a second ordering key
 — the rule above still holds, and stored order is never a time sort.
 
+### Reading one back as a datetime
+
+A stored time is a count of `tick_hz` ticks from the file's `time_epoch`, so a
+record cannot convert itself — the units live on the File Header.
+{func}`zpf.as_datetime` takes both:
+
+```python
+with zpf.open("capture.zpf") as reader:
+    for session in reader.sessions():
+        for record in session.records():
+            print(zpf.as_datetime(record.timestamp, reader.header))
+            # -> 2026-08-13 18:36:32.538796+00:00
+```
+
+It is keyed on the *value*, not the record, so it reads `ts_first` just as
+readily — and passing `None` returns `None`, so an absent optional needs no
+guard:
+
+```python
+started = zpf.as_datetime(record.ts_first, reader.header)   # None if unset
+```
+
+The result is always timezone-aware UTC. Sub-microsecond resolution is lost,
+because that is a `datetime`'s own limit — but nothing above it is: the
+conversion is integer arithmetic, so a nanosecond `tick_hz` lands on the right
+microsecond where a single float division would not.
+
+**It is for display, not for ordering.** Everything above still applies — these
+stamps may run backwards, and sorting by them is the bug this guide exists to
+prevent. Use `timeline()` for order.
+
 ## What a hint-less sequenced session rests on
 
 A session with no `seq/ack` hints — a chat room, a one-way UDP feed — has no

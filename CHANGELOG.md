@@ -36,6 +36,17 @@ made that the only unit at which the questions have an answer.
 
 ### Added
 
+- `zpf.as_datetime(value, header)`: read a stored tick value as a
+  timezone-aware UTC `datetime` — the read-side counterpart of
+  `unix_seconds`, which only ever went the other way. A record cannot
+  convert itself, since `tick_hz` and `time_epoch` live on the File Header,
+  so this takes both. Keyed on the value rather than the record, so it reads
+  `ts_first` as readily as `timestamp`, and `None` passes through for an
+  absent optional. Integer arithmetic throughout: a nanosecond `tick_hz`
+  lands on the correct microsecond, where one float division does not.
+  Display and reporting only — timestamps are not an ordering key.
+  ([#53](https://github.com/adamkjonsson/python-zipline/issues/53))
+
 - `ts_first=` on `SessionWriter.record()`, so a record can say when it
   *started* as well as when it finished without dropping to
   `FileWriter.write_block` and hand-managing ids. The field and both faces
