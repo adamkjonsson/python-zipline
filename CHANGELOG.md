@@ -20,16 +20,14 @@ because the format itself guarantees no upgrade path across one.
 The version is declared once, in `pyproject.toml`; `zpf.__version__` reads
 it back from the installed distribution metadata.
 
-## [Unreleased] — 0.2.0, in development
+## [Unreleased]
 
-Everything below is the **0.2.0** work. It is not released: `pyproject.toml`
-declares `0.2.0.dev0`, and `0.1.0` remains the only tagged version. The
-section becomes `## [0.2.0] - <date>` when it ships.
+## [0.2.0] - 2026-08-15
 
 Implements spec **v0.16** (`SPEC_VERSION == (0, 16)`).
 
 A break in both directions. Files written by 0.1.0 are stamped for spec 0.9
-and are refused at the version gate, and files written by 0.2.0 will be
+and are refused at the version gate, and files written by 0.2.0 are
 unreadable by 0.1.0. The reading and writing APIs moved with it: what 0.1.0
 answered per *file*, 0.2.0 answers per *stream*, because the specification
 made that the only unit at which the questions have an answer.
@@ -211,5 +209,6 @@ as "1.0" and renumbered without rewriting its bytes.
 - The streaming causal merge and `SEQUENCED` verification.
 - The merge transform, the coverage validator, and the `zpf` CLI.
 
-[Unreleased]: https://github.com/adamkjonsson/python-zipline/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/python-zipline/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/adamkjonsson/python-zipline/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/adamkjonsson/python-zipline/releases/tag/v0.1.0
