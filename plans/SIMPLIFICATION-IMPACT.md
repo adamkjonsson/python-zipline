@@ -8,6 +8,20 @@
 > [`v0.3.0` plan](V0.3.0-RELEASE-PLAN.md). It decides nothing; the direction is
 > the spec's to choose. Line counts throughout are estimates from reading the
 > code, not measurements.
+>
+> **Answered 2026-09-05, and this document is now historical.** `0.19` took
+> exactly the three packages it supports — 3.1, 3.2 and 3.3 — and declined 3.4
+> and 3.5. The spec repository replied to it in two messages, filed here as
+> [#64](https://github.com/adamkjonsson/python-zipline/issues/64) and
+> [#65](https://github.com/adamkjonsson/python-zipline/issues/65), which name
+> four things this assessment got wrong or missed: three vectors carrying
+> `origin` that §2's 3.1 entry does not list, the merge coverage obligation
+> being unconditional rather than conditional on 3.4, the `0.18` re-issue's
+> findability goal settling 3.4 in the middle path's favour, and transforming
+> decoders being a gap we could not price. The consequences are worked through
+> in the [`v0.3.0` plan](V0.3.0-RELEASE-PLAN.md), which is the live document;
+> §4 of this one, on what the packages would do to that plan, is superseded by
+> it.
 
 The library is at `0.2.0`, a complete implementation of spec `0.16`. The
 `v0.3.0` plan is written against `0.17`. The spec repository is at `0.18`, cut
