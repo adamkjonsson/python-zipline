@@ -597,7 +597,12 @@ def test_writers_still_refuse_an_advisory_violation():
         session = writer.begin_session(session_id=5)
         sender = session.participant("a")
         with pytest.raises(zpf.AdvisoryError, match="not a legal prim: token"):
-            session.record(sender, ts=0, payload=b"abcd", content_type="prim:u128")
+            session.record(
+                sender,
+                ts=0,
+                payload=b"abcd",
+                decoded=zpf.Decoded(content_type="prim:u128"),
+            )
 
 
 # --- Blocks a raw file may not carry (0.13/0.14) ------------------------------

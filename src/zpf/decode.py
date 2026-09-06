@@ -40,11 +40,11 @@ from zpf.blocks import InputExtent, OutputLayer, Span
 from zpf.errors import SemanticError, ZpfError
 from zpf.reader import FileReader
 from zpf.reassembly import Gap
-from zpf.writer import InputRef, create
+from zpf.writer import Decoded, Hints, InputRef, create
 
 if TYPE_CHECKING:
     import os
-    from collections.abc import Iterable, Iterator, Sequence
+    from collections.abc import Iterable, Iterator
     from datetime import datetime
     from types import TracebackType
     from typing import Self
@@ -63,26 +63,6 @@ if TYPE_CHECKING:
     _Cites = Span | tuple[int, int] | Iterable[Span | tuple[int, int]] | None
 
 _PAIR = 2
-
-
-@dataclass(frozen=True)
-class Hints:
-    """TCP ordering hints for a record at the **transport** layer.
-
-    Passed to :meth:`DecodeStage.record` as ``hints=``. A transport stream's
-    requirements bind on the layer, not on where its bytes came from, so a
-    sessionization stage carries these exactly as a capture's reassembled
-    stream does — which is the point of its output being a transport layer
-    at all.
-
-    Attributes:
-        seq_start: Absolute sequence number of the run's first byte.
-        ack: Cumulative acknowledgement in force, where known.
-
-    """
-
-    seq_start: int | None = None
-    ack: int | None = None
 
 
 @dataclass(frozen=True)
@@ -267,7 +247,7 @@ class DecodeStage:
         ``isn``. So a decoder that works on a transport input raises on the
         output of the stage before it, which is where chained stages bite.
         A stage emitting a **transport** layer is the exception — its
-        records carry :class:`Hints`, so its output is stream-oriented like
+        records carry :class:`~zpf.Hints`, so its output is stream-oriented like
         any capture.
 
         Returns:
@@ -284,12 +264,7 @@ class DecodeStage:
             self._streams = tuple(paired)
         return self._streams
 
-    def record(  # noqa: PLR0913
-        # Eleven parameters, one over the limit. Two of them (seam, hints)
-        # are already bundles, so the count is the stage's genuine surface
-        # rather than a flat spill. Restructuring both record() signatures is
-        # tracked for v0.3.0, where a break is allowed; until then this is a
-        # suppression rather than a design.
+    def record(
         self,
         stream: DecodeStream,
         payload: bytes = b"",
@@ -297,7 +272,6 @@ class DecodeStage:
         ts: int | None = None,
         content_type: str | None = None,
         cites: _Cites = None,
-        spans: Sequence[Span] = (),
         decoder: DecoderHandle | None = None,
         flags: RecordFlags | int = 0,
         seam: Seam | None = None,
@@ -340,10 +314,18 @@ class DecodeStage:
                 Pass it explicitly for a record citing no single range of one
                 input stream, where there is nothing to derive from.
             content_type: ``dec:``/``mime:``/``prim:`` payload label.
-            cites: The input range this record was built from: an
+            cites: The input ranges this record was built from — an
                 ``(off_start, off_end)`` pair, a ready
-                :class:`~zpf.blocks.Span`, or a sequence of either.
-            spans: Extra spans to append, already built.
+                :class:`~zpf.blocks.Span`, or a sequence of either, mixed
+                freely.
+
+                ``cites=`` and ``spans=`` used to be separate keywords for one
+                parameter, the first a shorthand that filled the ids in. They
+                are one now: a sequence may hold pairs and ready spans
+                together, so nothing is lost and there is one place to look.
+                It stays a flat keyword rather than joining a bundle — it is
+                the hot argument of the hot path, and burying it would trade a
+                lint count for real ergonomics.
             decoder: Override the stage's decoder for this record.
             flags: Record flags.
             seam: The break between this record and the previous one of the
@@ -365,7 +347,7 @@ class DecodeStage:
             SemanticError: If the record cites no input range.
 
         """
-        all_spans = tuple(spans) + _as_spans(stream, cites)
+        all_spans = _as_spans(stream, cites)
         if not all_spans:
             # A decode stage's records are *created*, and spans are what say
             # which input range each one corresponds to. Emitting one
@@ -392,12 +374,13 @@ class DecodeStage:
             stream.handle,
             ts=ts,
             payload=payload,
-            decoder=decoder if decoder is not None else self._decoder,
-            content_type=content_type,
-            spans=all_spans,
             flags=flags,
-            seq_start=None if hints is None else hints.seq_start,
-            ack=None if hints is None else hints.ack,
+            hints=hints,
+            decoded=Decoded(
+                decoder=decoder if decoder is not None else self._decoder,
+                content_type=content_type,
+                spans=all_spans,
+            ),
             comment=comment,
         )
 
@@ -627,9 +610,20 @@ class DecodeStage:
 
 
 def decode_stage(  # noqa: PLR0913
-    # The stage's own knobs, one over the limit. Same reasoning as
-    # SessionWriter.record(): bundling some into a struct to satisfy a count
-    # would obscure what a stage is configured by, not clarify it.
+    # Eleven parameters, one over the limit, and the only suppression left in
+    # src/zpf/ after #59. It is a **builder**, which is the difference: called
+    # once per stage with every argument named, configuring a pipeline rather
+    # than filling in a block's fields. The two `record()` signatures were the
+    # issue's real subject, and both now pass the limit on their own — grouped
+    # by the format's transport/decoded line rather than by arithmetic.
+    #
+    # The one bundle available here is `produced_by` + `produced_at`, which the
+    # format does name as a pair: a derived file MUST carry both. But they are
+    # spelled flat on `create()`, `merge_files` and `rewrite_decoded`, so
+    # bundling them *here alone* would make one of four call sites different to
+    # satisfy a count, and bundling them everywhere is a wider break than #59
+    # asked for. A consistent flat spelling is worth more than the suppression
+    # costs.
     source: str | os.PathLike[str] | IO[bytes] | IO[str] | FileReader,
     sink: str | os.PathLike[str] | IO[bytes] | IO[str],
     *,

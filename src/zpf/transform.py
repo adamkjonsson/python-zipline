@@ -43,6 +43,7 @@ from zpf.order import causal_merge
 from zpf.reader import FileReader, SessionReader
 from zpf.reassembly import layer_name, stream_extent
 from zpf.writer import (
+    Decoded,
     DecoderHandle,
     DerivedInput,
     FileWriter,
@@ -1008,15 +1009,17 @@ def _rewrite_stream(
             payload=record.payload,
             source=derived.source,
             flags=record.flags,
-            decoder=None if record.decoder_id is None else decoders[record.decoder_id],
-            content_type=record.content_type,
-            spans=(
-                Span(
-                    source_id=derived.source.source_id,
-                    session_id=session.session_id,
-                    participant_id=pid,
-                    off_start=off_start,
-                    off_end=off_end,
+            decoded=Decoded(
+                decoder=None if record.decoder_id is None else decoders[record.decoder_id],
+                content_type=record.content_type,
+                spans=(
+                    Span(
+                        source_id=derived.source.source_id,
+                        session_id=session.session_id,
+                        participant_id=pid,
+                        off_start=off_start,
+                        off_end=off_end,
+                    ),
                 ),
             ),
         )

@@ -68,9 +68,9 @@ with zpf.open("merged.zpf") as reader:
 
 ```python
 with w.begin_session(proto="tcp", sequenced=True) as session:
-    session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
-    session.record(bob, ts=2, payload=b"ok", seq_start=5000, ack=1020)
-    session.record(alice, ts=3, payload=b"a" * 10, seq_start=1010)
+    session.record(alice, ts=1, payload=b"a" * 10, hints=zpf.Hints(seq_start=1000))
+    session.record(bob, ts=2, payload=b"ok", hints=zpf.Hints(seq_start=5000, ack=1020))
+    session.record(alice, ts=3, payload=b"a" * 10, hints=zpf.Hints(seq_start=1010))
     # SemanticError: ... already acknowledged its bytes
 ```
 
@@ -94,9 +94,10 @@ records, runs {func}`~zpf.causal_merge` when it ends, and writes the result:
 ```python
 with w.begin_session(proto="tcp", sequenced=True, linearize=True) as session:
     for payload, seq in alice_stream:          # one direction, in its order
-        session.record(alice, ts=..., payload=payload, seq_start=seq)
+        session.record(alice, ts=..., payload=payload, hints=zpf.Hints(seq_start=seq))
     for payload, seq, ack in bob_stream:       # then the other
-        session.record(bob, ts=..., payload=payload, seq_start=seq, ack=ack)
+        session.record(bob, ts=..., payload=payload,
+                       hints=zpf.Hints(seq_start=seq, ack=ack))
 # records are written here, interleaved by their causal edges
 ```
 

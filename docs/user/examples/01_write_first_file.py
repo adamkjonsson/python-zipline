@@ -19,15 +19,19 @@ with zpf.create("session.zpf", tick_hz=1_000_000) as writer:
         # The client's SYN carried isn=1000, so its first application byte is
         # seq_start=1001; "GET / HTTP/1.1\r\n\r\n" is 18 bytes, so it runs up
         # to (but not including) byte 1019.
-        session.record(client, ts=1000, payload=b"GET / HTTP/1.1\r\n\r\n", seq_start=1001, ack=5001)
+        session.record(
+            client,
+            ts=1000,
+            payload=b"GET / HTTP/1.1\r\n\r\n",
+            hints=zpf.Hints(seq_start=1001, ack=5001),
+        )
         # The server's response acknowledges the whole request (ack=1019)
         # and starts its own stream at seq_start=5001 (isn=5000 + 1).
         session.record(
             server,
             ts=1005,
             payload=b"HTTP/1.1 200 OK\r\n\r\nhi",
-            seq_start=5001,
-            ack=1019,
+            hints=zpf.Hints(seq_start=5001, ack=1019),
         )
         # session.end() is implicit here (clean exit of the `with` block);
         # writer's End block follows the same way when `writer`'s block exits.

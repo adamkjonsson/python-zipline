@@ -13,7 +13,7 @@ Example:
     ...     with w.begin_session(proto="tcp", key="a <-> b") as s:
     ...         alice = s.participant("10.0.0.1:51000", isn=1000)
     ...         s.record(alice, ts=1000, payload=b"GET / HTTP/1.1\r\n\r\n",
-    ...                  seq_start=1001, ack=5001)
+    ...                  hints=zpf.Hints(seq_start=1001, ack=5001))
     ...         s.end(reason="fin")
     ... # End block written on clean exit; skipped if the body raised
 
@@ -159,6 +159,74 @@ class ParticipantHandle:
 
     session_id: int
     pid: int
+
+
+@dataclass(frozen=True)
+class Hints:
+    """TCP ordering hints for a record at the **transport** layer.
+
+    The two options the format's *Per Record (TCP)* table names, and the pair
+    a causal order is derived from: `seq_start` says where the bytes sit,
+    `ack` says what the sender had already seen. They travel together because
+    the rules that use them do.
+
+    A transport stream's requirements bind on the **layer**, not on where its
+    bytes came from, so a sessionization stage carries these exactly as a
+    capture's reassembled stream does — which is the point of its output being
+    a transport layer at all. A decoded record has no use for them: its offsets
+    are positional.
+
+    Passed as ``hints=`` to :meth:`SessionWriter.record` and to
+    :meth:`zpf.DecodeStage.record`, which is the inconsistency `0.3.0` closed —
+    the two writers used to spell one concept two ways.
+
+    Attributes:
+        seq_start: Absolute sequence number of the run's first byte.
+        ack: Cumulative acknowledgement in force, where known.
+
+    """
+
+    seq_start: int | None = None
+    ack: int | None = None
+
+
+@dataclass(frozen=True)
+class Decoded:
+    """What a record says about itself at the **decoded** layer.
+
+    Not a bag of leftovers: these are exactly the options the layer rule
+    governs. ``content_type`` MUST NOT appear at the transport layer, ``spans``
+    are the derived-file surface, and ``decoder`` is what resolves the layer in
+    the first place. The specification states two of them as one object —
+    ``provenance = { decoder, spans }`` — and the third is barred from the
+    other side of the same line.
+
+    So the grouping is the transport/decoded split the format is built on, and
+    a record either speaks to that layer or does not::
+
+        session.record(alice, ts=1000, payload=b"GET /",
+                       hints=zpf.Hints(seq_start=1001, ack=5001),
+                       decoded=zpf.Decoded(decoder=http,
+                                           content_type="mime:text/plain"))
+
+    It also leaves headroom: the next decoded-layer option the format adds
+    joins here rather than widening the signature, which is the policy
+    ``docs/dev/`` records.
+
+    Attributes:
+        decoder: The declared :class:`DecoderHandle` whose layer this record
+            belongs to. Absent means the transport layer, by the format's
+            layer rule.
+        content_type: ``mime:``/``prim:``/``dec:`` label for the payload.
+        spans: The input ranges these bytes correspond to. Every
+            ``zpf``-sourced record carries them, whether its stage created the
+            layer or preserved it.
+
+    """
+
+    decoder: DecoderHandle | None = None
+    content_type: str | None = None
+    spans: tuple[Span, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -762,29 +830,28 @@ class SessionWriter:
             self._isn[chosen] = isn
         return ParticipantHandle(session_id=self.session_id, pid=chosen)
 
-    def record(  # noqa: PLR0913
-        # Twelve parameters, two over the limit. These are the Record block's
-        # own options and the format decides how many there are, so bundling
-        # some into a struct purely to get under a count would hide the
-        # block's shape rather than simplify it. The suppression is not the
-        # long-term answer either: restructuring both record() signatures is
-        # tracked for v0.3.0, where a break is allowed.
+    def record(
         self,
         sender: ParticipantHandle,
         ts: int,
         payload: bytes = b"",
         *,
         source: SourceHandle | None = None,
-        seq_start: int | None = None,
-        ack: int | None = None,
+        hints: Hints | None = None,
+        decoded: Decoded | None = None,
         ts_first: int | None = None,
         flags: RecordFlags | int = 0,
-        decoder: DecoderHandle | None = None,
-        content_type: str | None = None,
-        spans: tuple[Span, ...] = (),
         comment: str | None = None,
     ) -> None:
         """Write one record of this session.
+
+        **The signature is grouped by the format's own lines**, which is what
+        `#59 <https://github.com/adamkjonsson/python-zipline/issues/59>`_ asked
+        for. Twelve flat keywords became nine, and not by inventing bags: the
+        two bundles are the transport and decoded layers, which the format
+        already separates and states rules across. What stays flat is what
+        belongs to no layer — who sent it, when, the bytes, the source, the
+        flags, the note.
 
         Args:
             sender: The participant that sent these bytes.
@@ -793,8 +860,11 @@ class SessionWriter:
             payload: The payload bytes (empty for a pure-ACK record).
             source: Which declared Source the bytes came from; may be
                 omitted when the file declares exactly one.
-            seq_start: Absolute TCP sequence number of the first byte.
-            ack: The acknowledgement number from the wire.
+            hints: TCP ordering hints — see :class:`Hints`. Transport layer
+                only; a decoded record's offsets are positional.
+            decoded: What this record says about itself at the decoded layer —
+                see :class:`Decoded`: its decoder, its ``content_type``, and
+                the input ranges its bytes correspond to.
             ts_first: Time of the **first** packet contributing bytes to
                 this record, where ``ts`` is the last. Optional, and only
                 meaningful for a record coalesced from several packets.
@@ -804,10 +874,6 @@ class SessionWriter:
                 a ``zpf-input`` Source, so for a capture converter this is
                 the only place that time can be recorded.
             flags: Record flags.
-            decoder: The decoder that produced this record (decoded
-                records only; its presence is what makes a record decoded).
-            content_type: ``mime:``/``prim:``/``dec:`` payload label.
-            spans: Source ranges the bytes were built from.
             comment: Free-text note. **Free text**: nothing parses it and no
                 consumer may depend on its shape, so it is for a human
                 reading the file, not a channel for semantics another tool
@@ -815,8 +881,12 @@ class SessionWriter:
                 per record — a protocol field path, say — is asking for
                 something the format does not yet have.
 
-        The one Record option without a keyword here (``extra_options``)
-        goes through :meth:`FileWriter.write_block`.
+        ``extra_options`` is the one Record option without a keyword here, and
+        the only hatch by design: it is for ids this library does not know, not
+        a way around one it does. It goes through
+        :meth:`FileWriter.write_block`. Where a *new* option belongs — a
+        keyword, :class:`Hints`, or :class:`Decoded` — is settled in
+        ``docs/dev/option-exposure.md``.
 
         """
         if sender.session_id != self.session_id:
@@ -826,6 +896,8 @@ class SessionWriter:
             )
             raise ZpfError(msg)
         resolved = source if source is not None else self._default_source()
+        wire = hints if hints is not None else Hints()
+        layer = decoded if decoded is not None else Decoded()
         block = Record(
             session_id=self.session_id,
             sender_pid=sender.pid,
@@ -833,12 +905,12 @@ class SessionWriter:
             timestamp=ts,
             payload=payload,
             flags=flags,
-            seq_start=seq_start,
-            ack=ack,
+            seq_start=wire.seq_start,
+            ack=wire.ack,
             ts_first=ts_first,
-            spans=spans,
-            decoder_id=None if decoder is None else decoder.decoder_id,
-            content_type=content_type,
+            spans=tuple(layer.spans),
+            decoder_id=None if layer.decoder is None else layer.decoder.decoder_id,
+            content_type=layer.content_type,
             comment=comment,
         )
         if self._pending is not None:

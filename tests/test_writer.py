@@ -24,8 +24,7 @@ def test_handle_api_reproduces_the_golden_file():
         ts=1000,
         payload=b"GET / HTTP/1.1\r\n\r\n",
         flags=zpf.RecordFlags.PSH,
-        seq_start=1001,
-        ack=5001,
+        hints=zpf.Hints(seq_start=1001, ack=5001),
     )
     writer.close(end=False)  # the spec's worked example has no End block
     assert sink.getvalue() == GOLDEN
@@ -47,17 +46,27 @@ def test_handle_api_reproduces_the_decoded_example():
         client,
         ts=1000,
         payload=b"request",
-        decoder=http,
-        content_type="dec:request",
-        spans=(zpf.Span(source_id=1, session_id=7, participant_id=0, off_start=0, off_end=18),),
+        decoded=zpf.Decoded(
+            decoder=http,
+            content_type="dec:request",
+            spans=(zpf.Span(source_id=1, session_id=7, participant_id=0, off_start=0, off_end=18),),
+        ),
     )
     session.record(
         server,
         ts=995,
         payload=b"response",
-        decoder=http,
-        content_type="dec:response",
-        spans=(zpf.Span(source_id=1, session_id=7, participant_id=1, off_start=0, off_end=100),),
+        decoded=zpf.Decoded(
+            decoder=http,
+            content_type="dec:response",
+            spans=(zpf.Span(
+                source_id=1,
+                session_id=7,
+                participant_id=1,
+                off_start=0,
+                off_end=100,
+            ),),
+        ),
     )
     writer.undecoded(raw, 7, 1, 100, 139, reason="undecodable", decoder=http)
     writer.close(end=False)
@@ -82,16 +91,24 @@ def test_handle_api_reproduces_the_merged_example():
     # pass-through states its provenance, and it is what the checker requires
     # of every zpf-sourced record.
     session.record(
-        client, ts=1000, payload=b"GET / HTTP/1.1\r\n\r\n",
-        source=side_a, seq_start=1001, ack=5001,
-        spans=(zpf.Span(source_id=1, session_id=7, participant_id=0,
-                        off_start=0, off_end=18),),
+        client,
+        ts=1000,
+        payload=b"GET / HTTP/1.1\r\n\r\n",
+        source=side_a,
+        hints=zpf.Hints(seq_start=1001, ack=5001),
+        decoded=zpf.Decoded(
+            spans=(zpf.Span(source_id=1, session_id=7, participant_id=0, off_start=0, off_end=18),),
+        ),
     )
     session.record(
-        server, ts=995, payload=b"HTTP/1.1 200 OK\r\n...", source=side_b,
-        seq_start=5001, ack=1019,
-        spans=(zpf.Span(source_id=2, session_id=3, participant_id=0,
-                        off_start=0, off_end=20),),
+        server,
+        ts=995,
+        payload=b"HTTP/1.1 200 OK\r\n...",
+        source=side_b,
+        hints=zpf.Hints(seq_start=5001, ack=1019),
+        decoded=zpf.Decoded(
+            spans=(zpf.Span(source_id=2, session_id=3, participant_id=0, off_start=0, off_end=20),),
+        ),
     )
     writer.close(end=False)
     written = [block_to_obj(b) for b in zpf.BlockReader(io.BytesIO(sink.getvalue()))]
@@ -184,10 +201,10 @@ def test_out_of_order_seq_start_is_refused():
         writer.add_source("capture")
         session = writer.begin_session(proto="tcp")
         sender = session.participant("alice", isn=0xFFFF_FFE0)
-        session.record(sender, ts=0, payload=b"aa", seq_start=0xFFFF_FFF0)
-        session.record(sender, ts=1, payload=b"bb", seq_start=0x10)  # wrap-legal
+        session.record(sender, ts=0, payload=b"aa", hints=zpf.Hints(seq_start=0xFFFF_FFF0))
+        session.record(sender, ts=1, payload=b"bb", hints=zpf.Hints(seq_start=0x10))  # wrap-legal
         with pytest.raises(zpf.SemanticError, match="seq_start order"):
-            session.record(sender, ts=2, payload=b"cc", seq_start=0xFFFF_FFF0)
+            session.record(sender, ts=2, payload=b"cc", hints=zpf.Hints(seq_start=0xFFFF_FFF0))
 
 
 def test_jsonl_face_matches_the_binary_conversion():
@@ -226,10 +243,10 @@ def test_record_carries_ts_first_through_the_keyword_api():
                 alice,
                 ts=5_000_000,
                 payload=b"x" * 40,
-                seq_start=1001,
                 ts_first=3_000_000,
+                hints=zpf.Hints(seq_start=1001),
             )
-            session.record(alice, ts=6_000_000, payload=b"y", seq_start=1041)
+            session.record(alice, ts=6_000_000, payload=b"y", hints=zpf.Hints(seq_start=1041))
             session.end(reason="fin")
     records = [
         block
@@ -257,14 +274,13 @@ def test_ts_first_is_the_only_start_time_a_capture_file_can_carry():
                     alice,
                     ts=5,
                     payload=b"x",
-                    seq_start=1,
-                    spans=(
-                        zpf.Span(
-                            source_id=source.source_id,
-                            session_id=0,
-                            participant_id=0,
-                            off_start=0,
-                            off_end=1,
+                    hints=zpf.Hints(seq_start=1),
+                    decoded=zpf.Decoded(
+                        spans=(
+                            zpf.Span(
+                                source_id=source.source_id, session_id=0,
+                                participant_id=0, off_start=0, off_end=1,
+                            ),
                         ),
                     ),
                 )
@@ -275,7 +291,7 @@ def test_jsonl_face_matches_the_binary_conversion_for_ts_first():
         writer.add_source("capture", uri="sideA.pcap")
         with writer.begin_session(proto="tcp") as session:
             alice = session.participant("alice", isn=0)
-            session.record(alice, ts=9, payload=b"hello", seq_start=1, ts_first=4)
+            session.record(alice, ts=9, payload=b"hello", ts_first=4, hints=zpf.Hints(seq_start=1))
             session.end(reason="fin")
 
     binary = io.BytesIO()
@@ -312,10 +328,10 @@ def test_sequenced_writer_refuses_an_order_that_is_not_causal():
     """
     with zpf.create(io.BytesIO(), tick_hz=1) as writer:
         session, alice, bob = _sequenced_session(writer)
-        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
-        session.record(bob, ts=2, payload=b"ok", seq_start=5000, ack=1020)
+        session.record(alice, ts=1, payload=b"a" * 10, hints=zpf.Hints(seq_start=1000))
+        session.record(bob, ts=2, payload=b"ok", hints=zpf.Hints(seq_start=5000, ack=1020))
         with pytest.raises(zpf.SemanticError, match="already acknowledged"):
-            session.record(alice, ts=3, payload=b"a" * 10, seq_start=1010)
+            session.record(alice, ts=3, payload=b"a" * 10, hints=zpf.Hints(seq_start=1010))
 
 
 def test_sequenced_writer_accepts_the_same_records_in_causal_order():
@@ -323,9 +339,9 @@ def test_sequenced_writer_accepts_the_same_records_in_causal_order():
     sink = io.BytesIO()
     with zpf.create(sink, tick_hz=1) as writer:
         session, alice, bob = _sequenced_session(writer)
-        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
-        session.record(alice, ts=3, payload=b"a" * 10, seq_start=1010)
-        session.record(bob, ts=2, payload=b"ok", seq_start=5000, ack=1020)
+        session.record(alice, ts=1, payload=b"a" * 10, hints=zpf.Hints(seq_start=1000))
+        session.record(alice, ts=3, payload=b"a" * 10, hints=zpf.Hints(seq_start=1010))
+        session.record(bob, ts=2, payload=b"ok", hints=zpf.Hints(seq_start=5000, ack=1020))
         session.end(reason="fin")
     records = [
         block
@@ -345,9 +361,9 @@ def test_the_guard_is_what_the_reader_would_have_caught_later():
     sink = io.BytesIO()
     with zpf.create(sink, tick_hz=1) as writer:
         session, alice, bob = _sequenced_session(writer, verify_order=False)
-        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
-        session.record(bob, ts=2, payload=b"ok", seq_start=5000, ack=1020)
-        session.record(alice, ts=3, payload=b"a" * 10, seq_start=1010)
+        session.record(alice, ts=1, payload=b"a" * 10, hints=zpf.Hints(seq_start=1000))
+        session.record(bob, ts=2, payload=b"ok", hints=zpf.Hints(seq_start=5000, ack=1020))
+        session.record(alice, ts=3, payload=b"a" * 10, hints=zpf.Hints(seq_start=1010))
         session.end(reason="fin")
     records = [
         block
@@ -365,9 +381,9 @@ def test_an_unsequenced_session_is_not_guarded():
         session = writer.begin_session(proto="tcp")
         alice = session.participant("10.0.0.1:51000", isn=999)  # origin 1000
         bob = session.participant("10.0.0.2:80", isn=4999)  # origin 5000, likewise
-        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
-        session.record(bob, ts=2, payload=b"ok", seq_start=5000, ack=1020)
-        session.record(alice, ts=3, payload=b"a" * 10, seq_start=1010)
+        session.record(alice, ts=1, payload=b"a" * 10, hints=zpf.Hints(seq_start=1000))
+        session.record(bob, ts=2, payload=b"ok", hints=zpf.Hints(seq_start=5000, ack=1020))
+        session.record(alice, ts=3, payload=b"a" * 10, hints=zpf.Hints(seq_start=1010))
 
 
 def test_the_guard_drops_ack_checks_beyond_two_participants():
@@ -375,11 +391,11 @@ def test_the_guard_drops_ack_checks_beyond_two_participants():
     with zpf.create(io.BytesIO(), tick_hz=1) as writer:
         session, alice, bob = _sequenced_session(writer)
         carol = session.participant("10.0.0.3:80", isn=8999)  # origin 9000
-        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
-        session.record(bob, ts=2, payload=b"ok", seq_start=5000, ack=1020)
-        session.record(carol, ts=3, payload=b"hi", seq_start=9000)
+        session.record(alice, ts=1, payload=b"a" * 10, hints=zpf.Hints(seq_start=1000))
+        session.record(bob, ts=2, payload=b"ok", hints=zpf.Hints(seq_start=5000, ack=1020))
+        session.record(carol, ts=3, payload=b"hi", hints=zpf.Hints(seq_start=9000))
         # Would raise in a two-participant session; here there is no rule.
-        session.record(alice, ts=4, payload=b"a" * 10, seq_start=1010)
+        session.record(alice, ts=4, payload=b"a" * 10, hints=zpf.Hints(seq_start=1010))
 
 
 def test_linearize_interleaves_two_directions_written_separately():
@@ -393,9 +409,9 @@ def test_linearize_interleaves_two_directions_written_separately():
     with zpf.create(sink, tick_hz=1) as writer:
         session, alice, bob = _sequenced_session(writer, linearize=True)
         # All of Alice, then all of Bob: stored order here is not causal.
-        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
-        session.record(alice, ts=3, payload=b"a" * 10, seq_start=1010)
-        session.record(bob, ts=2, payload=b"ok", seq_start=5000, ack=1010)
+        session.record(alice, ts=1, payload=b"a" * 10, hints=zpf.Hints(seq_start=1000))
+        session.record(alice, ts=3, payload=b"a" * 10, hints=zpf.Hints(seq_start=1010))
+        session.record(bob, ts=2, payload=b"ok", hints=zpf.Hints(seq_start=5000, ack=1010))
         session.end(reason="fin")
     records = [
         block
@@ -416,7 +432,7 @@ def test_linearize_writes_nothing_until_the_session_ends():
     sink = io.BytesIO()
     with zpf.create(sink, tick_hz=1) as writer:
         session, alice, _bob = _sequenced_session(writer, linearize=True)
-        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
+        session.record(alice, ts=1, payload=b"a" * 10, hints=zpf.Hints(seq_start=1000))
         assert not [
             block
             for block in zpf.BlockReader(io.BytesIO(sink.getvalue()), strict=False)
@@ -435,8 +451,8 @@ def test_linearize_flushes_when_the_producer_forgets_to_end():
     sink = io.BytesIO()
     with zpf.create(sink, tick_hz=1) as writer:
         session, alice, bob = _sequenced_session(writer, linearize=True)
-        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
-        session.record(bob, ts=2, payload=b"ok", seq_start=5000, ack=1010)
+        session.record(alice, ts=1, payload=b"a" * 10, hints=zpf.Hints(seq_start=1000))
+        session.record(bob, ts=2, payload=b"ok", hints=zpf.Hints(seq_start=5000, ack=1010))
         # No session.end(), no context manager: close() has to drain it.
     records = [
         block
@@ -450,7 +466,7 @@ def test_linearize_refuses_a_positional_block():
     """A Discontinuity is placed by the records around it; reordering breaks that."""
     with zpf.create(io.BytesIO(), tick_hz=1) as writer:
         session, alice, _bob = _sequenced_session(writer, linearize=True)
-        session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
+        session.record(alice, ts=1, payload=b"a" * 10, hints=zpf.Hints(seq_start=1000))
         with pytest.raises(zpf.ZpfError, match="positional"):
             session.discontinuity(alice, reason="records-dropped")
 
@@ -460,8 +476,8 @@ def test_linearize_propagates_a_stalled_merge():
     with zpf.create(io.BytesIO(), tick_hz=1) as writer:
         session, alice, bob = _sequenced_session(writer, linearize=True)
         # Each acknowledges bytes the other never sent.
-        session.record(alice, ts=1, payload=b"a", seq_start=1000, ack=6000)
-        session.record(bob, ts=2, payload=b"b", seq_start=5000, ack=2000)
+        session.record(alice, ts=1, payload=b"a", hints=zpf.Hints(seq_start=1000, ack=6000))
+        session.record(bob, ts=2, payload=b"b", hints=zpf.Hints(seq_start=5000, ack=2000))
         with pytest.raises(zpf.SemanticError, match="stalled"):
             session.end(reason="fin")
 
@@ -521,15 +537,37 @@ def decoded_stage_bytes(**session_kwargs: object) -> bytes:
         with w.begin_session(session_id=7, external_session_id=b"case-1") as s:
             client = s.participant("a")
             s.record(
-                client, ts=0, payload=b"A" * 50, source=source, decoder=decoder,
-                spans=(zpf.Span(source_id=source.source_id, session_id=7,
-                                participant_id=0, off_start=0, off_end=100),),
+                client,
+                ts=0,
+                payload=b"A" * 50,
+                source=source,
+                decoded=zpf.Decoded(
+                    decoder=decoder,
+                    spans=(zpf.Span(
+                        source_id=source.source_id,
+                        session_id=7,
+                        participant_id=0,
+                        off_start=0,
+                        off_end=100,
+                    ),),
+                ),
             )
             s.discontinuity(client, reason="tls-record-lost")
             s.record(
-                client, ts=1, payload=b"B" * 30, source=source, decoder=decoder,
-                spans=(zpf.Span(source_id=source.source_id, session_id=7,
-                                participant_id=0, off_start=139, off_end=200),),
+                client,
+                ts=1,
+                payload=b"B" * 30,
+                source=source,
+                decoded=zpf.Decoded(
+                    decoder=decoder,
+                    spans=(zpf.Span(
+                        source_id=source.source_id,
+                        session_id=7,
+                        participant_id=0,
+                        off_start=139,
+                        off_end=200,
+                    ),),
+                ),
             )
             w.undecoded(source, 7, 0, 100, 139, reason="gap")
             s.end(input_extents=[
@@ -568,9 +606,22 @@ def test_discontinuity_accepts_a_raw_participant_id():
         decoder = w.add_decoder("tls")
         with w.begin_session(session_id=7) as s:
             client = s.participant("a")
-            s.record(client, ts=0, payload=b"x", source=source, decoder=decoder,
-                     spans=(zpf.Span(source_id=source.source_id, session_id=7,
-                                     participant_id=0, off_start=0, off_end=1),))
+            s.record(
+                client,
+                ts=0,
+                payload=b"x",
+                source=source,
+                decoded=zpf.Decoded(
+                    decoder=decoder,
+                    spans=(zpf.Span(
+                        source_id=source.source_id,
+                        session_id=7,
+                        participant_id=0,
+                        off_start=0,
+                        off_end=1,
+                    ),),
+                ),
+            )
             s.discontinuity(0, width=8)  # the pid rather than the handle
     with zpf.open(io.BytesIO(sink.getvalue())) as f:
         (block,) = [b for b in f.blocks() if isinstance(b, zpf.Discontinuity)]
@@ -609,13 +660,16 @@ def test_record_carries_a_comment_through_the_keyword_api():
 # --- Placement guards on the write side (#63) -----------------------------------------
 
 
-def one_record(**kwargs: object) -> None:
+def one_record(seq_start: int, payload: bytes = b"", **kwargs: object) -> None:
     """Write a single TCP record against a participant with isn=1000."""
     with zpf.create(io.BytesIO(), tick_hz=1) as writer:
         writer.add_source("capture")
         with writer.begin_session(proto="tcp") as session:
             alice = session.participant("10.0.0.1:51000", isn=1000)
-            session.record(alice, ts=1, **kwargs)
+            session.record(
+                alice, ts=1, payload=payload,
+                hints=zpf.Hints(seq_start=seq_start), **kwargs,
+            )
 
 
 def test_a_handshake_record_must_sit_at_the_origin():
@@ -626,11 +680,11 @@ def test_a_handshake_record_must_sit_at_the_origin():
     file; a writer has no reason to make one.
     """
     with pytest.raises(zpf.SemanticError, match="MUST sit at the stream origin"):
-        one_record(payload=b"", seq_start=1000, flags=zpf.RecordFlags.SYN)
+        one_record(1000, flags=zpf.RecordFlags.SYN)
     # Above the origin is the same MUST and the same refusal.
     with pytest.raises(zpf.SemanticError, match="MUST sit at the stream origin"):
-        one_record(payload=b"", seq_start=1007, flags=zpf.RecordFlags.SYN)
-    one_record(payload=b"", seq_start=1001, flags=zpf.RecordFlags.SYN)  # the shape
+        one_record(1007, flags=zpf.RecordFlags.SYN)
+    one_record(1001, flags=zpf.RecordFlags.SYN)  # the shape
 
 
 def test_a_payload_below_the_origin_is_refused_beyond_the_standard():
@@ -641,7 +695,7 @@ def test_a_payload_below_the_origin_is_refused_beyond_the_standard():
     without being told — a writer emitting one is discarding its own bytes.
     """
     with pytest.raises(zpf.SemanticError, match="stricter than the format"):
-        one_record(payload=b"LOST", seq_start=1000)
+        one_record(1000, payload=b"LOST")
 
 
 def test_an_empty_record_below_the_origin_is_left_to_the_syn_rule():
@@ -651,7 +705,7 @@ def test_an_empty_record_below_the_origin_is_left_to_the_syn_rule():
     the format neither describes nor forbids, and refusing it would be going
     beyond the standard for no gain.
     """
-    one_record(payload=b"", seq_start=1000)
+    one_record(1000)
 
 
 def test_a_stream_with_no_isn_has_no_floor_to_violate():
@@ -660,4 +714,4 @@ def test_a_stream_with_no_isn_has_no_floor_to_violate():
         writer.add_source("capture")
         with writer.begin_session(proto="tcp") as session:
             alice = session.participant("10.0.0.1:51000")
-            session.record(alice, ts=1, payload=b"AAAA", seq_start=1000)
+            session.record(alice, ts=1, payload=b"AAAA", hints=zpf.Hints(seq_start=1000))

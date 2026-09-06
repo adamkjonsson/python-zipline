@@ -22,6 +22,82 @@ it back from the installed distribution metadata.
 
 ## [Unreleased]
 
+Implements spec **v0.19** (`SPEC_VERSION == (0, 19)`), up from `0.16`. Files
+written by `0.2.0` are refused at the version gate, and files written by this
+release are unreadable by `0.2.0` — the `0.x` rule, working rather than
+regressing.
+
+### Changed
+
+**Both `record()` signatures are grouped by the format's own lines**
+([#59](https://github.com/adamkjonsson/python-zipline/issues/59)).
+`SessionWriter.record()` went from twelve flat keywords to nine, and not by
+inventing bags: the two new bundles are the transport and decoded layers, which
+the format already separates and states rules across. The policy for where a
+*future* option lands is written down in `docs/dev/option-exposure.md`.
+
+| Was | Now |
+| --- | --- |
+| `record(…, seq_start=1001, ack=5001)` | `record(…, hints=zpf.Hints(seq_start=1001, ack=5001))` |
+| `record(…, decoder=http)` | `record(…, decoded=zpf.Decoded(decoder=http))` |
+| `record(…, content_type="dec:request")` | `record(…, decoded=zpf.Decoded(content_type="dec:request"))` |
+| `record(…, spans=(span,))` | `record(…, decoded=zpf.Decoded(spans=(span,)))` |
+| `DecodeStage.record(…, spans=(span,))` | `DecodeStage.record(…, cites=(span,))` |
+| `DecodeStage.record(…, ts=segment.ts)` | omit `ts`; it is derived from `cites` |
+| `create(…, single_clock=True)` | *removed* — the flag left the format in `0.19` |
+| `begin_session(…, sequenced_basis="clock")` | *removed* — likewise |
+| `participant(…, origin=…)` | *removed*; a pass-through writes an identity span per record |
+
+`zpf.Hints` moved from `zpf.decode` to `zpf.writer`, both writers now using it;
+it is re-exported as `zpf.Hints` either way. `DecodeStage.record()` keeps
+`decoder=` and `content_type=` flat, its whole surface being the decoded layer
+already, and `cites=` absorbs the old `spans=`: one parameter that takes offset
+pairs and ready spans in any mix.
+
+### Removed
+
+- Options `origin` (`0x0064`), `sequenced_basis` (`0x0053`) and the File Header
+  `flags` field (`0x0014`, whose only bit was `SINGLE_CLOCK`), which `0.19`
+  removed from the format. `zpf.Origin`, `zpf.FileFlags` and
+  `zpf.SEQUENCED_BASES` are gone with them. A file carrying any of those ids
+  still round-trips it as a `RawOption`, which is the escape contract.
+- `FileHeader.flags` and `FileHeader.single_clock`; `Session.sequenced_basis`.
+
+### Added
+
+- **`zpf.Decoded`**: a record's decoded-layer statement — its decoder, its
+  `content_type`, and the input ranges its bytes correspond to.
+- **Per-unit timestamps** ([#62](https://github.com/adamkjonsson/python-zipline/issues/62)).
+  `Segment.contributors`, `Segment.ts_for()`, `Segment.ts_first_for()`,
+  `StreamView.contributions()` and `StreamView.ts_for()` make the specification's
+  timestamp rule reachable: a decoded record carries the completion time of the
+  last input record **in its span set**, per unit rather than per reassembled
+  run. `DecodeStage.record()` derives it from `cites` when `ts` is omitted, so
+  the normative answer is now the default one.
+- **`FileReader.unplaceable`**: records the offset space could not place,
+  reported in a list of their own. Since `0.19` such a record breaks no rule
+  while a reader still SHOULD report it, so the file is reported clean and the
+  record is reported anyway — which one list could not do.
+- `zpf.Contribution`, the input record behind part of a `Segment`.
+- `resolve_spans(…, hops=…)`: follow the provenance chain further than the
+  record's own spans, or (`hops=None`) to the capture.
+
+### Fixed
+
+- **A record below the stream origin no longer wraps to 2³² − 1**
+  ([#63](https://github.com/adamkjonsson/python-zipline/issues/63)). "Where does
+  this record sit" was written three times and two of the three trusted the
+  modular subtraction, so one below-origin record took the stream's extent with
+  it. There is one definition now, and `record_ranges`, `chunks` and `units` all
+  call it. `SessionWriter.record()` also refuses to *write* one — for a
+  handshake record that is the format's MUST, and for a payload-carrying record
+  it is **stricter than the format**, which the error says.
+- `rewrite_decoded()` marks what it removes `dropped` rather than `skipped`,
+  which since `0.17` is what makes a filter's seam duty checkable.
+- `merge_files()` writes an identity span per record, marks its inputs' holes
+  `gap`, and declares `input_extents` — a pass-through cites its input since
+  `0.19`, and is answerable for its coverage.
+
 ## [0.2.0] - 2026-08-15
 
 Implements spec **v0.16** (`SPEC_VERSION == (0, 16)`).

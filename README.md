@@ -56,7 +56,7 @@ with zpf.create("out.zpf", tick_hz=1_000_000) as w:
     with w.begin_session(proto="tcp", key="10.0.0.1:51000 <-> 93.184.216.34:80") as s:
         alice = s.participant("10.0.0.1:51000", isn=1000)
         s.record(alice, ts=1000, payload=b"GET / HTTP/1.1\r\n\r\n",
-                 seq_start=1001, ack=5001)
+                 hints=zpf.Hints(seq_start=1001, ack=5001))
         s.end(reason="fin")
 
 with zpf.open("out.zpf") as f:

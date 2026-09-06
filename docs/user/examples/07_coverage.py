@@ -26,7 +26,7 @@ def write_raw(path: str) -> None:
         writer.add_source("capture", uri="rest.pcap")
         with writer.begin_session(proto="tcp", session_id=7) as session:
             client = session.participant("10.0.0.1:51000", isn=CLIENT_ISN)
-            session.record(client, ts=1, payload=STREAM, seq_start=CLIENT_ISN + 1)
+            session.record(client, ts=1, payload=STREAM, hints=zpf.Hints(seq_start=CLIENT_ISN + 1))
 
 
 def decode(path: str, raw: str, *, fill_undecoded: bool) -> None:

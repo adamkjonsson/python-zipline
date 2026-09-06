@@ -25,12 +25,20 @@ def raw_file(*, gap: bool = False) -> bytes:
         with writer.begin_session(proto="tcp", key="c <-> s", session_id=7) as session:
             client = session.participant("10.0.0.1:51000", isn=1000)
             server = session.participant("93.184.216.34:80", isn=5000)
-            session.record(client, ts=10, payload=REQUEST, seq_start=1001)
+            session.record(client, ts=10, payload=REQUEST, hints=zpf.Hints(seq_start=1001))
             if gap:
                 # 4 bytes lost, then more request bytes.
-                session.record(client, ts=11, payload=b"MORE", seq_start=1001 + len(REQUEST) + 4)
+                session.record(
+                    client,
+                    ts=11,
+                    payload=b"MORE",
+                    hints=zpf.Hints(seq_start=1001 + len(REQUEST) + 4),
+                )
             session.record(
-                server, ts=12, payload=RESPONSE, seq_start=5001, ack=1001 + len(REQUEST)
+                server,
+                ts=12,
+                payload=RESPONSE,
+                hints=zpf.Hints(seq_start=5001, ack=1001 + len(REQUEST)),
             )
     return sink.getvalue()
 
@@ -548,12 +556,16 @@ def test_a_stage_declares_how_long_its_inputs_were(tmp_path: Path):
         w.add_source("capture", uri="t.pcap")
         with w.begin_session(proto="tcp", session_id=7) as s:
             sender = s.participant("a", isn=1000)
-            s.record(sender, ts=1, payload=b"HELLO WORLD", seq_start=1001)
+            s.record(sender, ts=1, payload=b"HELLO WORLD", hints=zpf.Hints(seq_start=1001))
     with zpf.decode_stage(raw, out, decoder="http/1.1", produced_by="d 1", produced_at=1) as stage:
         for stream in stage.streams():
             for datagram in stream.datagrams():
-                stage.record(stream, ts=datagram.ts, payload=datagram.data[:5],
-                             spans=(stream.cite(0, 5),))
+                stage.record(
+                    stream,
+                    ts=datagram.ts,
+                    payload=datagram.data[:5],
+                    cites=(stream.cite(0, 5),),
+                )
     with zpf.open(out) as reader:
         end = reader.session(7).end
         assert end is not None
@@ -574,10 +586,10 @@ def test_a_stage_can_break_its_own_output(tmp_path: Path):
         w.add_source("capture", uri="t.pcap")
         with w.begin_session(proto="tcp", session_id=7) as s:
             sender = s.participant("a", isn=1000)
-            s.record(sender, ts=1, payload=b"HELLO WORLD", seq_start=1001)
+            s.record(sender, ts=1, payload=b"HELLO WORLD", hints=zpf.Hints(seq_start=1001))
     with zpf.decode_stage(raw, out, decoder="tls", produced_by="d 1", produced_at=1) as stage:
         for stream in stage.streams():
-            stage.record(stream, ts=0, payload=b"HELLO", spans=(stream.cite(0, 5),))
+            stage.record(stream, ts=0, payload=b"HELLO", cites=(stream.cite(0, 5),))
             stage.discontinuity(stream, reason="tls-record-lost")
     with zpf.open(out) as reader:
         (block,) = [b for b in reader.blocks() if isinstance(b, zpf.Discontinuity)]
@@ -608,8 +620,8 @@ def test_a_sessionization_stage_emits_a_transport_layer(tmp_path: Path):
         source = w.add_source("capture", uri="tap.pcap")
         with w.begin_session(proto="tcp", session_id=4) as s:
             p = s.participant("10.0.0.1:51000", isn=1000)
-            s.record(p, ts=1000, payload=b"A" * 50, source=source, seq_start=1001)
-            s.record(p, ts=1200, payload=b"B" * 30, source=source, seq_start=1051)
+            s.record(p, ts=1000, payload=b"A" * 50, source=source, hints=zpf.Hints(seq_start=1001))
+            s.record(p, ts=1200, payload=b"B" * 30, source=source, hints=zpf.Hints(seq_start=1051))
 
     with zpf.decode_stage(
         src, out,
@@ -915,9 +927,9 @@ def test_a_stage_omitting_ts_derives_the_normative_one():
         w.add_source("capture", uri="t.pcap")
         with w.begin_session(proto="tcp", session_id=7) as s:
             p = s.participant("10.0.0.1:51000", isn=1000)
-            s.record(p, ts=1000, payload=b"AAAA", seq_start=1001)
-            s.record(p, ts=2000, payload=b"BBBB", seq_start=1005)
-            s.record(p, ts=3000, payload=b"CCCC", seq_start=1009)
+            s.record(p, ts=1000, payload=b"AAAA", hints=zpf.Hints(seq_start=1001))
+            s.record(p, ts=2000, payload=b"BBBB", hints=zpf.Hints(seq_start=1005))
+            s.record(p, ts=3000, payload=b"CCCC", hints=zpf.Hints(seq_start=1009))
 
     out = io.BytesIO()
     with zpf.decode_stage(
@@ -944,9 +956,14 @@ def test_a_derived_ts_ignores_a_retransmit_that_contributed_nothing():
         w.add_source("capture", uri="t.pcap")
         with w.begin_session(proto="tcp", session_id=7) as s:
             p = s.participant("10.0.0.1:51000", isn=1000)
-            s.record(p, ts=1000, payload=b"AAAA", seq_start=1001)
-            s.record(p, ts=9999, payload=b"AAAA", seq_start=1001,
-                     flags=zpf.RecordFlags.RETRANSMIT)
+            s.record(p, ts=1000, payload=b"AAAA", hints=zpf.Hints(seq_start=1001))
+            s.record(
+                p,
+                ts=9999,
+                payload=b"AAAA",
+                flags=zpf.RecordFlags.RETRANSMIT,
+                hints=zpf.Hints(seq_start=1001),
+            )
 
     out = io.BytesIO()
     with zpf.decode_stage(
@@ -968,7 +985,7 @@ def test_an_explicit_ts_still_wins():
         w.add_source("capture", uri="t.pcap")
         with w.begin_session(proto="tcp", session_id=7) as s:
             p = s.participant("10.0.0.1:51000", isn=1000)
-            s.record(p, ts=1000, payload=b"AAAA", seq_start=1001)
+            s.record(p, ts=1000, payload=b"AAAA", hints=zpf.Hints(seq_start=1001))
 
     out = io.BytesIO()
     with zpf.decode_stage(
@@ -989,7 +1006,7 @@ def test_a_ts_that_cannot_be_derived_is_refused_rather_than_invented():
         w.add_source("capture", uri="t.pcap")
         with w.begin_session(proto="tcp", session_id=7) as s:
             p = s.participant("10.0.0.1:51000", isn=1000)
-            s.record(p, ts=1000, payload=b"AAAA", seq_start=1001)
+            s.record(p, ts=1000, payload=b"AAAA", hints=zpf.Hints(seq_start=1001))
 
     out = io.BytesIO()
     with pytest.raises(zpf.SemanticError, match="cannot derive ts"), zpf.decode_stage(

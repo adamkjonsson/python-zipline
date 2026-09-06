@@ -146,10 +146,18 @@ def skewed_two_sided_file() -> bytes:
             server = s.participant("93.184.216.34:80", isn=5000)
             # Server's clock is skewed: its response says ts 995, before the
             # request (ts 1000) it answers. Its ack proves the true order.
-            s.record(server, ts=995, payload=b"HTTP/1.1 200 OK\r\n...",
-                     seq_start=5001, ack=1019)
-            s.record(client, ts=1000, payload=b"GET / HTTP/1.1\r\n\r\n",
-                     seq_start=1001, ack=5001)
+            s.record(
+                server,
+                ts=995,
+                payload=b"HTTP/1.1 200 OK\r\n...",
+                hints=zpf.Hints(seq_start=5001, ack=1019),
+            )
+            s.record(
+                client,
+                ts=1000,
+                payload=b"GET / HTTP/1.1\r\n\r\n",
+                hints=zpf.Hints(seq_start=1001, ack=5001),
+            )
     return sink.getvalue()
 
 
@@ -412,8 +420,13 @@ def labelled_file() -> bytes:
                     off_start=offset, off_end=offset + len(payload),
                 )
                 offset += len(payload)
-                s.record(sender, ts=0, payload=payload, source=source,
-                         decoder=decoder, content_type=label, spans=(span,))
+                s.record(
+                    sender,
+                    ts=0,
+                    payload=payload,
+                    source=source,
+                    decoded=zpf.Decoded(decoder=decoder, content_type=label, spans=(span,)),
+                )
     return sink.getvalue()
 
 
@@ -734,7 +747,12 @@ def test_as_datetime_reads_a_record_timestamp_end_to_end():
         writer.add_source("capture", uri="c.pcap")
         with writer.begin_session(proto="tcp") as session:
             alice = session.participant("alice", isn=0)
-            session.record(alice, ts=1_786_646_192_538_796, payload=b"hi", seq_start=1)
+            session.record(
+                alice,
+                ts=1_786_646_192_538_796,
+                payload=b"hi",
+                hints=zpf.Hints(seq_start=1),
+            )
     with zpf.open(io.BytesIO(sink.getvalue())) as reader:
         (session,) = reader.sessions()
         (record,) = session.records()

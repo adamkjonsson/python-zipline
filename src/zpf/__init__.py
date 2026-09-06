@@ -49,7 +49,7 @@ from zpf.blocks import (
 )
 from zpf.conformance import ConformanceChecker
 from zpf.content import PRIM_WIDTHS, ContentRegistry, ContentType, decode_prim
-from zpf.decode import DecodeStage, DecodeStream, Hints, Seam, decode_stage
+from zpf.decode import DecodeStage, DecodeStream, Seam, decode_stage
 from zpf.errors import (
     AdvisoryError,
     ContentError,
@@ -91,9 +91,11 @@ from zpf.transform import (
     rewrite_decoded,
 )
 from zpf.writer import (
+    Decoded,
     DecoderHandle,
     DerivedInput,
     FileWriter,
+    Hints,
     ParticipantHandle,
     SessionWriter,
     SourceHandle,
@@ -124,6 +126,7 @@ __all__ = [
     "DecodeStage",
     "DecodeStream",
     "Decoder",
+    "Decoded",
     "DecoderHandle",
     "DerivedInput",
     "Diagnostic",

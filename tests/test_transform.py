@@ -18,7 +18,12 @@ def write_side_a(sink: object) -> None:
         w.add_source("capture", uri="sideA.pcap")
         s = w.begin_session(proto="tcp", key=KEY, session_id=7)
         client = s.participant("10.0.0.1:51000", isn=1000, tcp_role=zpf.TcpRole.INITIATOR)
-        s.record(client, ts=1000, payload=b"GET / HTTP/1.1\r\n\r\n", seq_start=1001, ack=5001)
+        s.record(
+            client,
+            ts=1000,
+            payload=b"GET / HTTP/1.1\r\n\r\n",
+            hints=zpf.Hints(seq_start=1001, ack=5001),
+        )
 
 
 def write_side_b(sink: object) -> None:
@@ -27,7 +32,12 @@ def write_side_b(sink: object) -> None:
         s = w.begin_session(proto="tcp", key=KEY, session_id=3)
         server = s.participant("93.184.216.34:80", isn=5000, tcp_role=zpf.TcpRole.RESPONDER)
         # Skewed clock: stamped before the request it answers.
-        s.record(server, ts=995, payload=b"HTTP/1.1 200 OK\r\n...", seq_start=5001, ack=1019)
+        s.record(
+            server,
+            ts=995,
+            payload=b"HTTP/1.1 200 OK\r\n...",
+            hints=zpf.Hints(seq_start=5001, ack=1019),
+        )
 
 
 @pytest.fixture
@@ -102,8 +112,8 @@ def test_a_merge_over_a_holed_input_closes_coverage(tmp_path: Path):
         w.add_source("capture", uri="a.pcap")
         s = w.begin_session(proto="tcp", key=KEY, session_id=7)
         p = s.participant("10.0.0.1:51000", isn=1000)
-        s.record(p, ts=1, payload=b"AAAA", seq_start=1001)
-        s.record(p, ts=2, payload=b"CCCC", seq_start=1009)  # [4, 8) never arrived
+        s.record(p, ts=1, payload=b"AAAA", hints=zpf.Hints(seq_start=1001))
+        s.record(p, ts=2, payload=b"CCCC", hints=zpf.Hints(seq_start=1009))  # [4, 8) never arrived
     write_side_b(side_b)
 
     output = tmp_path / "merged.zpf"
@@ -223,11 +233,11 @@ def write_raw(path: Path, *, hole: bool = False) -> None:
         p1 = s.participant("93.184.216.34:80", isn=5000)
         if hole:
             # [0, 10) then a 39-byte gap, then [49, 59): extent 59.
-            s.record(p0, ts=1, payload=b"x" * 10, seq_start=1001)
-            s.record(p0, ts=2, payload=b"y" * 10, seq_start=1050)
+            s.record(p0, ts=1, payload=b"x" * 10, hints=zpf.Hints(seq_start=1001))
+            s.record(p0, ts=2, payload=b"y" * 10, hints=zpf.Hints(seq_start=1050))
         else:
-            s.record(p0, ts=1, payload=b"x" * 18, seq_start=1001)
-        s.record(p1, ts=3, payload=b"z" * 139, seq_start=5001)
+            s.record(p0, ts=1, payload=b"x" * 18, hints=zpf.Hints(seq_start=1001))
+        s.record(p1, ts=3, payload=b"z" * 139, hints=zpf.Hints(seq_start=5001))
 
 
 def write_decoded(
@@ -245,15 +255,35 @@ def write_decoded(
         client = s.participant("10.0.0.1:51000")
         s.participant("93.184.216.34:80")
         s.record(
-            client, ts=1, payload=b"req", decoder=http,
-            spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
-                            off_start=0, off_end=18),),
+            client,
+            ts=1,
+            payload=b"req",
+            decoded=zpf.Decoded(
+                decoder=http,
+                spans=(zpf.Span(
+                    source_id=0,
+                    session_id=7,
+                    participant_id=0,
+                    off_start=0,
+                    off_end=18,
+                ),),
+            ),
         )
         for start, end in p1_spans:
             s.record(
-                client, ts=2, payload=b"resp", decoder=http,
-                spans=(zpf.Span(source_id=0, session_id=7, participant_id=1,
-                                off_start=start, off_end=end),),
+                client,
+                ts=2,
+                payload=b"resp",
+                decoded=zpf.Decoded(
+                    decoder=http,
+                    spans=(zpf.Span(
+                        source_id=0,
+                        session_id=7,
+                        participant_id=1,
+                        off_start=start,
+                        off_end=end,
+                    ),),
+                ),
             )
         for start, end in p1_undecoded:
             w.undecoded(src, 7, 1, start, end, reason="undecodable", decoder=http)
@@ -300,15 +330,35 @@ def test_hole_inclusive_extents(tmp_path: Path):
         s = w.begin_session(proto="http", session_id=7)
         client = s.participant("10.0.0.1:51000")
         s.record(
-            client, ts=1, payload=b"a", decoder=http,
-            spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
-                            off_start=0, off_end=10),),
+            client,
+            ts=1,
+            payload=b"a",
+            decoded=zpf.Decoded(
+                decoder=http,
+                spans=(zpf.Span(
+                    source_id=0,
+                    session_id=7,
+                    participant_id=0,
+                    off_start=0,
+                    off_end=10,
+                ),),
+            ),
         )
         w.undecoded(source, 7, 0, 10, 49, reason="gap")
         s.record(
-            client, ts=2, payload=b"b", decoder=http,
-            spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
-                            off_start=49, off_end=59),),
+            client,
+            ts=2,
+            payload=b"b",
+            decoded=zpf.Decoded(
+                decoder=http,
+                spans=(zpf.Span(
+                    source_id=0,
+                    session_id=7,
+                    participant_id=0,
+                    off_start=49,
+                    off_end=59,
+                ),),
+            ),
         )
         w.undecoded(source, 7, 1, 0, 139, reason="undecodable")
     assert zpf.check_coverage(decoded, raw) == []
@@ -452,11 +502,21 @@ def decoded_input(path: Path, payloads: tuple[bytes, ...] = (b"AAA", b"BB", b"CC
             offset = 0
             for index, body in enumerate(payloads):
                 session.record(
-                    sender, ts=index, payload=body, source=source, decoder=decoder,
-                    content_type="dec:request",
-                    spans=(zpf.Span(source_id=source.source_id, session_id=7,
-                                    participant_id=0, off_start=offset,
-                                    off_end=offset + len(body)),),
+                    sender,
+                    ts=index,
+                    payload=body,
+                    source=source,
+                    decoded=zpf.Decoded(
+                        decoder=decoder,
+                        content_type="dec:request",
+                        spans=(zpf.Span(
+                            source_id=source.source_id,
+                            session_id=7,
+                            participant_id=0,
+                            off_start=offset,
+                            off_end=offset + len(body),
+                        ),),
+                    ),
                 )
                 offset += len(body)
 
@@ -666,13 +726,39 @@ def test_check_splice_is_quiet_when_the_stage_carries_the_break_forward(tmp_path
         decoder = w.add_decoder("tls")
         with w.begin_session(session_id=7) as s:
             client = s.participant("a")
-            s.record(client, ts=0, payload=b"A" * 50, source=source, decoder=decoder,
-                     spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
-                                     off_start=0, off_end=50),))
+            s.record(
+                client,
+                ts=0,
+                payload=b"A" * 50,
+                source=source,
+                decoded=zpf.Decoded(
+                    decoder=decoder,
+                    spans=(zpf.Span(
+                        source_id=0,
+                        session_id=7,
+                        participant_id=0,
+                        off_start=0,
+                        off_end=50,
+                    ),),
+                ),
+            )
             s.discontinuity(client, reason="tls-record-lost")
-            s.record(client, ts=1, payload=b"B" * 30, source=source, decoder=decoder,
-                     spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
-                                     off_start=50, off_end=80),))
+            s.record(
+                client,
+                ts=1,
+                payload=b"B" * 30,
+                source=source,
+                decoded=zpf.Decoded(
+                    decoder=decoder,
+                    spans=(zpf.Span(
+                        source_id=0,
+                        session_id=7,
+                        participant_id=0,
+                        off_start=50,
+                        off_end=80,
+                    ),),
+                ),
+            )
 
     def write_stage2(path: Path, *, weld: bool) -> None:
         with zpf.create(path, tick_hz=1, produced_by="s2", produced_at=2) as w:
@@ -681,17 +767,56 @@ def test_check_splice_is_quiet_when_the_stage_carries_the_break_forward(tmp_path
             with w.begin_session(session_id=7) as s:
                 client = s.participant("a")
                 if weld:
-                    s.record(client, ts=0, payload=b"M", source=source, decoder=decoder,
-                             spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
-                                             off_start=0, off_end=80),))
+                    s.record(
+                        client,
+                        ts=0,
+                        payload=b"M",
+                        source=source,
+                        decoded=zpf.Decoded(
+                            decoder=decoder,
+                            spans=(zpf.Span(
+                                source_id=0,
+                                session_id=7,
+                                participant_id=0,
+                                off_start=0,
+                                off_end=80,
+                            ),),
+                        ),
+                    )
                 else:
-                    s.record(client, ts=0, payload=b"M", source=source, decoder=decoder,
-                             spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
-                                             off_start=0, off_end=50),))
+                    s.record(
+                        client,
+                        ts=0,
+                        payload=b"M",
+                        source=source,
+                        decoded=zpf.Decoded(
+                            decoder=decoder,
+                            spans=(zpf.Span(
+                                source_id=0,
+                                session_id=7,
+                                participant_id=0,
+                                off_start=0,
+                                off_end=50,
+                            ),),
+                        ),
+                    )
                     s.discontinuity(client, reason="tls-record-lost")
-                    s.record(client, ts=1, payload=b"N", source=source, decoder=decoder,
-                             spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
-                                             off_start=50, off_end=80),))
+                    s.record(
+                        client,
+                        ts=1,
+                        payload=b"N",
+                        source=source,
+                        decoded=zpf.Decoded(
+                            decoder=decoder,
+                            spans=(zpf.Span(
+                                source_id=0,
+                                session_id=7,
+                                participant_id=0,
+                                off_start=50,
+                                off_end=80,
+                            ),),
+                        ),
+                    )
 
     honest, welded = tmp_path / "honest.zpf", tmp_path / "welded.zpf"
     write_stage2(honest, weld=False)
@@ -712,13 +837,39 @@ def test_a_units_spans_are_judged_together(tmp_path: Path):
         decoder = w.add_decoder("tls")
         with w.begin_session(session_id=7) as s:
             client = s.participant("a")
-            s.record(client, ts=0, payload=b"A" * 50, source=source, decoder=decoder,
-                     spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
-                                     off_start=0, off_end=50),))
+            s.record(
+                client,
+                ts=0,
+                payload=b"A" * 50,
+                source=source,
+                decoded=zpf.Decoded(
+                    decoder=decoder,
+                    spans=(zpf.Span(
+                        source_id=0,
+                        session_id=7,
+                        participant_id=0,
+                        off_start=0,
+                        off_end=50,
+                    ),),
+                ),
+            )
             s.discontinuity(client, reason="stream-gap")
-            s.record(client, ts=1, payload=b"B" * 30, source=source, decoder=decoder,
-                     spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
-                                     off_start=50, off_end=80),))
+            s.record(
+                client,
+                ts=1,
+                payload=b"B" * 30,
+                source=source,
+                decoded=zpf.Decoded(
+                    decoder=decoder,
+                    spans=(zpf.Span(
+                        source_id=0,
+                        session_id=7,
+                        participant_id=0,
+                        off_start=50,
+                        off_end=80,
+                    ),),
+                ),
+            )
     stage2 = tmp_path / "stage2.zpf"
     with zpf.create(stage2, tick_hz=1, produced_by="s2", produced_at=2) as w:
         source = w.add_source("zpf-input", uri=str(stage1))
@@ -726,12 +877,22 @@ def test_a_units_spans_are_judged_together(tmp_path: Path):
         with w.begin_session(session_id=7) as s:
             client = s.participant("a")
             s.record(
-                client, ts=0, payload=b"M", source=source, decoder=decoder,
-                spans=(
-                    zpf.Span(source_id=0, session_id=7, participant_id=0,
-                             off_start=0, off_end=50),
-                    zpf.Span(source_id=0, session_id=7, participant_id=0,
-                             off_start=50, off_end=80),
+                client,
+                ts=0,
+                payload=b"M",
+                source=source,
+                decoded=zpf.Decoded(
+                    decoder=decoder,
+                    spans=(
+                        zpf.Span(
+                            source_id=0, session_id=7, participant_id=0,
+                            off_start=0, off_end=50,
+                        ),
+                        zpf.Span(
+                            source_id=0, session_id=7, participant_id=0,
+                            off_start=50, off_end=80,
+                        ),
+                    ),
                 ),
             )
     assert [f.category for f in zpf.check_splice(stage2, stage1)] == ["discontinuity-splice"]
@@ -752,9 +913,22 @@ def decoded_with_a_break(path: Path) -> None:
             ):
                 if index == 2:
                     s.discontinuity(client, width=5, reason="tls-record-lost")
-                s.record(client, ts=index, payload=body, source=source, decoder=decoder,
-                         spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
-                                         off_start=start, off_end=end),))
+                s.record(
+                    client,
+                    ts=index,
+                    payload=body,
+                    source=source,
+                    decoded=zpf.Decoded(
+                        decoder=decoder,
+                        spans=(zpf.Span(
+                            source_id=0,
+                            session_id=7,
+                            participant_id=0,
+                            off_start=start,
+                            off_end=end,
+                        ),),
+                    ),
+                )
             w.undecoded(source, 7, 0, 20, 30, reason="undecodable")
 
 

@@ -82,7 +82,12 @@ def test_decode_stage_accepts_a_datetime_produced_at():
     with zpf.create(raw, tick_hz=1_000_000, time_epoch=0) as writer:
         writer.add_source("capture")
         with writer.begin_session(proto="tcp", session_id=7) as session:
-            session.record(session.participant("a", isn=1000), ts=1, payload=b"x", seq_start=1001)
+            session.record(
+                session.participant("a", isn=1000),
+                ts=1,
+                payload=b"x",
+                hints=zpf.Hints(seq_start=1001),
+            )
 
     sink = io.BytesIO()
     with zpf.decode_stage(

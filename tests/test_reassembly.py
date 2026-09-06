@@ -45,8 +45,8 @@ def only_view(fill: Callable[[SessionWriter], None], **kwargs: str) -> zpf.Strea
 def test_contiguous_records_coalesce_into_one_segment():
     def fill(s: zpf.SessionWriter) -> None:
         client = s.participant("10.0.0.1:51000", isn=1000)
-        s.record(client, ts=1, payload=b"hello", seq_start=1001)
-        s.record(client, ts=2, payload=b"world", seq_start=1006)
+        s.record(client, ts=1, payload=b"hello", hints=zpf.Hints(seq_start=1001))
+        s.record(client, ts=2, payload=b"world", hints=zpf.Hints(seq_start=1006))
 
     view = only_view(fill)
     assert view.is_stream_oriented
@@ -60,8 +60,8 @@ def test_contiguous_records_coalesce_into_one_segment():
 def test_segment_ts_is_the_last_contributing_timestamp():
     def fill(s: zpf.SessionWriter) -> None:
         p = s.participant("a", isn=1000)
-        s.record(p, ts=5, payload=b"AAAA", seq_start=1001)
-        s.record(p, ts=9, payload=b"BBBB", seq_start=1005)
+        s.record(p, ts=5, payload=b"AAAA", hints=zpf.Hints(seq_start=1001))
+        s.record(p, ts=9, payload=b"BBBB", hints=zpf.Hints(seq_start=1005))
 
     (segment,) = only_view(fill).segments()
     assert segment.ts == 9
@@ -73,8 +73,8 @@ def test_segment_ts_is_the_last_contributing_timestamp():
 def test_interior_gap_is_surfaced_between_segments():
     def fill(s: zpf.SessionWriter) -> None:
         p = s.participant("a", isn=1000)
-        s.record(p, ts=1, payload=b"AAAA", seq_start=1001)  # off 0..4
-        s.record(p, ts=2, payload=b"CCCC", seq_start=1009)  # off 8..12, gap 4..8
+        s.record(p, ts=1, payload=b"AAAA", hints=zpf.Hints(seq_start=1001))  # off 0..4
+        s.record(p, ts=2, payload=b"CCCC", hints=zpf.Hints(seq_start=1009))  # off 8..12, gap 4..8
 
     view = only_view(fill)
     assert list(view.chunks()) == [
@@ -88,8 +88,8 @@ def test_interior_gap_is_surfaced_between_segments():
 def test_reassembled_raises_on_a_gap():
     def fill(s: zpf.SessionWriter) -> None:
         p = s.participant("a", isn=1000)
-        s.record(p, ts=1, payload=b"AAAA", seq_start=1001)
-        s.record(p, ts=2, payload=b"CCCC", seq_start=1009)
+        s.record(p, ts=1, payload=b"AAAA", hints=zpf.Hints(seq_start=1001))
+        s.record(p, ts=2, payload=b"CCCC", hints=zpf.Hints(seq_start=1009))
 
     with pytest.raises(zpf.ZpfError, match="gap"):
         only_view(fill).reassembled()
@@ -98,7 +98,7 @@ def test_reassembled_raises_on_a_gap():
 def test_leading_gap_when_first_byte_is_past_the_origin():
     def fill(s: zpf.SessionWriter) -> None:
         p = s.participant("a", isn=1000)  # origin = 1001
-        s.record(p, ts=1, payload=b"DDDD", seq_start=1005)  # off 4..8
+        s.record(p, ts=1, payload=b"DDDD", hints=zpf.Hints(seq_start=1005))  # off 4..8
 
     view = only_view(fill)
     assert view.off_start == 4
@@ -111,8 +111,8 @@ def test_leading_gap_when_first_byte_is_past_the_origin():
 def test_no_isn_anchors_the_origin_at_the_first_byte():
     def fill(s: zpf.SessionWriter) -> None:
         p = s.participant("a")  # handshake missed: no isn
-        s.record(p, ts=1, payload=b"EEEE", seq_start=5000)
-        s.record(p, ts=2, payload=b"FFFF", seq_start=5004)
+        s.record(p, ts=1, payload=b"EEEE", hints=zpf.Hints(seq_start=5000))
+        s.record(p, ts=2, payload=b"FFFF", hints=zpf.Hints(seq_start=5004))
 
     view = only_view(fill)
     assert view.is_stream_oriented  # seq_start hints make it a stream
@@ -124,8 +124,9 @@ def test_no_isn_anchors_the_origin_at_the_first_byte():
 def test_sequence_space_wrap_stays_contiguous():
     def fill(s: zpf.SessionWriter) -> None:
         p = s.participant("a", isn=SEQ_SPACE - 3)  # origin = 2**32 - 2
-        s.record(p, ts=1, payload=b"AA", seq_start=SEQ_SPACE - 2)  # off 0..2, wraps to 0
-        s.record(p, ts=2, payload=b"BB", seq_start=0)  # off 2..4
+        # off 0..2, wrapping to 0
+        s.record(p, ts=1, payload=b"AA", hints=zpf.Hints(seq_start=SEQ_SPACE - 2))
+        s.record(p, ts=2, payload=b"BB", hints=zpf.Hints(seq_start=0))  # off 2..4
 
     (segment,) = only_view(fill).segments()
     assert segment == zpf.Segment(data=b"AABB", off_start=0, off_end=4, ts=2)
@@ -137,9 +138,9 @@ def test_sequence_space_wrap_stays_contiguous():
 def test_zero_length_records_are_skipped_by_segments_but_kept_by_datagrams():
     def fill(s: zpf.SessionWriter) -> None:
         p = s.participant("a", isn=1000)
-        s.record(p, ts=1, payload=b"AAAA", seq_start=1001)
-        s.record(p, ts=2, payload=b"", seq_start=1005, ack=1)  # pure ACK
-        s.record(p, ts=3, payload=b"BBBB", seq_start=1005)
+        s.record(p, ts=1, payload=b"AAAA", hints=zpf.Hints(seq_start=1001))
+        s.record(p, ts=2, payload=b"", hints=zpf.Hints(seq_start=1005, ack=1))  # pure ACK
+        s.record(p, ts=3, payload=b"BBBB", hints=zpf.Hints(seq_start=1005))
 
     view = only_view(fill)
     (segment,) = view.segments()
@@ -188,8 +189,8 @@ def test_reassemble_returns_one_view_per_participant_in_order():
     def fill(s: zpf.SessionWriter) -> None:
         client = s.participant("10.0.0.1:51000", isn=1000)
         server = s.participant("93.184.216.34:80", isn=5000)
-        s.record(client, ts=1, payload=b"GET", seq_start=1001)
-        s.record(server, ts=2, payload=b"200", seq_start=5001, ack=1004)
+        s.record(client, ts=1, payload=b"GET", hints=zpf.Hints(seq_start=1001))
+        s.record(server, ts=2, payload=b"200", hints=zpf.Hints(seq_start=5001, ack=1004))
 
     with build(fill) as reader:
         views = reader.session(7).reassemble()
@@ -206,8 +207,8 @@ def test_reassemble_returns_one_view_per_participant_in_order():
 def cited_stream() -> zpf.StreamView:
     def fill(s: zpf.SessionWriter) -> None:
         p = s.participant("10.0.0.1:51000", isn=1000)
-        s.record(p, ts=1, payload=b"GET /a\r\n", seq_start=1001)
-        s.record(p, ts=2, payload=b"GET /b\r\n", seq_start=1009)
+        s.record(p, ts=1, payload=b"GET /a\r\n", hints=zpf.Hints(seq_start=1001))
+        s.record(p, ts=2, payload=b"GET /b\r\n", hints=zpf.Hints(seq_start=1009))
 
     return only_view(fill)
 
@@ -256,8 +257,8 @@ def test_segment_cite_is_relative_to_the_segment():
 def test_segment_cite_offsets_are_absolute_after_a_gap():
     def fill(s: zpf.SessionWriter) -> None:
         p = s.participant("a", isn=1000)
-        s.record(p, ts=1, payload=b"AAAA", seq_start=1001)  # off 0..4
-        s.record(p, ts=2, payload=b"CCCC", seq_start=1009)  # off 8..12
+        s.record(p, ts=1, payload=b"AAAA", hints=zpf.Hints(seq_start=1001))  # off 0..4
+        s.record(p, ts=2, payload=b"CCCC", hints=zpf.Hints(seq_start=1009))  # off 8..12
 
     view = only_view(fill).cited_as(1)
     _, _, second = view.chunks()
@@ -305,9 +306,11 @@ def test_cited_spans_survive_a_write_read_round_trip():
                 handle,
                 ts=segment.ts,
                 payload=segment.data[:8],
-                decoder=decoder,
-                content_type="dec:http-request",
-                spans=(segment.cite(0, 8),),
+                decoded=zpf.Decoded(
+                    decoder=decoder,
+                    content_type="dec:http-request",
+                    spans=(segment.cite(0, 8),),
+                ),
             )
     with zpf.open(io.BytesIO(sink.getvalue())) as decoded:
         (record,) = decoded.session(7).records()
@@ -326,9 +329,9 @@ def test_views_iterate_independently():
     def fill(s: zpf.SessionWriter) -> None:
         client = s.participant("a", isn=1000)
         server = s.participant("b", isn=5000)
-        s.record(client, ts=1, payload=b"c1", seq_start=1001)
-        s.record(client, ts=3, payload=b"c2", seq_start=1003)
-        s.record(server, ts=2, payload=b"s1", seq_start=5001, ack=1003)
+        s.record(client, ts=1, payload=b"c1", hints=zpf.Hints(seq_start=1001))
+        s.record(client, ts=3, payload=b"c2", hints=zpf.Hints(seq_start=1003))
+        s.record(server, ts=2, payload=b"s1", hints=zpf.Hints(seq_start=5001, ack=1003))
 
     with build(fill) as reader:
         client_view, server_view = reader.session(7).reassemble()
@@ -755,9 +758,9 @@ def test_a_run_carries_the_time_of_each_record_that_built_it():
     """
     def fill(s: zpf.SessionWriter) -> None:
         p = s.participant("10.0.0.1:51000", isn=1000)
-        s.record(p, ts=1000, payload=b"AAAA", seq_start=1001)
-        s.record(p, ts=2000, payload=b"BBBB", seq_start=1005)
-        s.record(p, ts=3000, payload=b"CCCC", seq_start=1009)
+        s.record(p, ts=1000, payload=b"AAAA", hints=zpf.Hints(seq_start=1001))
+        s.record(p, ts=2000, payload=b"BBBB", hints=zpf.Hints(seq_start=1005))
+        s.record(p, ts=3000, payload=b"CCCC", hints=zpf.Hints(seq_start=1009))
 
     (segment,) = only_view(fill).segments()
     assert segment.ts == 3000  # the run completed then
@@ -770,8 +773,8 @@ def test_a_unit_straddling_two_records_completes_with_the_later():
     """The span set is what decides, so a unit built from two packets waits."""
     def fill(s: zpf.SessionWriter) -> None:
         p = s.participant("10.0.0.1:51000", isn=1000)
-        s.record(p, ts=1000, payload=b"AAAA", seq_start=1001)
-        s.record(p, ts=2000, payload=b"BBBB", seq_start=1005)
+        s.record(p, ts=1000, payload=b"AAAA", hints=zpf.Hints(seq_start=1001))
+        s.record(p, ts=2000, payload=b"BBBB", hints=zpf.Hints(seq_start=1005))
 
     (segment,) = only_view(fill).segments()
     assert segment.ts_for(2, 6) == 2000
@@ -789,10 +792,15 @@ def test_a_retransmit_contributing_no_accepted_byte_does_not_move_the_time():
     """
     def fill(s: zpf.SessionWriter) -> None:
         p = s.participant("10.0.0.1:51000", isn=1000)
-        s.record(p, ts=1000, payload=b"AAAA", seq_start=1001)
-        s.record(p, ts=9999, payload=b"AAAA", seq_start=1001,
-                 flags=zpf.RecordFlags.RETRANSMIT)
-        s.record(p, ts=2000, payload=b"BBBB", seq_start=1005)
+        s.record(p, ts=1000, payload=b"AAAA", hints=zpf.Hints(seq_start=1001))
+        s.record(
+            p,
+            ts=9999,
+            payload=b"AAAA",
+            flags=zpf.RecordFlags.RETRANSMIT,
+            hints=zpf.Hints(seq_start=1001),
+        )
+        s.record(p, ts=2000, payload=b"BBBB", hints=zpf.Hints(seq_start=1005))
 
     (segment,) = only_view(fill).segments()
     assert segment.data == b"AAAABBBB"
@@ -810,8 +818,8 @@ def test_ts_first_falls_back_to_the_records_own_timestamp():
     """A record declaring no ts_first states only one arrival time."""
     def fill(s: zpf.SessionWriter) -> None:
         p = s.participant("10.0.0.1:51000", isn=1000)
-        s.record(p, ts=1000, payload=b"AAAA", seq_start=1001, ts_first=900)
-        s.record(p, ts=2000, payload=b"BBBB", seq_start=1005)
+        s.record(p, ts=1000, payload=b"AAAA", ts_first=900, hints=zpf.Hints(seq_start=1001))
+        s.record(p, ts=2000, payload=b"BBBB", hints=zpf.Hints(seq_start=1005))
 
     (segment,) = only_view(fill).segments()
     assert segment.ts_first_for(0, 4) == 900
@@ -829,8 +837,8 @@ def test_the_stream_answers_the_same_question_for_absolute_offsets():
     """`StreamView.ts_for` is what a decode stage uses, `cites` being absolute."""
     def fill(s: zpf.SessionWriter) -> None:
         p = s.participant("10.0.0.1:51000", isn=1000)
-        s.record(p, ts=1000, payload=b"AAAA", seq_start=1001)
-        s.record(p, ts=2000, payload=b"BBBB", seq_start=1005)
+        s.record(p, ts=1000, payload=b"AAAA", hints=zpf.Hints(seq_start=1001))
+        s.record(p, ts=2000, payload=b"BBBB", hints=zpf.Hints(seq_start=1005))
 
     view = only_view(fill)
     assert view.ts_for(0, 4) == 1000
