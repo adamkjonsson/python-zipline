@@ -20,9 +20,11 @@ this implementation returns True for both orderings.)
 
 Scope notes, per the specification: ack edges are defined *pairwise*, so
 they are applied only to two-participant sessions; a session with any other
-participant count merges by ``(timestamp, pid)`` alone, which is sound
-exactly when its records share one trustworthy clock (the SINGLE_CLOCK
-discussion in the spec).
+participant count merges by ``(timestamp, pid)`` alone, which is sound exactly
+when its records share one trustworthy clock. Through ``0.18`` a file could
+assert that with the SINGLE_CLOCK header flag; ``0.19`` removed it along with
+the sequencing basis, so the soundness condition is unchanged and nothing in
+the file states it.
 
 Timestamps order records in exactly one place — the tie-break between
 causally concurrent records during a merge. They are **not** an ordering
@@ -288,9 +290,10 @@ def verify_sequenced(
 
     Timestamps are deliberately not checked. They are not an ordering
     invariant in any session, sequenced or not: a stored order may run
-    backwards in time, and a hint-less session's order rests on whatever
-    its ``sequenced_basis`` names — which may be a protocol sequence or an
-    out-of-band record, neither of which the clock reflects. The only
+    backwards in time, and a hint-less session's order may rest on a protocol
+    sequence or an out-of-band record, neither of which the clock reflects.
+    ``sequenced-session`` is the vector for exactly this — its response is
+    stored five ticks *before* the request that caused it. The only
     stored-order guarantee a reader may act on is the per-participant
     ``seq_start`` rule above, which is a sequence rule, not a time rule.
 

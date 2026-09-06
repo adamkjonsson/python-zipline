@@ -173,9 +173,6 @@ class _SessionState:
 
     participants: dict[int, _ParticipantState] = field(default_factory=dict)
     described: str = ""
-    sequenced: bool = False
-    sequenced_basis: str | None = None
-    has_hints: bool = False  # any record carried seq_start or ack
 
 
 @dataclass
@@ -422,13 +419,17 @@ class ConformanceChecker:
         """Run the checks that only the end of the stream can settle.
 
         Some obligations cannot be judged when the block carrying them is
-        read. Whether a session is *hint-less* is a property of its records,
-        and declare-on-first-use puts the Session Descriptor before them — so
-        a reader concludes it only at Session End or end-of-stream. Reaching
-        the End block or end-of-stream implicitly closes every still-open
-        session, and this is that moment.
+        read. Both axes of a stream are properties of its *records*, and
+        declare-on-first-use puts the Participant block before them — so they
+        are decidable only once the records are all in. Reaching the End block
+        or end-of-stream implicitly closes every still-open session, and this
+        is that moment.
 
-        The coverage guarantee is the other kind: a range is accounted for if
+        (``0.19`` removed the other reason this phase existed: a hint-less
+        SEQUENCED session used to owe a ``sequenced_basis``, which no reader
+        could settle before Session End either.)
+
+        The coverage guarantee is the third kind: a range is accounted for if
         *any* record cites it or *any* Undecoded block marks it, and the
         declared extents arrive on Session End blocks at the very end, so no
         single block can be ruled on as it is read. See :class:`CoverageLedger`
@@ -444,7 +445,6 @@ class ConformanceChecker:
         for session_id, state in pending:
             del self._live[session_id]
             self._ended.add(session_id)
-            self._check_sequenced_basis(state)
             self._close_participants(state)
         if self._transform_digest is not None and not self._saw_zpf_sourced:
             msg = (
@@ -470,24 +470,6 @@ class ConformanceChecker:
 
         """
         return self._coverage.findings()
-
-    def _check_sequenced_basis(self, state: _SessionState) -> None:
-        """Require a hint-less sequenced session to say what its order rests on.
-
-        A session carrying `seq`/`ack` derives its order from causal edges
-        and needs no basis. One without them has no causal edges at all, so
-        the order rests on something the file does not otherwise record —
-        which is exactly why the producer must name it. Recording is
-        unconditional: ``trivial`` covers the case where there was never a
-        cross-participant order to get wrong.
-        """
-        if not state.sequenced or state.has_hints or state.sequenced_basis is not None:
-            return
-        msg = (
-            f"{state.described} is SEQUENCED and carries no seq/ack on any record, "
-            "so it must record what its order rests on in sequenced_basis"
-        )
-        raise SemanticError(msg)
 
     # --- Per-block handlers ----------------------------------------------
 
@@ -525,8 +507,6 @@ class ConformanceChecker:
             raise SemanticError(msg)
         self._live[block.session_id] = _SessionState(
             described=_describe(block),
-            sequenced=block.sequenced,
-            sequenced_basis=block.sequenced_basis,
         )
 
     def _on_participant(self, block: Participant) -> None:
@@ -563,7 +543,6 @@ class ConformanceChecker:
         state = self._require_live_session(block.session_id, described)
         del self._live[block.session_id]
         self._ended.add(block.session_id)
-        self._check_sequenced_basis(state)
         self._close_participants(state)
 
     def _on_record(self, block: Record) -> None:
@@ -578,8 +557,6 @@ class ConformanceChecker:
         self._note(_prim_finding(block, described))
         self._check_record_order(block, stream, described)
         self._classify_record(block, stream, described)
-        if block.seq_start is not None or block.ack is not None:
-            state.has_hints = True
         if block.seq_start is not None:
             stream.last_seq = block.seq_start
 
@@ -893,10 +870,10 @@ class ConformanceChecker:
     def _close_participants(self, state: _SessionState) -> None:
         """Rule on every stream of a session, once its records are all in.
 
-        Deferred to Session End for the same reason ``sequenced_basis`` is:
-        these are properties of a participant's *records*, and
-        declare-on-first-use puts the Participant block before them. State
-        is freed here, so live memory stays proportional to open sessions.
+        Deferred to Session End because these are properties of a
+        participant's *records*, and declare-on-first-use puts the Participant
+        block before them. State is freed here, so live memory stays
+        proportional to open sessions.
         """
         for pid in sorted(state.participants):
             self._check_participant(state.participants[pid])

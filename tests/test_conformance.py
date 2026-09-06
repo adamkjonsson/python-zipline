@@ -314,33 +314,33 @@ def finished(*blocks: zpf.Block) -> zpf.ConformanceChecker:
     return checker
 
 
-def test_a_hintless_sequenced_session_must_record_its_basis():
-    # The rule cannot fire when the Session Descriptor is read: whether the
-    # session is hint-less is a property of its *records*, and
-    # declare-on-first-use puts the descriptor before them.
-    checker = accept(*hintless_session())  # nothing raised yet
-    with pytest.raises(zpf.SemanticError, match="sequenced_basis"):
-        checker.finish()
+def test_a_hintless_sequenced_session_owes_nothing_since_0_19():
+    """Package B: SEQUENCED is a bare assertion, taken on trust.
 
+    Through `0.18` a sequenced session whose records carried no ``seq``/``ack``
+    MUST have named what its order rested on, and the rule could only be ruled
+    on at Session End — hint-lessness being a property of the *records*, which
+    declare-on-first-use puts after the descriptor. `0.19` removed the option
+    and the rule with it, so the producer is trusted for the basis exactly as
+    it already was for the order itself, which a reader cannot check either.
 
-def test_the_basis_requirement_is_settled_at_session_end():
+    Both moments are asserted, because both used to raise.
+    """
     checker = accept(*hintless_session())
-    with pytest.raises(zpf.SemanticError, match="sequenced_basis"):
-        checker.observe(zpf.SessionEnd(session_id=5))
+    checker.finish()  # was: SemanticError naming sequenced_basis
+
+    checker = accept(*hintless_session())
+    checker.observe(zpf.SessionEnd(session_id=5))  # was: the same, one block earlier
 
 
-def test_any_hint_anywhere_means_the_session_is_not_hintless():
-    # One hint yields causal edges, so the order rests on something the file
-    # already records and no basis is owed. An ack alone counts.
+def test_a_hint_anywhere_is_still_not_a_conformance_question():
+    # Kept from the basis rule's tests because the shapes are worth holding:
+    # a session carrying seq or ack, and one carrying neither, are all
+    # accepted, and nothing about SEQUENCED changes that.
     finished(HEADER, CAP, zpf.Session(session_id=5, flags=zpf.SessionFlags.SEQUENCED),
              PART, raw_record(seq_start=1000))
     finished(HEADER, CAP, zpf.Session(session_id=5, flags=zpf.SessionFlags.SEQUENCED),
              PART, raw_record(ack=1000))
-
-
-def test_a_basis_satisfies_the_requirement():
-    for basis in sorted(zpf.SEQUENCED_BASES):
-        finished(*hintless_session(sequenced_basis=basis))
 
 
 def test_an_unsequenced_session_owes_no_basis():
@@ -503,7 +503,9 @@ def test_reserved_flag_bits_are_not_a_violation():
     # types and unknown option ids: part of the extension mechanism, "not a
     # violation ... the normal, conformant path". Every flags field is
     # therefore accepted in silence, and the bit survives uninterpreted.
-    accept(zpf.FileHeader(tick_hz=1, flags=zpf.FileFlags(0x0002)))
+    # The File Header lost its flags field with SINGLE_CLOCK in 0.19, so a
+    # reserved bit there is now an unknown *option* instead — the other arm
+    # of the same extension mechanism, covered by the escape tests.
     accept(HEADER, zpf.Session(session_id=5, flags=zpf.SessionFlags(0x0002)))
     accept(*RAW_PRELUDE, raw_record(flags=zpf.RecordFlags(0x2000)))
     accept(*RAW_PRELUDE, raw_record(flags=zpf.RecordFlags(0x2000) | zpf.RecordFlags.PSH))
@@ -513,10 +515,6 @@ def test_a_block_with_reserved_bits_is_still_absorbed():
     # The cascade this prevents: a dropped File Header would make every later
     # block "first block must be a File Header", emptying the whole file, and
     # a dropped Session Descriptor would take its participants and records.
-    checker = accept(zpf.FileHeader(tick_hz=1, flags=zpf.FileFlags(0x0002)))
-    checker.check([CAP, SESS, PART, raw_record()])  # the header counted; the file reads on
-    checker.finish()
-
     checker = accept(HEADER, CAP, zpf.Session(session_id=5, flags=zpf.SessionFlags(0x0002)))
     checker.check([PART, raw_record()])  # the session counted; its records belong to it
 

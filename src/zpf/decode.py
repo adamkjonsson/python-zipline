@@ -634,10 +634,11 @@ def decode_stage(  # noqa: PLR0913
             Costs: the session is held in memory until it ends, and a
             :class:`~zpf.blocks.Discontinuity` cannot be emitted while it
             is on (its meaning is positional, and reordering is what moves
-            it). Each session's ``sequenced_basis`` is derived from the
-            input — see :meth:`zpf.FileWriter.derive_from` — and a session
-            whose input supports no causal order raises rather than
-            claiming one.
+            it). Through `0.18` a session whose input supported no causal
+            order raised rather than claim one; `0.19` removed the option
+            that refusal rested on, so the flag is now asserted and this
+            output's ``produced_by``/``produced_at`` identify who asserted
+            it — see :meth:`zpf.FileWriter.derive_from`.
         input_ref: How to describe the input in the output's Source — see
             :class:`~zpf.InputRef`. Both halves default: the URI to the path
             the input was opened from, the digest to SHA-256 of its bytes.

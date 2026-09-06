@@ -52,7 +52,6 @@ file_headers = st.builds(
     creator=opt_text,
     produced_by=opt_text,
     produced_at=st.none() | i64,
-    flags=st.sampled_from([zpf.FileFlags(0), zpf.FileFlags.SINGLE_CLOCK]),
     comment=opt_text,
     extra_options=extra_options,
 )

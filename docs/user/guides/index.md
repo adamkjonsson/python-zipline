@@ -23,8 +23,7 @@ symbol:
 - **[Provenance](provenance.md)** — input sources and digests, spans, origins,
   the coverage guarantee, and following the provenance chain to recover bytes.
 - **[Ordering](ordering.md)** — causal order from `seq`/`ack`, `timeline()`,
-  sequenced sessions and `verify()`, `SINGLE_CLOCK`, and merging captured
-  directions.
+  sequenced sessions and `verify()`, and merging captured directions.
 - **[Faces and I/O](faces-and-io.md)** — binary vs JSON-Lines, lossless
   conversion, the flat block layer, and reading imperfect files.
 

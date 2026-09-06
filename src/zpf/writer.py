@@ -36,7 +36,6 @@ from zpf.blocks import (
     Decoder,
     Discontinuity,
     End,
-    FileFlags,
     FileHeader,
     InputExtent,
     NameResolution,
@@ -64,7 +63,7 @@ if TYPE_CHECKING:
     from typing import Self
 
     from zpf.blocks import Origin, Span
-    from zpf.reader import FileReader, SessionReader
+    from zpf.reader import FileReader
 
 _KIND_NAMES = {"capture": SourceKind.CAPTURE, "zpf-input": SourceKind.ZPF_INPUT}
 
@@ -197,63 +196,6 @@ class DerivedInput:
         return self.participants[participant.session_id, participant.participant_id]
 
 
-def _derive_sequenced_basis(session: SessionReader, *, single_clock: bool) -> str:
-    """Say what a derived session's causal order actually rests on.
-
-    A derived stage's records are hint-less — decoding replaces `seq`/`ack`
-    with positional offsets — so a SEQUENCED one must name its basis, and
-    the honest answer is whatever the **input's** order rested on. Each
-    branch below is a different such answer, tried most-specific first.
-
-    Args:
-        session: The input session being mirrored.
-        single_clock: Whether the input file declares SINGLE_CLOCK.
-
-    Returns:
-        The ``sequenced_basis`` to declare on the output session.
-
-    Raises:
-        ZpfError: If nothing about the input supports a causal order. The
-            alternative would be naming a basis that is not true, which is
-            worse than refusing: a reader may act on the flag.
-
-    """
-    if len(session.participants) <= 1:
-        # Nothing to interleave, so nothing to get wrong.
-        return "trivial"
-    if _has_ordering_hints(session):
-        # The interleaving came from seq/ack happens-before edges, which
-        # are the transport protocol's, carried in the input's records.
-        return "protocol"
-    if session.sequenced and session.descriptor.sequenced_basis is not None:
-        # The input already answered this question; re-answering it
-        # differently would be a second account of the same order.
-        return session.descriptor.sequenced_basis
-    if single_clock:
-        # No edges, but the input asserts one trustworthy clock — which is
-        # exactly what the (timestamp, pid) merge needs to be sound.
-        return "clock"
-    msg = (
-        f"session {session.session_id} gives no basis for a causal order: its "
-        "records carry no seq/ack, it is not itself sequenced with a declared "
-        "basis, and the input file does not declare SINGLE_CLOCK. Order it "
-        "yourself and pass sequenced_basis explicitly, or derive it unsequenced"
-    )
-    raise ZpfError(msg)
-
-
-def _has_ordering_hints(session: SessionReader) -> bool:
-    """Whether any of the session's records carries a seq/ack hint.
-
-    Stops at the first hint, so the common TCP case is O(1) — the opening
-    record carries one. Only a genuinely hint-less session is walked in
-    full, and only when ``sequenced=`` was asked for.
-    """
-    return any(
-        record.seq_start is not None or record.ack is not None for record in session.records()
-    )
-
-
 def _allocate(used: set[int], explicit: int | None, hint: int) -> tuple[int, int]:
     """Pick an id: the explicit one, or the next free counter value.
 
@@ -292,7 +234,6 @@ class FileWriter:
         produced_by: str | None = None,
         produced_at: int | datetime | None = None,
         transform_params_digest: str | None = None,
-        single_clock: bool = False,
         comment: str | None = None,
         face: Literal["binary", "jsonl"] = "binary",
     ) -> None:
@@ -318,7 +259,6 @@ class FileWriter:
         # option. Each session hands its own callback over, which is why
         # this is a list of closures rather than of writers.
         self._linearizing: list[Callable[[], None]] = []
-        flags = FileFlags.SINGLE_CLOCK if single_clock else FileFlags(0)
         self._header = FileHeader(
             tick_hz=tick_hz,
             time_epoch=time_epoch,
@@ -326,7 +266,6 @@ class FileWriter:
             produced_by=produced_by,
             produced_at=None if produced_at is None else unix_seconds(produced_at),
             transform_params_digest=transform_params_digest,
-            flags=flags,
             comment=comment,
         )
         self._emit(self._header)
@@ -438,7 +377,6 @@ class FileWriter:
         proto: str | None = None,
         key: str | None = None,
         sequenced: bool = False,
-        sequenced_basis: str | None = None,
         verify_order: bool = True,
         linearize: bool = False,
         external_session_id: bytes | None = None,
@@ -454,13 +392,6 @@ class FileWriter:
                 emit this session's records in a valid causal order. That
                 assertion is checked as the records are written; see
                 ``verify_order``.
-            sequenced_basis: What that order rests on — ``"clock"``,
-                ``"protocol"``, ``"external"`` or ``"trivial"``. Required
-                when a sequenced session's records carry no ``seq``/``ack``,
-                since then the order rests on nothing the file records. Safe
-                to set here even though hint-lessness is not settled until
-                the records are written: a producer names what it is
-                *relying on*, which it knows the moment it sets the flag.
             verify_order: Check, as each record is written, that a
                 ``sequenced`` session's stored order really is a valid
                 causal linearization — the per-participant ``seq_start``
@@ -511,7 +442,6 @@ class FileWriter:
                 proto=proto,
                 flow_key=key,
                 flags=flags,
-                sequenced_basis=sequenced_basis,
                 external_session_id=external_session_id,
                 comment=comment,
             )
@@ -565,16 +495,18 @@ class FileWriter:
                 sessions are opened with ``linearize=True``, so records are
                 buffered and interleaved when each session ends.
 
-                Derived records are hint-less — they carry no ``seq``/``ack``
-                — so each session must declare what its order rests on, and
-                that is **derived from the input** rather than guessed:
-                ``trivial`` for a single-participant session; ``protocol``
-                where the input's records carried TCP hints, since those
-                edges are what the order came from; the input's own
-                ``sequenced_basis`` where it declared one; and ``clock``
-                where the input file declares SINGLE_CLOCK. If none of those
-                holds, the input supports no causal order and this raises
-                rather than name a basis that is not true.
+                Derived records are hint-less — decoding replaces
+                ``seq``/``ack`` with positional offsets — so the flag is the
+                producer's assertion and nothing in the file justifies it.
+                Through `0.18` this method refused to set it unless the input
+                gave a basis it could name; `0.19` removed the option that
+                refusal stood on, so the assertion is now taken on the same
+                trust a reader already extends to the stored order itself.
+                What answers "where did this order come from" is the build
+                provenance of the file that set the flag —
+                ``produced_by``/``produced_at``, and
+                ``transform_params_digest`` where a merge's ordering key
+                lives — reached by walking ``zpf-input`` Sources back.
             comment: Free-text note for the Source.
 
         Returns:
@@ -605,11 +537,6 @@ class FileWriter:
                 key=session.key,
                 session_id=session.session_id,
                 sequenced=sequenced,
-                sequenced_basis=(
-                    _derive_sequenced_basis(session, single_clock=header.single_clock)
-                    if sequenced
-                    else None
-                ),
                 linearize=sequenced,
             )
             sessions[session.session_id] = out
@@ -1068,7 +995,6 @@ def create(
     produced_by: str | None = None,
     produced_at: int | datetime | None = None,
     transform_params_digest: str | None = None,
-    single_clock: bool = False,
     comment: str | None = None,
     face: Literal["binary", "jsonl"] = "binary",
 ) -> FileWriter:
@@ -1093,8 +1019,6 @@ def create(
             that produced records **without decoding** them — a filter, a
             reordering stage, a merge. A decode stage records its
             configuration on its Decoder instead.
-        single_clock: Assert every record is stamped against one
-            trustworthy clock (the SINGLE_CLOCK file flag).
         comment: Free-text note.
         face: ``"binary"`` (the canonical container) or ``"jsonl"``.
 
@@ -1111,7 +1035,6 @@ def create(
         produced_by=produced_by,
         produced_at=produced_at,
         transform_params_digest=transform_params_digest,
-        single_clock=single_clock,
         comment=comment,
         face=face,
     )

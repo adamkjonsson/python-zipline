@@ -79,11 +79,10 @@ origin, so wall time, when you need it, is
 Capture time keeps replay deterministic: live and offline runs of the same
 traffic order identically, regardless of when the file was written.
 
-One file-level flag qualifies the clock: `SINGLE_CLOCK` asserts that every
-record in the file was stamped against *one trustworthy clock*, so
-timestamps are comparable across sessions and sources. It matters for
-sequencing sessions that have no better ordering signal — see the next
-section.
+Nothing in the file says whether its timestamps are comparable across
+sessions and sources. A `SINGLE_CLOCK` header flag asserted that through
+`0.18`; `0.19` removed it, so a consumer comparing timestamps from two
+sources is relying on something the format does not state.
 
 ## Ordering: why timestamps are not enough
 
@@ -126,10 +125,12 @@ or `zpf validate --verify` on the command line).
 
 A session with no seq/ack hints (chat, one-way UDP) has no causal edges, so
 its sequenced order rests on something the file does not otherwise record.
-A producer must not mark such a session `SEQUENCED` without a sound basis,
-and must name that basis in **`sequenced_basis`** — `clock` (the
-`SINGLE_CLOCK` case), `protocol`, `external`, or `trivial` when there was
-never a cross-participant order to get wrong. See the
+Through `0.18` a producer had to name that basis in a `sequenced_basis`
+option; `0.19` removed it, and `SEQUENCED` became a bare assertion, taken on
+the same trust a reader already extends to the stored order itself — which it
+cannot check either. When an order looks wrong, what identifies it is the
+build provenance of the file that set the flag: `produced_by`, `produced_at`,
+and `transform_params_digest` where a merge's ordering key lives. See the
 [ordering guide](guides/ordering.md#what-a-hint-less-sequenced-session-rests-on).
 
 Setting the flag is a promise, so this library checks it as you make it:

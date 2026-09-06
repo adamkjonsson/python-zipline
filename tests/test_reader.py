@@ -329,10 +329,14 @@ def test_an_unusable_prim_label_costs_the_reader_nothing():
 
 
 def reserved_flag_bits_file() -> bytes:
-    """Build a readable file whose header, session, and a record set a reserved bit."""
+    """Build a readable file whose session and a record set a reserved bit.
+
+    The File Header lost its ``flags`` field with SINGLE_CLOCK in 0.19, so it
+    has no reserved bits left to set; the other two fields still have them.
+    """
     sink = io.BytesIO()
     with zpf.BlockWriter(sink) as w:  # permissive flat writer
-        w.write(zpf.FileHeader(tick_hz=1, flags=zpf.FileFlags(0x0002)))
+        w.write(zpf.FileHeader(tick_hz=1))
         w.write(zpf.Source(source_id=0, kind=zpf.SourceKind.CAPTURE))
         w.write(zpf.Session(session_id=0, proto="tcp", flags=zpf.SessionFlags(0x0002)))
         w.write(zpf.Participant(session_id=0, participant_id=0))

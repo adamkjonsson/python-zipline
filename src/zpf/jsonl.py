@@ -45,7 +45,6 @@ from zpf.blocks import (
     Decoder,
     Discontinuity,
     End,
-    FileFlags,
     FileHeader,
     InputExtent,
     NameResolution,
@@ -364,8 +363,6 @@ def _enc_file(block: FileHeader, on_issue: Callable[[str], None]) -> dict[str, A
     _put(obj, "produced_by", block.produced_by)
     _put(obj, "produced_at", None if block.produced_at is None else _num64(block.produced_at))
     _put(obj, "transform_params_digest", block.transform_params_digest)
-    if block.flags & FileFlags.SINGLE_CLOCK:
-        obj["single_clock"] = True
     _put(obj, "comment", block.comment)
     return obj
 
@@ -406,7 +403,6 @@ def _enc_session(block: Session, on_issue: Callable[[str], None]) -> dict[str, A
     _put(obj, "key", block.flow_key)
     if block.flags & SessionFlags.SEQUENCED:
         obj["sequenced"] = True
-    _put(obj, "sequenced_basis", block.sequenced_basis)
     # Opaque bytes, so base64 rather than spelled out — a reader MUST NOT
     # assume it is text even when it decodes to printable ASCII.
     if block.external_session_id is not None:
@@ -604,7 +600,6 @@ _ENCODERS: dict[type[Block], Callable[[Any, Callable[[str], None]], dict[str, An
 def _dec_file(reader: _ObjReader) -> FileHeader:
     version_major, version_minor = _parse_format(reader.require("format"))
     tick_hz = reader.require_int("tick_hz")
-    flags = FileFlags.SINGLE_CLOCK if _take_flag(reader, "single_clock") else FileFlags(0)
     return FileHeader(
         tick_hz=tick_hz,
         version_major=version_major,
@@ -614,7 +609,6 @@ def _dec_file(reader: _ObjReader) -> FileHeader:
         produced_by=reader.take_str("produced_by"),
         produced_at=reader.take_int("produced_at"),
         transform_params_digest=reader.take_str("transform_params_digest"),
-        flags=flags,
         comment=reader.take_str("comment"),
         extra_options=reader.options(),
     )
@@ -674,7 +668,6 @@ def _dec_session(reader: _ObjReader) -> Session:
         proto=reader.take_str("proto"),
         flow_key=reader.take_str("key"),
         flags=flags,
-        sequenced_basis=reader.take_str("sequenced_basis"),
         external_session_id=external,
         comment=reader.take_str("comment"),
         extra_options=reader.options(),

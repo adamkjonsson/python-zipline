@@ -185,7 +185,6 @@ FULL_BLOCKS = [
         creator="test 1.0",
         produced_by="zpf-merge 1.2",
         produced_at=1_719_510_000,
-        flags=zpf.FileFlags.SINGLE_CLOCK,
         comment="a header",
         extra_options=(zpf.RawOption(0x0FFF, b"x"),),
     ),
@@ -198,7 +197,6 @@ FULL_BLOCKS = [
         proto="tcp",
         flow_key="a <-> b",
         flags=zpf.SessionFlags.SEQUENCED,
-        sequenced_basis="clock",
         comment="s",
     ),
     zpf.Participant(
@@ -262,7 +260,6 @@ def test_aliases_and_key_shapes():
     assert participant_obj["endpoint"] == ["vni:5001", "10.0.0.1:51000"]  # tunnel = array
     assert participant_obj["tcp_role"] == "responder"
     header_obj = block_to_obj(FULL_BLOCKS[0])
-    assert header_obj["single_clock"] is True
     assert header_obj["options"] == [{"id": "0x0FFF", "value": "eA=="}]
 
 
@@ -270,7 +267,6 @@ def test_zero_flags_and_absent_options_are_omitted():
     obj = block_to_obj(zpf.Record(session_id=1, sender_pid=0, source_id=0, timestamp=0))
     assert set(obj) == {"type", "session_id", "sender_pid", "source_id", "ts", "payload"}
     assert "sequenced" not in block_to_obj(zpf.Session(session_id=1))
-    assert "single_clock" not in block_to_obj(zpf.FileHeader(tick_hz=1))
 
 
 def test_tcp_role_unknown_is_omitted_like_absent():

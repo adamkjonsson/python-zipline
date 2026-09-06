@@ -128,13 +128,11 @@ with zpf.decode_stage(..., sequenced=True) as dec:
 ```
 
 Decoded records are hint-less — decoding replaces `seq`/`ack` with positional
-offsets — so each session must declare what its order rests on. The stage
-derives that from the input rather than guessing: `trivial` for a
-single-participant session, `protocol` where the input's records carried TCP
-hints (those edges are where the order came from), the input's own
-`sequenced_basis` where it declared one, and `clock` where the input file
-declares `SINGLE_CLOCK`. An input supporting none of them raises, rather than
-naming a basis that is not true — the flag is something a reader may act on.
+offsets — so nothing in the output records what its order rests on. Through
+`0.18` the stage had to name a basis, derived from the input, and refused an
+input that supported none. `0.19` removed the option and the refusal with it:
+the flag is the producer's assertion, and what identifies the run that made it
+is the output's own `produced_by` / `produced_at`.
 
 Two costs. The session is held in memory until it ends, so this suits a stage
 working per completed session rather than an open-ended one. And

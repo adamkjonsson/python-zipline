@@ -688,18 +688,15 @@ def test_a_stages_first_record_has_no_seam_to_declare(tmp_path: Path):
 # --- sequenced= : causal output order (#50) -------------------------------------------
 
 
-def hintless_file(*, single_clock: bool = False, sequenced_basis: str | None = None) -> bytes:
+def hintless_file(*, sequenced: bool = False) -> bytes:
     """Build a two-participant session whose records carry no seq/ack at all."""
     sink = io.BytesIO()
-    with zpf.create(
-        sink, tick_hz=1_000_000, time_epoch=42, single_clock=single_clock
-    ) as writer:
+    with zpf.create(sink, tick_hz=1_000_000, time_epoch=42) as writer:
         writer.add_source("capture", uri="chat.pcap")
         with writer.begin_session(
             proto="irc",
             session_id=7,
-            sequenced=sequenced_basis is not None,
-            sequenced_basis=sequenced_basis,
+            sequenced=sequenced,
         ) as session:
             alice = session.participant("alice")
             bob = session.participant("bob")
@@ -749,8 +746,15 @@ def test_sequenced_stage_emits_the_inputs_timeline_not_two_monologues():
     assert [pid for pid, _ in order] == [0, 1]  # client, then server
 
 
-def test_sequenced_stage_derives_protocol_from_a_tcp_input():
-    """The input's records carried seq/ack, so the order rests on those edges."""
+def test_a_sequenced_stage_sets_the_flag_and_orders_causally():
+    """The flag, and the order it announces — which is what survived package B.
+
+    Through `0.18` this also asserted ``sequenced_basis == "protocol"``,
+    derived from the input's records carrying seq/ack. `0.19` removed the
+    option; what it never removed is the obligation the flag creates, so this
+    asserts the part a reader can still act on: stored order is a valid causal
+    order, and :meth:`~zpf.SessionReader.verify` agrees.
+    """
     sink = io.BytesIO()
     with zpf.decode_stage(
         io.BytesIO(raw_file()),
@@ -765,29 +769,33 @@ def test_sequenced_stage_derives_protocol_from_a_tcp_input():
             dec.record(stream, whole, ts=1, cites=(0, len(whole)))
     with zpf.open(io.BytesIO(sink.getvalue())) as reader:
         (session,) = reader.sessions()
-        assert session.descriptor.sequenced_basis == "protocol"
+        assert session.sequenced
+        session.verify()
 
 
-@pytest.mark.parametrize(
-    ("kwargs", "expected"),
-    [
-        ({"single_clock": True}, "clock"),
-        ({"sequenced_basis": "external"}, "external"),
-    ],
-)
-def test_sequenced_stage_derives_a_hintless_inputs_basis(kwargs: object, expected: str):
-    """No seq/ack: fall back to what the input itself says its order rests on."""
+def test_a_sequenced_stage_over_a_hintless_input_no_longer_needs_a_basis():
+    """Package B, from the stage's side: the refusal is gone.
+
+    Through `0.18` this input was the case ``derive_from`` refused. Its records
+    carry no ``seq``/``ack``, it declared no basis of its own, and its file
+    declared no SINGLE_CLOCK — so there was nothing true to write in
+    ``sequenced_basis``, and naming one anyway was worse than raising, a reader
+    being entitled to act on the flag.
+
+    `0.19` removed the option, so there is nothing left to be unable to say.
+    The stage sets SEQUENCED, linearizes, and the assertion rests on the same
+    trust a reader already extends to any stored order. What answers "where did
+    this order come from" is now the build provenance this output carries.
+    """
     sink = io.BytesIO()
     with zpf.decode_stage(
-        io.BytesIO(hintless_file(**kwargs)),
+        io.BytesIO(hintless_file()),
         sink,
         decoder="chat",
         produced_by="d 1",
         produced_at=1,
         sequenced=True,
     ) as dec:
-        # A hint-less participant is packet-oriented: no seq_start, so no
-        # stream to reassemble — its records are datagrams.
         for stream in dec.streams():
             for datagram in stream.datagrams():
                 dec.record(
@@ -798,20 +806,12 @@ def test_sequenced_stage_derives_a_hintless_inputs_basis(kwargs: object, expecte
                 )
     with zpf.open(io.BytesIO(sink.getvalue())) as reader:
         (session,) = reader.sessions()
-        assert session.descriptor.sequenced_basis == expected
-
-
-def test_sequenced_stage_refuses_an_input_that_supports_no_order():
-    """No hints, no declared basis, no SINGLE_CLOCK — so there is no honest answer."""
-    with pytest.raises(zpf.ZpfError, match="no basis for a causal order"):
-        zpf.decode_stage(
-            io.BytesIO(hintless_file()),
-            io.BytesIO(),
-            decoder="chat",
-            produced_by="d 1",
-            produced_at=1,
-            sequenced=True,
-        )
+        assert session.sequenced
+        assert reader.diagnostics == []
+        # The forensic answer moved here, and it is the whole of what a
+        # consumer gets: which run of which tool asserted the order.
+        assert reader.header.produced_by == "d 1"
+        assert reader.header.produced_at == 1
 
 
 # --- chained stages: input shape follows the records (#56) ----------------------------

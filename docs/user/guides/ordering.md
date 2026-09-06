@@ -189,38 +189,39 @@ prevent. Use `timeline()` for order.
 
 A session with no `seq/ack` hints — a chat room, a one-way UDP feed — has no
 causal edges at all, so its order rests on something the file does not otherwise
-record. A producer must therefore not mark such a session `SEQUENCED` without a
-sound basis, and **must say what that basis is** in `sequenced_basis`:
+record.
 
-| Value | The order rests on |
-|-------|--------------------|
-| `clock` | one trustworthy clock shared by every record — the `SINGLE_CLOCK` case |
-| `protocol` | ordering carried by the protocol itself, e.g. a server-assigned sequence |
-| `external` | an order the producer knows out of band |
-| `trivial` | nothing to get wrong — one participant, or only one that ever sends |
+**Through `0.18` the format made the producer say what.** A `sequenced_basis`
+option named one of `clock`, `protocol`, `external` or `trivial`, recording it
+was unconditional, and omitting it on a hint-less sequenced session was a
+semantic violation the writer refused. A file-wide `SINGLE_CLOCK` flag supplied
+the `clock` basis for every session in a file.
+
+**`0.19` removed both**, and `SEQUENCED` became a bare assertion: the stored
+order is a valid causal order, taken on the same trust a reader already extends
+to the order itself, which it cannot check either. The basis was mostly not
+something a consumer branched on, and the one mechanical cross-check it enabled
+— a `clock` basis in a multi-source file that declined `SINGLE_CLOCK` — lost
+both of its operands with the options.
 
 ```python
 with zpf.create("chat.zpf", tick_hz=1_000_000) as w:
     w.add_source("capture", uri="chat.pcap")
-    with w.begin_session(proto="irc", sequenced=True,
-                         sequenced_basis="clock") as session:
+    with w.begin_session(proto="irc", sequenced=True) as session:
         ...
 ```
 
-Recording it is unconditional — `trivial` exists so a producer with nothing to
-get wrong still names what it relied on. Omitting it on a hint-less sequenced
-session is a semantic violation, and the writer refuses it.
+**Where the forensic answer went.** The basis named a *category* of reasoning,
+not the thing you need when an order looks wrong, which is which run of which
+tool produced it. That is the build provenance of the file that set the flag —
+`produced_by`, `produced_at`, and `transform_params_digest`, where a merge's
+ordering key lives — reached by walking `zpf-input` Sources back to the first
+file that marked the session.
 
-Note *when* that can be judged: whether a session is hint-less is a property of
-its **records**, and declare-on-first-use puts the Session Descriptor before
-them. A reader therefore concludes it only at Session End or end-of-stream,
-which is where {class}`~zpf.ConformanceChecker` defers the check. The producer
-needs no such deferral — it decides by what it is relying on, which it knows the
-moment it sets the flag.
-
-The file-wide `SINGLE_CLOCK` flag (`zpf.create(..., single_clock=True)`) asserts
-every record in the file shares one clock, and supplies the `clock` basis for
-every hint-less session in it.
+**What did not change** is the obligation the flag creates. Setting it is still
+a promise, and this library still checks it as you make it (below), because a
+reader of a sequenced session skips the merge: a bad interleaving is not merely
+unnoticed, it is acted on.
 
 ## Merging separately-captured directions
 

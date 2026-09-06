@@ -57,8 +57,8 @@ SPEC_VERSION: tuple[int, int] = (0, 19)
 #: of the stream was **removed**, where ``skipped`` withheld something that
 #: carried no content (a byte-order mark, framing). The pair are byte-shaped
 #: alike, which is exactly why the word had to exist — it is the single-file
-#: signal that the survivors either side may not join, and
-#: :meth:`~zpf.ConformanceChecker._check_unmarked_breaks` tests for it. Since
+#: signal that the survivors either side may not join, and the conformance
+#: checker's unmarked-break predicate tests for it. Since
 #: ``0.18`` a stage that removed content **MUST** spell it ``dropped``, with any
 #: further specificity in ``comment``; that is a deliberate qualification of an
 #: otherwise open vocabulary, and it exists so the word stays decidable.
@@ -72,16 +72,6 @@ UNDECODED_REASONS: dict[str, str] = {
 
 #: The two recoverability classes a ``reason_class`` may name.
 REASON_CLASSES: frozenset[str] = frozenset({"bytes", "hole"})
-
-#: The defined ``sequenced_basis`` values. The vocabulary is open and a reader
-#: MUST NOT reject a session for a value it does not recognise — an unknown
-#: value simply means an unknown basis.
-#:
-#: ``trivial`` covers a session with one participant, or only one that ever
-#: sends: there was never a cross-participant order to get wrong. Recording a
-#: basis is unconditional even then, because what a producer is *relying on*
-#: is the one thing it always knows when it sets the flag.
-SEQUENCED_BASES: frozenset[str] = frozenset({"clock", "protocol", "external", "trivial"})
 
 
 def unsupported_version(version_major: int, version_minor: int) -> str | None:
@@ -156,13 +146,6 @@ class TcpRole(IntEnum):
     UNKNOWN = 0
     INITIATOR = 1
     RESPONDER = 2
-
-
-class FileFlags(IntFlag):
-    """File Header ``flags`` bitfield (u16)."""
-
-    SINGLE_CLOCK = 0x0001
-    """Every record in the file was stamped against one trustworthy clock."""
 
 
 class SessionFlags(IntFlag):
@@ -393,10 +376,6 @@ def _unpack_tcp_role(value: bytes) -> TcpRole | int:
         return TcpRole(raw)
     except ValueError:
         return raw
-
-
-def _unpack_file_flags(value: bytes) -> FileFlags:
-    return FileFlags(_unpack_u16(value))
 
 
 def _unpack_session_flags(value: bytes) -> SessionFlags:
@@ -662,7 +641,6 @@ class FileHeader(Block):
             stage, a merge. A decode stage's configuration lives on its
             :class:`Decoder` as ``params_digest`` instead; the two are separate
             because a file can be the output of one, the other, or neither.
-        flags: File-level flags (:class:`FileFlags`).
         comment: Free-text note.
         extra_options: Preserved unrecognized/duplicate option occurrences.
 
@@ -678,7 +656,6 @@ class FileHeader(Block):
     produced_by: str | None = None
     produced_at: int | None = None
     transform_params_digest: str | None = None
-    flags: FileFlags = FileFlags(0)
     comment: str | None = None
     extra_options: tuple[RawOption, ...] = ()
 
@@ -688,7 +665,6 @@ class FileHeader(Block):
         _OptSpec(_frame.OPT_CREATOR, "creator", _unpack_str, _pack_str),
         _OptSpec(_frame.OPT_PRODUCED_BY, "produced_by", _unpack_str, _pack_str),
         _OptSpec(_frame.OPT_PRODUCED_AT, "produced_at", _unpack_i64, _pack_i64),
-        _OptSpec(_frame.OPT_FILE_FLAGS, "flags", _unpack_file_flags, _pack_u16, skip_zero=True),
         _OptSpec(
             _frame.OPT_TRANSFORM_PARAMS_DIGEST,
             "transform_params_digest",
@@ -708,14 +684,7 @@ class FileHeader(Block):
             raise EncodeError(unsupported)
         _check_i64_opt(self.time_epoch, "time_epoch")
         _check_i64_opt(self.produced_at, "produced_at")
-        _check_uint(int(self.flags), 16, "flags")
-        object.__setattr__(self, "flags", FileFlags(self.flags))
         object.__setattr__(self, "extra_options", tuple(self.extra_options))
-
-    @property
-    def single_clock(self) -> bool:
-        """Whether the SINGLE_CLOCK file flag is set."""
-        return bool(self.flags & FileFlags.SINGLE_CLOCK)
 
     def _encode(self) -> bytes:
         body = _FILE_HEADER_BODY.pack(
@@ -883,9 +852,6 @@ class Session(Block):
         proto: Session protocol (lowercase; e.g. ``"tcp"``, ``"http"``).
         flow_key: Human-readable flow key, e.g. ``"a:port <-> b:port"``.
         flags: Session-level flags (:class:`SessionFlags`).
-        sequenced_basis: What a SEQUENCED hint-less session's order rests on;
-            see :data:`SEQUENCED_BASES`. Required on such a session, and
-            meaningless without the SEQUENCED flag.
         external_session_id: An identity assigned by something *outside* this
             format — a trace id, a capture orchestrator's UUID, a case number.
             **Opaque bytes, not text.** Nothing here interprets it, and a
@@ -902,7 +868,6 @@ class Session(Block):
     proto: str | None = None
     flow_key: str | None = None
     flags: SessionFlags = SessionFlags(0)
-    sequenced_basis: str | None = None
     external_session_id: bytes | None = None
     comment: str | None = None
     extra_options: tuple[RawOption, ...] = ()
@@ -914,7 +879,6 @@ class Session(Block):
         _OptSpec(
             _frame.OPT_SESSION_FLAGS, "flags", _unpack_session_flags, _pack_u16, skip_zero=True
         ),
-        _OptSpec(_frame.OPT_SEQUENCED_BASIS, "sequenced_basis", _unpack_str, _pack_str),
         _OptSpec(
             _frame.OPT_EXTERNAL_SESSION_ID, "external_session_id", _unpack_bytes, _pack_bytes
         ),
