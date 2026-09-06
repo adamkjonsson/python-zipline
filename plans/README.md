@@ -40,6 +40,6 @@ the test suite.
 
 | Document | What it is |
 | --- | --- |
-| [`V0.3.0-RELEASE-PLAN.md`](V0.3.0-RELEASE-PLAN.md) | The four issues open at `0.2.0` (#58, #59, #62, #63), the API break that makes `0.3.0` a minor, and the three items it sends upstream. **Live.** |
-| [`SIMPLIFICATION-IMPACT.md`](SIMPLIFICATION-IMPACT.md) | What the spec repository's simplification analysis would remove from this library, what it would cost, and which phases of the `0.3.0` plan it puts on hold. **Live.** |
+| [`V0.3.0-RELEASE-PLAN.md`](V0.3.0-RELEASE-PLAN.md) | The `0.16` → `0.19` port and the four issues open at `0.2.0` (#58, #59, #62, #63), including the API break that makes `0.3.0` a minor. **Live** — Phase 0 landed 2026-09-06; Phase 1 next. |
+| [`SIMPLIFICATION-IMPACT.md`](SIMPLIFICATION-IMPACT.md) | What the spec repository's simplification analysis would remove from this library, and what it would cost. `0.19` answered it by taking the three packages it supports; historical, and its header says what it missed. |
 | [`V0.2.0-ISSUES-PLAN.md`](V0.2.0-ISSUES-PLAN.md) | The four issues on the `v0.2.0` milestone (#47, #48, #49, #50). Shipped in `0.2.0`; historical. |
