@@ -202,7 +202,8 @@ def record_ranges(
         own, so the result index-matches the records and that is a promise
         callers rely on.
 
-        An **unplaceable** record (see :func:`_offset_of`) gets a zero-width
+        An **unplaceable** record — no ``seq_start`` on a sequence-anchored
+        stream, or one below the origin — gets a zero-width
         range at the **running maximum** — the highest ``off_end`` any earlier
         record of this participant reached, or ``0`` where there is none. It
         therefore covers no byte and moves no extent, which is the part the
