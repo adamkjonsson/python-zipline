@@ -294,7 +294,7 @@ class DecodeStage:
         stream: DecodeStream,
         payload: bytes = b"",
         *,
-        ts: int,
+        ts: int | None = None,
         content_type: str | None = None,
         cites: _Cites = None,
         spans: Sequence[Span] = (),
@@ -328,10 +328,17 @@ class DecodeStage:
         Args:
             stream: The input stream this record was decoded from.
             payload: The decoded bytes.
-            ts: Record time in the file's ticks — per the specification's
-                timestamp rule, the completion time of the last input
-                record the payload came from (a run's
-                :attr:`Segment.ts <zpf.reassembly.Segment.ts>`).
+            ts: Record time in the file's ticks. **Omit it and it is derived
+                from** ``cites``, which is the answer the specification's
+                timestamp rule gives: the completion time of the last input
+                record in this unit's span set. Deriving it is the point —
+                `#62 <https://github.com/adamkjonsson/python-zipline/issues/62>`_
+                exists because the wrong answer was the easy one to reach for,
+                a run's :attr:`Segment.ts <zpf.reassembly.Segment.ts>` being
+                right only for a unit that spans the whole run.
+
+                Pass it explicitly for a record citing no single range of one
+                input stream, where there is nothing to derive from.
             content_type: ``dec:``/``mime:``/``prim:`` payload label.
             cites: The input range this record was built from: an
                 ``(off_start, off_end)`` pair, a ready
@@ -373,6 +380,8 @@ class DecodeStage:
                 "from; pass cites= or spans=, or emit an Undecoded marker instead"
             )
             raise SemanticError(msg)
+        if ts is None:
+            ts = self._derive_ts(stream, all_spans)
         self._track(self._cited, all_spans)
         if seam is not None and stream.pid in self._emitted:
             stream.session.discontinuity(
@@ -391,6 +400,48 @@ class DecodeStage:
             ack=None if hints is None else hints.ack,
             comment=comment,
         )
+
+    def _derive_ts(self, stream: DecodeStream, spans: tuple[Span, ...]) -> int:
+        """Work out a record's timestamp from the input ranges it cites.
+
+        The specification's rule, applied: a decoded record's ``timestamp`` is
+        that of the last source element **in its span set**. So this is the
+        maximum over every cited range of this stage's input, which for a unit
+        inside a reassembled run is *not* the run's own completion time.
+
+        Args:
+            stream: The input stream the record was decoded from.
+            spans: The record's spans, already normalised.
+
+        Returns:
+            The derived timestamp.
+
+        Raises:
+            SemanticError: If nothing can be derived — the record cites no
+                range of this stream, or names offsets it does not hold. The
+                alternative is inventing a time, and a timestamp nobody can
+                trace is worse than being asked for one.
+
+        """
+        source_id = self.derived.source.source_id
+        stamps = [
+            found
+            for span in spans
+            if span.source_id == source_id
+            and span.session_id == stream.session_id
+            and span.participant_id == stream.pid
+            for found in (stream.view.ts_for(span.off_start, span.off_end),)
+            if found is not None
+        ]
+        if not stamps:
+            msg = (
+                "cannot derive ts from cites: this record cites no range of "
+                f"(session {stream.session_id}, pid {stream.pid}) that any input "
+                "record contributed bytes to. Pass ts= explicitly, which is what a "
+                "record citing several streams or an empty range has to do"
+            )
+            raise SemanticError(msg)
+        return max(stamps)
 
     def undecoded(
         self,

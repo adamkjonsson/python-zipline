@@ -72,6 +72,7 @@ from zpf.order import causal_merge, record_end, seq_geq, seq_leq, seq_lt, verify
 from zpf.reader import FileReader, SessionReader, as_datetime, detect_face, open
 from zpf.reassembly import (
     Break,
+    Contribution,
     Datagram,
     Gap,
     Segment,
@@ -145,6 +146,7 @@ __all__ = [
     "RawOption",
     "Record",
     "RecordFlags",
+    "Contribution",
     "Segment",
     "Seam",
     "SemanticError",

@@ -39,10 +39,10 @@ with zpf.decode_stage(
         for segment in stream.segments():
             for start, end, kind in split_messages(segment.data):
                 dec.record(
-                    stream, segment.data[start:end], ts=segment.ts,
+                    stream, segment.data[start:end],
                     content_type=f"dec:http-{kind}",
                     cites=(segment.off_start + start, segment.off_start + end),
-                )
+                )   # ts is derived from cites: per unit, not per run
 ```
 
 See [the orchestrator](../guides/decoding.md#writing-the-decode-stage) for

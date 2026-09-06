@@ -740,3 +740,100 @@ def test_stream_extent_is_what_the_coverage_check_measures_with():
         _, extent = measure(reader)
     assert extent == 8
     assert extent < SEQ_SPACE  # the wrapped reading was 4294967303
+
+
+# --- Per-unit timestamps: the rule is per span set, not per run (#62) -----------------
+
+
+def test_a_run_carries_the_time_of_each_record_that_built_it():
+    """#62's own case, and what `Segment.ts` cannot answer.
+
+    Three messages arrive in three packets and reassembly offers them as one
+    run. The run's `ts` is 3000 for all of it, which is right for the run and
+    wrong for two of the three units — the specification stamps a decoded
+    record with the time of the last source element **in its span set**.
+    """
+    def fill(s: zpf.SessionWriter) -> None:
+        p = s.participant("10.0.0.1:51000", isn=1000)
+        s.record(p, ts=1000, payload=b"AAAA", seq_start=1001)
+        s.record(p, ts=2000, payload=b"BBBB", seq_start=1005)
+        s.record(p, ts=3000, payload=b"CCCC", seq_start=1009)
+
+    (segment,) = only_view(fill).segments()
+    assert segment.ts == 3000  # the run completed then
+    assert [segment.ts_for(a, b) for a, b in ((0, 4), (4, 8), (8, 12))] == [1000, 2000, 3000]
+    # A unit spanning the whole run is the one case where `ts` is the answer.
+    assert segment.ts_for(0, 12) == segment.ts
+
+
+def test_a_unit_straddling_two_records_completes_with_the_later():
+    """The span set is what decides, so a unit built from two packets waits."""
+    def fill(s: zpf.SessionWriter) -> None:
+        p = s.participant("10.0.0.1:51000", isn=1000)
+        s.record(p, ts=1000, payload=b"AAAA", seq_start=1001)
+        s.record(p, ts=2000, payload=b"BBBB", seq_start=1005)
+
+    (segment,) = only_view(fill).segments()
+    assert segment.ts_for(2, 6) == 2000
+    assert segment.ts_first_for(2, 6) == 1000  # but it started arriving earlier
+
+
+def test_a_retransmit_contributing_no_accepted_byte_does_not_move_the_time():
+    """The case a hand-rolled table gets wrong, and why this is an API.
+
+    Under the favour-old overlap policy the second record's bytes are already
+    covered, so it contributes nothing and its later timestamp must not reach
+    the unit. Building the table from record timestamps outside the library
+    stamps this range 9999 — wrong, and wrong only on a lossy capture, which
+    is the worst place to find out.
+    """
+    def fill(s: zpf.SessionWriter) -> None:
+        p = s.participant("10.0.0.1:51000", isn=1000)
+        s.record(p, ts=1000, payload=b"AAAA", seq_start=1001)
+        s.record(p, ts=9999, payload=b"AAAA", seq_start=1001,
+                 flags=zpf.RecordFlags.RETRANSMIT)
+        s.record(p, ts=2000, payload=b"BBBB", seq_start=1005)
+
+    (segment,) = only_view(fill).segments()
+    assert segment.data == b"AAAABBBB"
+    # The retransmit is absent from the contributors entirely: trimming
+    # happens first, so it never had accepted bytes to record.
+    assert [(c.off_start, c.off_end, c.ts) for c in segment.contributors] == [
+        (0, 4, 1000),
+        (4, 8, 2000),
+    ]
+    assert segment.ts_for(0, 4) == 1000
+    assert segment.ts == 2000
+
+
+def test_ts_first_falls_back_to_the_records_own_timestamp():
+    """A record declaring no ts_first states only one arrival time."""
+    def fill(s: zpf.SessionWriter) -> None:
+        p = s.participant("10.0.0.1:51000", isn=1000)
+        s.record(p, ts=1000, payload=b"AAAA", seq_start=1001, ts_first=900)
+        s.record(p, ts=2000, payload=b"BBBB", seq_start=1005)
+
+    (segment,) = only_view(fill).segments()
+    assert segment.ts_first_for(0, 4) == 900
+    assert segment.ts_first_for(4, 8) == 2000  # no ts_first: its timestamp stands
+
+
+def test_a_hand_built_segment_falls_back_to_the_runs_time():
+    """No contributors to read, so the run's own time is all there is."""
+    segment = zpf.Segment(data=b"abcd", off_start=0, off_end=4, ts=42)
+    assert segment.ts_for(0, 2) == 42
+    assert segment.ts_first_for(0, 2) == 42
+
+
+def test_the_stream_answers_the_same_question_for_absolute_offsets():
+    """`StreamView.ts_for` is what a decode stage uses, `cites` being absolute."""
+    def fill(s: zpf.SessionWriter) -> None:
+        p = s.participant("10.0.0.1:51000", isn=1000)
+        s.record(p, ts=1000, payload=b"AAAA", seq_start=1001)
+        s.record(p, ts=2000, payload=b"BBBB", seq_start=1005)
+
+    view = only_view(fill)
+    assert view.ts_for(0, 4) == 1000
+    assert view.ts_for(4, 8) == 2000
+    assert view.ts_for(0, 8) == 2000
+    assert view.ts_for(8, 12) is None  # nothing there to have a time

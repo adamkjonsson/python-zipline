@@ -296,8 +296,27 @@ class Segment:
         data: The run's bytes.
         off_start: Logical stream offset of ``data[0]``.
         off_end: One past the run's last offset (``off_start + len(data)``).
-        ts: Completion time of the run — the timestamp of the last record
+        ts: Completion time of the **run** — the timestamp of the last record
             that contributed to it, in the file's ``tick_hz`` ticks.
+
+            **This is not the answer for a unit inside the run**, and reaching
+            for it is the trap
+            `#62 <https://github.com/adamkjonsson/python-zipline/issues/62>`_
+            reports. The specification stamps a decoded record with the
+            completion time of the last source element **in its span set** —
+            per unit, not per run — so three messages arriving in three packets
+            carry three different times even though reassembly offered them as
+            one segment. Use :meth:`ts_for` with the range you are citing;
+            ``ts`` is right only for a unit that spans the whole run.
+        contributors: The input records behind the run, in offset order and
+            **after** the overlap trimming :meth:`StreamView.chunks` performs,
+            so a retransmit that contributed no accepted byte is absent. This
+            is what :meth:`ts_for` reads, and it cannot be rebuilt from outside
+            — by the time a caller has the run, the record boundaries inside it
+            are gone. Excluded from equality and repr: two runs with the same
+            bytes at the same offsets completed at the same time are the same
+            run, however many records built them, which is the erasure
+            reassembly exists to perform.
         view: The stream this run came from, so the segment can
             :meth:`cite` itself. Excluded from equality and repr.
 
@@ -307,7 +326,79 @@ class Segment:
     off_start: int
     off_end: int
     ts: int
+    contributors: tuple[Contribution, ...] = field(
+        default=(), compare=False, repr=False
+    )
     view: StreamView | None = field(default=None, compare=False, repr=False)
+
+    def ts_for(self, local_start: int, local_end: int) -> int:
+        """Return the completion time of a unit occupying part of this run.
+
+        The specification's timestamp rule, made reachable: a decoded record
+        inherits the timestamp of the last source element **in its span set**.
+        So this is the **maximum** ``timestamp`` over the input records that
+        contributed accepted bytes to ``[local_start, local_end)``.
+
+        **Offsets are relative to this run**, exactly as :meth:`cite` takes
+        them, so the two read as a pair::
+
+            for start, end, kind in split_messages(segment.data):
+                dec.record(stream, segment.data[start:end],
+                           ts=segment.ts_for(start, end),
+                           cites=(segment.off_start + start,
+                                  segment.off_start + end))
+
+        Since a stage omitting ``ts=`` now derives it from ``cites``, the
+        explicit call is needed only where a record cites no single range.
+
+        **A retransmit does not move the answer.** Contributors are recorded
+        after overlap trimming, so a later record that contributed no accepted
+        byte is not among them — which is what the specification means by
+        "under the favor-old overlap policy, a later retransmit that
+        contributes no *accepted* bytes does not move ``timestamp``". A table
+        built by hand from record timestamps gets this wrong on a lossy
+        capture, which is why this is an API rather than a documentation note.
+
+        Args:
+            local_start: First byte of the unit, relative to this run's start.
+            local_end: One past its last byte, relative to the run's start.
+
+        Returns:
+            The unit's completion time. Falls back to :attr:`ts` for an empty
+            range, or where the run carries no contributor detail (a
+            hand-built :class:`Segment`).
+
+        """
+        stamps = [c.ts for c in self._overlapping(local_start, local_end)]
+        return max(stamps) if stamps else self.ts
+
+    def ts_first_for(self, local_start: int, local_end: int) -> int:
+        """Return when the *first* packet behind a unit arrived.
+
+        The mirror of :meth:`ts_for`, and the reason ``ts_first`` exists at
+        all: the pair bracket how long a unit took to arrive. Takes
+        run-relative offsets, as :meth:`ts_for` does.
+
+        A record with no ``ts_first`` of its own contributes its ``timestamp``,
+        that being the only arrival time it states.
+
+        Args:
+            local_start: First byte of the unit, relative to this run's start.
+            local_end: One past its last byte, relative to the run's start.
+
+        Returns:
+            The unit's first-arrival time, falling back to :attr:`ts` where
+            there is no contributor detail to read.
+
+        """
+        stamps = [c.ts_first for c in self._overlapping(local_start, local_end)]
+        return min(stamps) if stamps else self.ts
+
+    def _overlapping(self, local_start: int, local_end: int) -> list[Contribution]:
+        """Return the contributors whose bytes fall inside a run-relative range."""
+        start = self.off_start + local_start
+        end = self.off_start + local_end
+        return [c for c in self.contributors if c.off_start < end and start < c.off_end]
 
     def cite(
         self, local_start: int, local_end: int, *, source: SourceHandle | int | None = None
@@ -348,6 +439,33 @@ class Segment:
         return self.view.cite(
             self.off_start + local_start, self.off_start + local_end, source=source
         )
+
+
+@dataclass(frozen=True)
+class Contribution:
+    """One input record's accepted bytes inside a :class:`Segment`.
+
+    Reassembly erases record boundaries, which is its job; this is the part a
+    decoder still needs afterwards, because the timestamp rule is stated per
+    unit and a unit is smaller than a run. Ranges are **absolute** stream
+    offsets, like :attr:`Segment.off_start` — :meth:`Segment.ts_for` is what
+    takes run-relative ones.
+
+    Attributes:
+        off_start: First accepted offset this record contributed.
+        off_end: One past its last accepted offset. Narrower than the record's
+            payload where an earlier record already covered part of it.
+        ts: The record's ``timestamp`` — when this much of the stream was
+            complete.
+        ts_first: The record's ``ts_first``, or its ``timestamp`` where it
+            declares none, that being the only arrival time it states.
+
+    """
+
+    off_start: int
+    off_end: int
+    ts: int
+    ts_first: int
 
 
 @dataclass(frozen=True)
@@ -434,6 +552,7 @@ class StreamView:
         self._blocks = blocks
         self._participant = participant
         self._source_id = None if source is None else _source_id_of(source)
+        self._contributions: tuple[Contribution, ...] | None = None
 
     def _records(self) -> Iterator[Record]:
         """Iterate the stream's records, dropping the breaks between them."""
@@ -493,6 +612,7 @@ class StreamView:
         run = bytearray()
         run_start = 0
         run_ts = 0
+        parts: list[Contribution] = []
         for record in self._records():
             if origin is None and record.seq_start is not None:
                 # No isn: the first record carrying a hint fixes the origin,
@@ -508,17 +628,34 @@ class StreamView:
                 continue
             if off > cursor:
                 if run:
-                    yield Segment(bytes(run), run_start, cursor, run_ts, view=self)
+                    yield Segment(
+                        bytes(run), run_start, cursor, run_ts,
+                        contributors=tuple(parts), view=self,
+                    )
                     run = bytearray()
+                    parts = []
                 yield Gap(cursor, off)
             if run:
                 run_ts = max(run_ts, record.timestamp)
             else:
                 run_start, run_ts = off, record.timestamp
+            # Recorded after trimming, so a retransmit contributing no accepted
+            # byte never reaches this list and cannot move a unit's timestamp.
+            parts.append(
+                Contribution(
+                    off_start=off,
+                    off_end=off + len(payload),
+                    ts=record.timestamp,
+                    ts_first=record.timestamp if record.ts_first is None else record.ts_first,
+                )
+            )
             run += payload
             cursor = off + len(payload)
         if run:
-            yield Segment(bytes(run), run_start, cursor, run_ts, view=self)
+            yield Segment(
+                bytes(run), run_start, cursor, run_ts,
+                contributors=tuple(parts), view=self,
+            )
 
     def segments(self) -> Iterator[Segment]:
         """Iterate only the stream's contiguous :class:`Segment` runs, skipping holes.
@@ -634,6 +771,73 @@ class StreamView:
                 ts=record.timestamp,
                 record=record,
             )
+
+    def contributions(self) -> tuple[Contribution, ...]:
+        """Return every input record's accepted bytes, across the whole stream.
+
+        The per-stream form of :attr:`Segment.contributors`, for a caller that
+        has a *range* rather than a run — which is what a decode stage has when
+        it is handed ``cites=`` and asked to work out the timestamp itself.
+
+        Both stream shapes are covered, because both have the question: a
+        stream-oriented view reads its runs, a packet-oriented one its
+        datagrams, and a datagram is one record's bytes at one range already.
+
+        Computed once and kept. The stream is walked to build it, so a caller
+        doing this per record would pay for the walk each time; the decode
+        stage relies on that.
+
+        Returns:
+            Contributions in ascending offset order, with the overlap trimming
+            already applied.
+
+        """
+        if self._contributions is None:
+            parts: list[Contribution] = []
+            if self.is_stream_oriented:
+                for chunk in self.chunks():
+                    if isinstance(chunk, Segment):
+                        parts.extend(chunk.contributors)
+            else:
+                for datagram in self.datagrams():
+                    record = datagram.record
+                    parts.append(
+                        Contribution(
+                            off_start=datagram.off_start,
+                            off_end=datagram.off_end,
+                            ts=datagram.ts,
+                            ts_first=(
+                                datagram.ts if record.ts_first is None else record.ts_first
+                            ),
+                        )
+                    )
+            self._contributions = tuple(parts)
+        return self._contributions
+
+    def ts_for(self, off_start: int, off_end: int) -> int | None:
+        """Return the completion time of a unit occupying a range of this stream.
+
+        :meth:`Segment.ts_for` for a caller holding **absolute** stream offsets
+        rather than a run and offsets into it — the shape ``cites=`` arrives
+        in. Same rule: the maximum ``timestamp`` over the input records that
+        contributed accepted bytes to the range.
+
+        Args:
+            off_start: First offset of the unit, in this stream's own space.
+            off_end: One past its last offset.
+
+        Returns:
+            The unit's completion time, or ``None`` where no record contributed
+            an accepted byte to the range — an empty range, or one naming
+            offsets this stream does not hold.
+
+        """
+        stamps = [
+            c.ts
+            for c in self.contributions()
+            if c.off_start < off_end and off_start < c.off_end
+        ]
+        return max(stamps) if stamps else None
 
     def cited_as(self, source: SourceHandle | int) -> StreamView:
         """Return a copy of this view that cites ``source`` by default.

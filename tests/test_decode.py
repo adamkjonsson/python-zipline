@@ -896,3 +896,105 @@ def test_a_stage_can_name_its_records_with_a_comment(tmp_path: Path):
         assert reader.diagnostics == []
         comments = [record.comment for record in reader.session(7).records()]
     assert comments == ["dns.header.id", None, "dns.header.id", None]
+
+
+# --- ts derived from cites (#62) ------------------------------------------------------
+
+
+def test_a_stage_omitting_ts_derives_the_normative_one():
+    """#62's case, end to end: the right answer is now the default one.
+
+    Three messages arrive in three packets, reassembly offers them as one run,
+    and the stage cites each without saying when it happened. The rule is per
+    span set, so each record gets the time of the packet it came from — where
+    passing `ts=segment.ts` would have stamped all three 3000, which is the
+    mistake the issue reports and the docs used to teach.
+    """
+    raw = io.BytesIO()
+    with zpf.create(raw, tick_hz=1_000_000) as w:
+        w.add_source("capture", uri="t.pcap")
+        with w.begin_session(proto="tcp", session_id=7) as s:
+            p = s.participant("10.0.0.1:51000", isn=1000)
+            s.record(p, ts=1000, payload=b"AAAA", seq_start=1001)
+            s.record(p, ts=2000, payload=b"BBBB", seq_start=1005)
+            s.record(p, ts=3000, payload=b"CCCC", seq_start=1009)
+
+    out = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw.getvalue()), out, decoder="x", produced_by="d 1", produced_at=1
+    ) as dec:
+        for stream in dec.streams():
+            for segment in stream.segments():
+                for i in range(0, len(segment.data), 4):
+                    dec.record(
+                        stream,
+                        segment.data[i : i + 4],
+                        cites=(segment.off_start + i, segment.off_start + i + 4),
+                    )
+
+    with zpf.open(io.BytesIO(out.getvalue())) as reader:
+        assert [r.timestamp for r in reader.session(7).records()] == [1000, 2000, 3000]
+        assert reader.diagnostics == []
+
+
+def test_a_derived_ts_ignores_a_retransmit_that_contributed_nothing():
+    """The favour-old policy reaches the derived timestamp too."""
+    raw = io.BytesIO()
+    with zpf.create(raw, tick_hz=1_000_000) as w:
+        w.add_source("capture", uri="t.pcap")
+        with w.begin_session(proto="tcp", session_id=7) as s:
+            p = s.participant("10.0.0.1:51000", isn=1000)
+            s.record(p, ts=1000, payload=b"AAAA", seq_start=1001)
+            s.record(p, ts=9999, payload=b"AAAA", seq_start=1001,
+                     flags=zpf.RecordFlags.RETRANSMIT)
+
+    out = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw.getvalue()), out, decoder="x", produced_by="d 1", produced_at=1
+    ) as dec:
+        for stream in dec.streams():
+            for segment in stream.segments():
+                dec.record(stream, segment.data, cites=(0, 4))
+
+    with zpf.open(io.BytesIO(out.getvalue())) as reader:
+        (record,) = reader.session(7).records()
+        assert record.timestamp == 1000  # not 9999
+
+
+def test_an_explicit_ts_still_wins():
+    """A stage whose output has no single citable range says so itself."""
+    raw = io.BytesIO()
+    with zpf.create(raw, tick_hz=1_000_000) as w:
+        w.add_source("capture", uri="t.pcap")
+        with w.begin_session(proto="tcp", session_id=7) as s:
+            p = s.participant("10.0.0.1:51000", isn=1000)
+            s.record(p, ts=1000, payload=b"AAAA", seq_start=1001)
+
+    out = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw.getvalue()), out, decoder="x", produced_by="d 1", produced_at=1
+    ) as dec:
+        for stream in dec.streams():
+            dec.record(stream, b"summary", ts=4242, cites=(0, 4))
+
+    with zpf.open(io.BytesIO(out.getvalue())) as reader:
+        (record,) = reader.session(7).records()
+        assert record.timestamp == 4242
+
+
+def test_a_ts_that_cannot_be_derived_is_refused_rather_than_invented():
+    """An empty cited range has no time, and guessing one would be untraceable."""
+    raw = io.BytesIO()
+    with zpf.create(raw, tick_hz=1_000_000) as w:
+        w.add_source("capture", uri="t.pcap")
+        with w.begin_session(proto="tcp", session_id=7) as s:
+            p = s.participant("10.0.0.1:51000", isn=1000)
+            s.record(p, ts=1000, payload=b"AAAA", seq_start=1001)
+
+    out = io.BytesIO()
+    with pytest.raises(zpf.SemanticError, match="cannot derive ts"), zpf.decode_stage(
+        io.BytesIO(raw.getvalue()), out, decoder="x",
+        produced_by="d 1", produced_at=1,
+    ) as dec:
+        for stream in dec.streams():
+            dec.record(stream, b"x", cites=(99, 100))

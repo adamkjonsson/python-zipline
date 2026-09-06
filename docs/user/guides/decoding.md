@@ -90,7 +90,7 @@ with zpf.decode_stage(
         for segment in stream.segments():
             for start, end, kind in split_messages(segment.data):
                 dec.record(
-                    stream, segment.data[start:end], ts=segment.ts,
+                    stream, segment.data[start:end],
                     content_type=f"dec:http-{kind}",
                     cites=(segment.off_start + start, segment.off_start + end),
                 )
@@ -98,10 +98,17 @@ with zpf.decode_stage(
 
 Two details carry weight:
 
-- **`ts=`** is the record's time. Per the timestamp rule a reassembled unit's
-  time is the *completion* time of the last input record it came from — the
-  run's {attr}`Segment.ts <zpf.Segment.ts>` — so it is passed explicitly rather
-  than guessed.
+- **`ts=` is absent, and that is the point.** Omitted, it is derived from
+  `cites`, which is what the timestamp rule asks for: a decoded record carries
+  the completion time of the last input record **in its span set** — per unit,
+  not per run. Three messages arriving in three packets get three different
+  times even though reassembly offered them as one segment. Reaching for
+  {attr}`Segment.ts <zpf.Segment.ts>` here is the mistake
+  [#62](https://github.com/adamkjonsson/python-zipline/issues/62) reports, and
+  this guide taught it until `0.3.0`: the run's time is right only for a unit
+  that spans the whole run. Pass `ts=` explicitly where a record cites no
+  single range, and {meth}`Segment.ts_for <zpf.Segment.ts_for>` where you want
+  the number without letting the stage derive it.
 - **`cites=(off_start, off_end)`** mints the {class}`~zpf.Span` for you, filling
   in the input's `session_id`/`participant_id` from `stream`. A record can only
   ever cite the stream it was decoded from, which is impossible to get wrong by
@@ -118,9 +125,12 @@ output stores all of the client's records and then all of the server's. That is
 an order the input never had — and the input records the real one.
 
 Pass `sequenced=True` to get it back. Records are buffered per session and
-interleaved when it ends, keyed on `ts`, which is *already* the completion time
-of the last input record each payload came from — so ordering by it reproduces
-the input's timeline rather than approximating it:
+interleaved when it ends, keyed on `ts` — which, now that each unit carries its
+own completion time rather than its run's, really is the time the input records
+put on it. So ordering by it reproduces the input's timeline rather than
+approximating it. (With `ts=segment.ts` on every record of a run it did not:
+the whole run shared one stamp and the interleaving was as coarse as the
+reassembly.)
 
 ```python
 with zpf.decode_stage(..., sequenced=True) as dec:
@@ -313,8 +323,8 @@ with zpf.decode_stage(raw, sink, decoder=("http/1.1", "1.0"),
     json = dec.writer.add_decoder("json/1.0")  # a second decoder
     for stream in dec.streams():
         for segment in stream.segments():
-            dec.record(stream, headers, ts=segment.ts, cites=...)               # → http
-            dec.record(stream, body, ts=segment.ts, cites=..., decoder=json)    # → json
+            dec.record(stream, headers, cites=...)               # → http
+            dec.record(stream, body, cites=..., decoder=json)    # → json
 ```
 
 The same `decoder=` override is available on {meth}`~zpf.DecodeStage.undecoded`,
