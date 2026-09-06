@@ -224,9 +224,12 @@ _ACCEPT_EXTENTS: dict[str, dict[tuple[int, int], int]] = {
 #: Held separately from the table so the expected numbers stay stated even
 #: while we get them wrong — the table is what the vectors say, this is where
 #: we are against it.
-_EXTENTS_PENDING: dict[str, str] = {
-    "unplaceable-below-origin": "the one offset rule lands in Phase 1 (#63)",
-}
+#:
+#: **Empty since Phase 1.** It held ``unplaceable-below-origin`` from the
+#: ``0.19`` re-vendor until the one offset rule landed, which is the whole of
+#: what the table was added for: the vector passed the tier tests throughout,
+#: and this is what said it was passing for the wrong reason.
+_EXTENTS_PENDING: dict[str, str] = {}
 
 #: What each ``reject`` vector must be refused *for*. Asserting only that some
 #: exception escaped is not enough: while the version gate is behind the

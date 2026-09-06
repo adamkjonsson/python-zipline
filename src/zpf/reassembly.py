@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING
 
 from zpf.blocks import Discontinuity, OutputLayer, Record, Span
 from zpf.errors import SemanticError, ZpfError
-from zpf.order import SEQ_SPACE
+from zpf.order import SEQ_SPACE, seq_lt
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -107,6 +107,52 @@ def layer_name(layer: OutputLayer | int) -> str:
     return layer.name.lower() if isinstance(layer, OutputLayer) else f"output_layer {int(layer)}"
 
 
+def _offset_of(record: Record, origin: int) -> int | None:
+    """Where a record sits in its stream's transport offset space, or ``None``.
+
+    **The single definition of that question.** It was written three times
+    before — in :func:`record_ranges`, :meth:`StreamView.chunks` and
+    :meth:`StreamView.units` — and two of the three were wrong, which is
+    `#63 <https://github.com/adamkjonsson/python-zipline/issues/63>`_: each
+    computed ``(seq_start - origin) % SEQ_SPACE`` and trusted the result, so a
+    record one below the origin landed at 4 294 967 295 and took the stream's
+    extent with it.
+
+    ``None`` means **unplaceable**, which the specification defines as covering
+    no byte of the stream and contributing nothing to its extent. Two shapes
+    reach it:
+
+    * **No ``seq_start``** on a stream that is sequence-anchored. The commoner
+      of the two, and the one `0.17` left unstated; `unplaceable-no-seq-start`
+      is its vector.
+    * **A ``seq_start`` below the origin.** `0.17` made this a MUST NOT and
+      pinned a repair; `0.19` withdrew both and kept the effect, which is all
+      a reader needs. `unplaceable-below-origin` is its vector, and its eight
+      payload bytes are in no offset at all.
+
+    **The test is undecidable beyond 2³¹, and that is the space, not a gap in
+    the check.** Serial arithmetic (RFC 1982) cannot tell a sequence far below
+    the origin from one far above it, so a stream carrying more than 2 GiB in
+    one direction reads its own later records as below-origin. Nothing here
+    can do better; the alternative is trusting the wrapped offset, which is
+    the failure this exists to prevent.
+
+    Args:
+        record: The record to place.
+        origin: The stream's logical-offset origin — ``isn + 1``, or the first
+            captured byte where the handshake was missed.
+
+    Returns:
+        The record's ``off_start``, or ``None`` if it is unplaceable.
+
+    """
+    if record.seq_start is None:
+        return None
+    if seq_lt(record.seq_start, origin):
+        return None
+    return (record.seq_start - origin) % SEQ_SPACE
+
+
 def record_ranges(
     participant: Participant,
     blocks: Sequence[Record | Discontinuity],
@@ -153,9 +199,19 @@ def record_ranges(
     Returns:
         One ``(off_start, off_end)`` per :class:`~zpf.blocks.Record` in
         ``blocks``, in order — Discontinuity blocks occupy no range of their
-        own. A record whose position cannot be placed — a hinted stream's
-        record carrying no ``seq_start`` — gets a zero-width range at the
-        stream's current end, since it contributes no bytes.
+        own, so the result index-matches the records and that is a promise
+        callers rely on.
+
+        An **unplaceable** record (see :func:`_offset_of`) gets a zero-width
+        range at the **running maximum** — the highest ``off_end`` any earlier
+        record of this participant reached, or ``0`` where there is none. It
+        therefore covers no byte and moves no extent, which is the part the
+        specification pins. The *range itself* is ours to choose: `0.18`
+        required exactly this one, and `0.19` unpinned it when the advisory
+        tier stopped dictating repairs, so two conformant readers may now
+        report different ranges here while agreeing on every extent. We keep
+        the running maximum because it was right when it was mandatory and
+        nothing about it stopped being true.
 
     Raises:
         SemanticError: If ``layer`` is a value this version does not define.
@@ -193,10 +249,10 @@ def record_ranges(
     ranges: list[tuple[int, int]] = []
     end = 0
     for record in records:
-        if record.seq_start is None:
+        start = _offset_of(record, origin)
+        if start is None:
             ranges.append((end, end))
             continue
-        start = (record.seq_start - origin) % SEQ_SPACE
         stop = start + len(record.payload)
         ranges.append((start, stop))
         end = max(end, stop)
@@ -437,13 +493,15 @@ class StreamView:
         run_start = 0
         run_ts = 0
         for record in self._records():
-            if record.seq_start is None:
-                continue  # a stream-oriented stream's records carry seq_start
-            if origin is None:
+            if origin is None and record.seq_start is not None:
+                # No isn: the first record carrying a hint fixes the origin,
+                # and nothing can then be below it.
                 origin = record.seq_start
+            off = None if origin is None else _offset_of(record, origin)
+            if off is None:
+                continue  # unplaceable: it occupies no range of this stream
             if not record.payload:
                 continue
-            off = (record.seq_start - origin) % SEQ_SPACE
             payload, off = _trim_overlap(record.payload, off, cursor)
             if not payload:
                 continue
@@ -559,11 +617,12 @@ class StreamView:
                 continue
             record = block
             if hinted:
-                if record.seq_start is None:
-                    continue
-                if origin is None:
+                if origin is None and record.seq_start is not None:
                     origin = record.seq_start
-                off = (record.seq_start - origin) % SEQ_SPACE
+                placed = None if origin is None else _offset_of(record, origin)
+                if placed is None:
+                    continue  # unplaceable: no range of this stream to report
+                off = placed
             else:
                 off = cursor
                 cursor += len(record.payload)

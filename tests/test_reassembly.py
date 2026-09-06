@@ -578,3 +578,165 @@ def test_a_decoder_less_record_beside_a_decoded_one_also_mixes():
 def test_an_undeclared_decoder_leaves_the_layer_unresolvable():
     with pytest.raises(zpf.SemanticError, match="undeclared decoder_id 4"):
         zpf.reassembly.stream_layer([_rec(4)], {})
+
+
+# --- Unplaceable records: one offset rule, three call sites (#63) ---------------------
+
+
+def malformed(*records: zpf.Record, isn: int | None = 1000) -> zpf.FileReader:
+    """Write a file the checked writer would refuse, and reopen it.
+
+    Deliberately the **flat** writer. These streams are the ones a producer
+    should not have written — `zpf.create` grows a guard against them in the
+    plan's Phase 4 — but a reader still meets them in the wild, which is the
+    whole of #63: zpfwire has written a below-origin SYN into every file it
+    has ever produced.
+    """
+    sink = io.BytesIO()
+    with zpf.BlockWriter(sink) as w:
+        w.write(zpf.FileHeader(tick_hz=1_000_000))
+        w.write(zpf.Source(source_id=0, kind=zpf.SourceKind.CAPTURE))
+        w.write(zpf.Session(session_id=7, proto="tcp"))
+        w.write(zpf.Participant(session_id=7, participant_id=0, isn=isn))
+        for record in records:
+            w.write(record)
+        w.write(zpf.End())
+    return zpf.open(io.BytesIO(sink.getvalue()))
+
+
+def rec(seq_start: int | None, payload: bytes, ts: int, **kwargs: object) -> zpf.Record:
+    return zpf.Record(
+        session_id=7, sender_pid=0, source_id=0, timestamp=ts,
+        payload=payload, seq_start=seq_start, **kwargs,
+    )
+
+
+def measure(reader: zpf.FileReader) -> tuple[tuple[tuple[int, int], ...], int]:
+    """Return ``(ranges, extent)`` for the file's one participant stream."""
+    session = reader.session(7)
+    blocks = list(session.stream_blocks(0))
+    layer = session.layer(0)
+    return (
+        zpf.record_ranges(session.participant(0), blocks, layer),
+        zpf.stream_extent(session.participant(0), blocks, layer),
+    )
+
+
+def test_a_conformant_handshake_is_unmoved():
+    """The regression guard: the fix must not touch a correct file.
+
+    This is #63's second trace — the SYN written where `0.17` made it a MUST,
+    at ``isn + 1``. It shares its ``seq_start`` with the first data record,
+    which the ordering rule explicitly allows (`0.18`, non-descending), and
+    the SYN's zero length means the two do not overlap.
+    """
+    with malformed(
+        rec(1001, b"", 900, flags=zpf.RecordFlags.SYN),
+        rec(1001, b"AAAA", 1000),
+        rec(1005, b"BBBB", 2000),
+        rec(1009, b"CCCC", 3000),
+    ) as reader:
+        ranges, extent = measure(reader)
+    assert ranges == ((0, 0), (0, 4), (4, 8), (8, 12))
+    assert extent == 12
+
+
+def test_a_syn_one_below_the_origin_is_unplaceable():
+    """#63's first trace: what zpfwire writes, and what it used to do to us.
+
+    The SYN sits at ``isn`` rather than ``isn + 1`` — one below the origin,
+    because the SYN consumes a sequence number without delivering a byte.
+    Before the fix this record landed at 4 294 967 295 and dragged the extent
+    with it, so every coverage answer about the stream was wrong by four
+    billion. It is now unplaceable: zero width, no bytes covered, and the
+    three real records place exactly as they do in a conformant file.
+    """
+    with malformed(
+        rec(1000, b"", 900, flags=zpf.RecordFlags.SYN),
+        rec(1001, b"AAAA", 1000),
+        rec(1005, b"BBBB", 2000),
+        rec(1009, b"CCCC", 3000),
+    ) as reader:
+        ranges, extent = measure(reader)
+    assert ranges == ((0, 0), (0, 4), (4, 8), (8, 12))
+    assert extent == 12
+
+
+def test_a_below_origin_record_carrying_payload_loses_its_bytes():
+    """The case the issue's own suggested fix would not have caught.
+
+    #63 proposed skipping zero-length records when computing the offset, which
+    makes its symptom disappear and leaves this shape wrapping to 2³² − 1. The
+    eight bytes are excluded from the extent and from every coverage answer
+    the file supports, which is the price of not trusting the wrapped offset —
+    and `unplaceable-below-origin` is the vector that pins it.
+    """
+    with malformed(
+        rec(1000, b"LOSTBYTE", 1000),
+        rec(1001, b"AAAABBBB", 2000),
+        rec(1009, b"CCCCDDDD", 3000),
+    ) as reader:
+        ranges, extent = measure(reader)
+        view = reader.session(7).reassemble()[0]
+        chunks = list(view.chunks())
+        units = list(view.units())
+    assert ranges == ((0, 0), (0, 8), (8, 16))
+    assert extent == 16
+    # chunks and units agree: the unplaceable record contributes no bytes and
+    # opens no gap. A reader that trusted the wrapped offset would yield a
+    # four-billion-byte Gap here.
+    assert chunks == [zpf.Segment(data=b"AAAABBBBCCCCDDDD", off_start=0, off_end=16, ts=3000)]
+    assert [(u.off_start, u.off_end) for u in units] == [(0, 8), (8, 16)]
+
+
+def test_a_record_with_no_seq_start_on_an_anchored_stream_is_unplaceable():
+    """The commoner shape, and `unplaceable-no-seq-start`'s lesson.
+
+    The stream is sequence-anchored — its first record carries a hint — so a
+    record without one cannot be placed. It is *not* appended at the end: the
+    six bytes are in no offset at all, and the extent stays 6.
+    """
+    with malformed(
+        rec(1001, b"hinted", 3000),
+        rec(None, b"plain2", 3200),
+        isn=None,
+    ) as reader:
+        ranges, extent = measure(reader)
+    assert ranges == ((0, 6), (6, 6))
+    assert extent == 6
+
+
+def test_the_unplaceable_range_is_the_running_maximum_not_the_last_end():
+    """Why the placement is a maximum, which is what `0.18` settled and `0.19` unpinned.
+
+    Records within a participant may overlap, so the record stored last is not
+    always the one that reached furthest. Here the second record is a
+    retransmit ending at 4 while the first reached 8, and the unplaceable
+    third sits at 8 rather than at 4.
+    """
+    with malformed(
+        rec(1001, b"AAAABBBB", 1000),  # [0, 8)
+        rec(1001, b"AAAA", 2000),      # [0, 4) — a retransmit, ends lower
+        rec(None, b"zzz", 3000),
+    ) as reader:
+        ranges, extent = measure(reader)
+    assert ranges == ((0, 8), (0, 4), (8, 8))
+    assert extent == 8
+
+
+def test_stream_extent_is_what_the_coverage_check_measures_with():
+    """The delegation #63 exists to protect, stated as a test.
+
+    `transform.check_coverage` measures an input stream through
+    :func:`zpf.stream_extent` rather than computing its own offsets, so the
+    reader and the coverage checker cannot drift apart. A below-origin record
+    used to make that shared number 4 294 967 303, and every coverage answer
+    derived from it was wrong in the same way.
+    """
+    with malformed(
+        rec(1000, b"LOSTBYTE", 1000),
+        rec(1001, b"AAAABBBB", 2000),
+    ) as reader:
+        _, extent = measure(reader)
+    assert extent == 8
+    assert extent < SEQ_SPACE  # the wrapped reading was 4294967303
