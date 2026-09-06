@@ -39,7 +39,7 @@ _SWAPPED_MAGIC = 0x4650495A
 #: ``(version_major, version_minor)``. A writer stamps the version it
 #: implements; there is no obligation to compute the lowest version whose
 #: features a file happens to use.
-SPEC_VERSION: tuple[int, int] = (0, 16)
+SPEC_VERSION: tuple[int, int] = (0, 19)
 
 
 #: The canonical :class:`Undecoded` ``reason`` values, mapped to their
@@ -51,9 +51,21 @@ SPEC_VERSION: tuple[int, int] = (0, 16)
 #: follow the reference to fetch them; ``hole`` means the range has no bytes
 #: anywhere. ``undecodable`` and ``skipped`` differ in *intent*, not
 #: recoverability: the decoder tried and failed, versus declined on purpose.
+#:
+#: ``dropped`` arrived in ``0.17`` and is the odd one out. It shares its class
+#: with ``skipped`` and is distinguished only by *what the stage did*: content
+#: of the stream was **removed**, where ``skipped`` withheld something that
+#: carried no content (a byte-order mark, framing). The pair are byte-shaped
+#: alike, which is exactly why the word had to exist — it is the single-file
+#: signal that the survivors either side may not join, and
+#: :meth:`~zpf.ConformanceChecker._check_unmarked_breaks` tests for it. Since
+#: ``0.18`` a stage that removed content **MUST** spell it ``dropped``, with any
+#: further specificity in ``comment``; that is a deliberate qualification of an
+#: otherwise open vocabulary, and it exists so the word stays decidable.
 UNDECODED_REASONS: dict[str, str] = {
     "undecodable": "bytes",
     "skipped": "bytes",
+    "dropped": "bytes",
     "gap": "hole",
     "truncated": "hole",
 }

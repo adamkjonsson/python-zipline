@@ -7,14 +7,15 @@ specification repository. They are not ours to edit.
 |---|---|
 | Source | <https://github.com/adamkjonsson/zipline> |
 | Path | `vectors/` |
-| Tag | `v0.16` |
-| Commit | `50fae23dba703ffcdc7b3aabc57988996762ade8` |
-| Vendored | 2026-08-09 |
+| Tag | `v0.19` |
+| Commit | `f0b1464b0c26d28a91f7d0e537bf3647bf6b302a` |
+| Vendored | 2026-09-06 |
 
 ## What was and was not copied
 
 Copied: `manifest.json`, `README.md`, and all 53 vector directories — verified
-byte-identical to the tag with `diff -r`.
+byte-identical to the tag with `diff -r`. 53 entries expand to 59 files, because
+`chain` ships three, `splice` two and `tunnel` four.
 
 **Not** copied: `build.py` and `check.py`. Those are the upstream *generator* and
 self-consistency checker — tooling for maintaining the vectors, not fixtures for
@@ -34,9 +35,21 @@ to run.
 `0.16` adds an optional **`advisory: true`** on an `accept` entry, which then
 declares **1** violation rather than 0. It is a key rather than a fourth tier
 because a tier names what a *reader does*, and a reader accepts these files
-completely. `advisory-transport-content-type` is the only one so far, and it is
-the format's first violation that accepts — our harness needs a path for it that
-neither `accept` nor `isolate` provides.
+completely. Our harness needs a path for it that neither `accept` nor `isolate`
+provides. There are two at `0.19`: `advisory-transport-content-type` and
+`advisory-transport-role`, one per label the transport-layer bar names.
+
+**And one shape the manifest still cannot express**, which our harness works
+around rather than inherits. `unplaceable-below-origin` declares `violations: 0`
+and is not `advisory` — correct, since `0.19` withdrew the origin floor and the
+file breaks no rule — while §Referencing says a reader SHOULD report the record
+and the entry's own `expect` opens "ACCEPT, and REPORT". No field carries *breaks
+no rule and is still reported*. Filed upstream as
+[zipline#140](https://github.com/adamkjonsson/zipline/issues/140), together with
+the reason `_ACCEPT_EXTENTS` exists in
+[`../test_vectors.py`](../test_vectors.py): the tier asserts a projection and a
+violation count, and neither catches a reader that computes the wrong offset in
+silence.
 
 ## Why they are checked in rather than fetched
 
@@ -52,15 +65,19 @@ vector that seems wrong is a question for the spec repository, not a local patch
 
 ## Known defects
 
-**One open at `v0.16`** — `tunnel/inner.jsonl` and `tunnel/outer.jsonl` spell
-the Session flow key `"flow_key"` where the normative JSONL mapping lists it
-among the brevity aliases as `"key"`, and where `descriptive-metadata.jsonl` in
-this same tree writes `"key"`. Both files are held in `DEFECTIVE` in
-[`../test_vectors.py`](../test_vectors.py) rather than accommodated. Details as
-defect 4 in [`VECTOR-DEFECTS.md`](../../VECTOR-DEFECTS.md).
+**None open at `v0.19`**, for the first time since the register was started.
+Defect 4 — `tunnel/inner.jsonl` and `tunnel/outer.jsonl` spelling the Session
+flow key `"flow_key"` where the normative JSONL mapping lists it among the
+brevity aliases as `"key"` — was fixed upstream in `0.17`
+([zipline#104](https://github.com/adamkjonsson/zipline/issues/104)), which also
+added a `check.py` guard building the projection's key vocabulary from the
+specification's own tables. That guard is the part that outlives the fix. So
+`DEFECTIVE` in [`../test_vectors.py`](../test_vectors.py) is empty, and there is
+no fixture the implementation must be kept away from.
 
-Three others have been found — two against `v0.12` and one against `v0.15` — and
-all three were fixed upstream; the same file is the closed record of them.
+Four have been found in all — two against `v0.12`, one against `v0.15` and one
+against `v0.16` — and every one was fixed upstream;
+[`VECTOR-DEFECTS.md`](../../VECTOR-DEFECTS.md) is the closed record of them.
 
 The third is worth knowing about while reading these files, because it is the one
 whose fix changed a vector's **bytes**: `undecoded-in-capture` shipped at `v0.15`

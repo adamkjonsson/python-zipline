@@ -1,0 +1,11 @@
+{"type":"file","format":"zipline-payload/0.19","tick_hz":1000000,"produced_by":"zpf-fielddecode 0.1","produced_at":1719800000}
+{"type":"source","source_id":1,"kind":"zpf-input","uri":"frames.zpf","digest":"sha256:5e7a"}
+{"type":"decoder","decoder_id":1,"output_layer":"decoded","name":"acme-hdr","version":"2.0"}
+{"type":"session","session_id":31,"proto":"acme"}
+{"type":"participant","session_id":31,"pid":0,"endpoint":["10.0.0.1:9000"]}
+{"type":"record","session_id":31,"sender_pid":0,"source_id":1,"ts":1000,"payload":"AQAAAA==","decoder_id":1,"spans":[{"source_id":1,"session_id":30,"pid":0,"off_start":0,"off_end":4}],"content_type":"prim:u32","role":"version"}
+{"type":"record","session_id":31,"sender_pid":0,"source_id":1,"ts":1000,"payload":"EAAAAA==","decoder_id":1,"spans":[{"source_id":1,"session_id":30,"pid":0,"off_start":4,"off_end":8}],"content_type":"prim:u32","role":"length"}
+{"type":"record","session_id":31,"sender_pid":0,"source_id":1,"ts":1000,"payload":"776t3g==","decoder_id":1,"spans":[{"source_id":1,"session_id":30,"pid":0,"off_start":8,"off_end":12}],"content_type":"prim:u32","role":"checksum"}
+{"type":"record","session_id":31,"sender_pid":0,"source_id":1,"ts":1000,"payload":"KgAAAA==","decoder_id":1,"spans":[{"source_id":1,"session_id":30,"pid":0,"off_start":12,"off_end":16}],"content_type":"prim:u32","role":"seq_no"}
+{"type":"session_end","session_id":31,"input_extents":[{"source_id":1,"session_id":30,"pid":0,"extent":16}]}
+{"type":"end"}

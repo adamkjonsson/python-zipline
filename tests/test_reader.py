@@ -610,7 +610,10 @@ def test_ranges_are_cached_across_session_views():
         # holds them together at the easy case: both would still agree with
         # widths ignored. These two make it bite.
         "discontinuity-known-width/discontinuity-known-width.zpf",
-        "passthrough-discontinuity/passthrough-discontinuity.zpf",
+        # `passthrough-discontinuity` stood here until 0.19 removed it with the
+        # pass-through kind. `filtered-decoded` carries a declared width between
+        # two records the same way, which is the property this test needs.
+        "filtered-decoded/filtered-decoded.zpf",
     ],
 )
 def test_ranges_agree_with_a_naive_datagram_walk(vector: str):

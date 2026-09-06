@@ -273,18 +273,34 @@ def test_a_decode_stages_record_resolves_in_one_hop():
     assert (span.off_start, span.off_end) == (0, 9)
 
 
-def test_a_pass_throughs_record_resolves_in_two_hops():
-    # annotated.zpf re-emits decoded.zpf's records unchanged, so they carry
-    # no spans. The walk takes the participant's origin into decoded.zpf,
-    # finds the record occupying the same offsets, and reads its spans —
-    # which name raw.zpf. This file alone cannot answer the question.
+def test_a_pass_throughs_record_resolves_in_one_hop_too():
+    """What `0.19` changed, and it is the whole of package A from here.
+
+    Through `0.18` this was ``..._resolves_in_two_hops``: ``annotated.zpf``
+    re-emitted its input's records unchanged, so they carried **no** spans,
+    and the walk had to go through the participant's ``origin`` into
+    ``decoded.zpf`` to find out where the bytes came from. One file could not
+    answer the question.
+
+    Since `0.19` every ``zpf``-sourced record carries ``spans``, and a
+    pass-through writes an **identity span** — the same range in as out. So
+    the answer is in the file, the two shapes have one rule, and *which kind*
+    of stage produced a record is read from whether its spans are identity
+    rather than from which option is present.
+
+    The span here names ``decoded.zpf``'s own offsets, not ``raw.zpf``'s.
+    Walking further up the chain is a separate question and a separate
+    argument — see the ``hops`` work in Phase 3 — and this asserts one hop,
+    which is what the function's name has always promised.
+    """
     with zpf.open(CHAIN / "annotated.zpf") as f:
-        assert [r.spans for r in f.session(7).records()] == [(), ()]
+        spans = [r.spans for r in f.session(7).records()]
+    assert [len(s) for s in spans] == [1, 1], "every zpf-sourced record carries spans"
     (span,) = zpf.resolve_spans(CHAIN / "annotated.zpf", 7, 0, 0)
     assert (span.session_id, span.participant_id) == (7, 0)
     assert (span.off_start, span.off_end) == (0, 9)
     (other,) = zpf.resolve_spans(CHAIN / "annotated.zpf", 7, 1, 0)
-    assert (other.off_start, other.off_end) == (0, 16)
+    assert (other.off_start, other.off_end) == (0, 8)
 
 
 def test_a_raw_file_records_no_provenance_to_resolve():
@@ -299,7 +315,19 @@ def test_resolving_a_stream_needs_an_explicit_opener():
         zpf.resolve_spans(handle, 7, 0, 0)
 
 
-def test_an_opener_may_redirect_where_inputs_are_found():
+def test_an_opener_is_not_needed_for_a_record_that_answers_for_itself():
+    """The opener exists for a walk this call no longer has to make.
+
+    Through `0.18` resolving a pass-through's record opened its input, so this
+    asserted that the opener saw ``decoded.zpf`` and nothing beyond it. Since
+    `0.19` the record carries its own identity span and one hop opens
+    **nothing** — which is the cost package A removed, not merely relocated.
+
+    The argument stays supported and stays tested: it is what
+    ``test_resolving_a_stream_needs_an_explicit_opener`` covers for a file
+    with no path, and it is what a multi-hop walk will need in Phase 3. This
+    asserts the hop that is now free.
+    """
     seen: list[str] = []
 
     def opener(source: zpf.Source) -> Path:
@@ -307,7 +335,7 @@ def test_an_opener_may_redirect_where_inputs_are_found():
         return CHAIN / source.uri
 
     (span,) = zpf.resolve_spans(CHAIN / "annotated.zpf", 7, 0, 0, open_input=opener)
-    assert seen == ["decoded.zpf"]  # only the immediate input needs opening
+    assert seen == [], "one hop reads the record's own spans and opens nothing"
     assert (span.off_start, span.off_end) == (0, 9)
 
 
@@ -349,9 +377,12 @@ def test_a_filter_stage_is_a_decode_stage_not_a_pass_through(tmp_path: Path):
         assert [[(s.off_start, s.off_end) for s in r.spans] for r in session.stream(0)] == [
             [(0, 3)], [(5, 9)]
         ]
-        # The dropped range is marked, not silently lost.
+        # The dropped range is marked, not silently lost — and marked
+        # `dropped` rather than `skipped`, which since 0.17 is the difference
+        # between content removed and content that was never content. Both are
+        # bytes-class; only this one says the survivors may not join.
         (marker,) = f.undecoded
-        assert (marker.off_start, marker.off_end, marker.reason) == (3, 5, "skipped")
+        assert (marker.off_start, marker.off_end, marker.reason) == (3, 5, "dropped")
 
 
 def test_the_coverage_guarantee_holds_over_a_filtered_stream(tmp_path: Path):
@@ -444,8 +475,13 @@ def test_check_extents_passes_every_conformant_vector():
     declares — only the union across both does. A checker keyed on the output
     session fails it and passes every other file in the suite.
     """
+    # `annotator-decoded` and `passthrough-discontinuity` stood here until
+    # 0.19 deleted them with the pass-through derivation kind. `filtered-decoded`
+    # replaces the pair: it is a decode stage whose removed region is marked and
+    # whose seam is declared, so it exercises the same accounting without the
+    # option that used to carry it.
     for name in ("decoded-basic", "broken-chain", "session-fan-out",
-                 "annotator-decoded", "passthrough-discontinuity",
+                 "filtered-decoded", "reordered-decoded",
                  "discontinuity-known-width", "discontinuity-unknown-width"):
         path = VECTORS / name / f"{name}.zpf"
         assert zpf.check_extents(path) == [], name
@@ -640,12 +676,18 @@ def test_a_rewrite_carries_its_inputs_breaks_forward(tmp_path: Path):
     assert zpf.check_splice(out, src) == []
 
 
-def test_a_rewrite_marks_a_break_as_a_hole_not_as_skipped(tmp_path: Path):
+def test_a_rewrite_marks_a_break_as_a_hole_not_as_removed_content(tmp_path: Path):
     """A break's range holds no bytes, and the reason has to say so.
 
-    ``skipped`` is the ``bytes`` class — the data exists upstream, go and
+    ``dropped`` is the ``bytes`` class — the data exists upstream, go and
     fetch it. For the range a declared width covers that is false, and acting
     on it would send a consumer after bytes that were never sent.
+
+    The two reasons this file writes are the whole distinction: ``gap`` for
+    the input's own declared break, where nothing ever existed, and
+    ``dropped`` for the record this stage removed, where the bytes are one hop
+    up. Getting them the wrong way round is not a labelling error — it decides
+    whether a consumer's recovery walk has anywhere to go.
     """
     src, out = tmp_path / "in.zpf", tmp_path / "out.zpf"
     decoded_with_a_break(src)
@@ -657,7 +699,8 @@ def test_a_rewrite_marks_a_break_as_a_hole_not_as_skipped(tmp_path: Path):
     by_range = {(b.off_start, b.off_end): b.reason for b in marked}
     assert by_range[(5, 10)] == "gap"  # the break: no bytes anywhere
     assert zpf.UNDECODED_REASONS["gap"] == "hole"
-    assert by_range[(3, 5)] == "skipped"  # the dropped record: bytes upstream
+    assert by_range[(3, 5)] == "dropped"  # the removed record: bytes upstream
+    assert zpf.UNDECODED_REASONS["dropped"] == "bytes"
     assert zpf.check_coverage(out, src) == []
 
 

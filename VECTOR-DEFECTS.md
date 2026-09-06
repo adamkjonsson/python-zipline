@@ -1,9 +1,9 @@
 # Defects in the conformance vectors
 
-**One open, three closed.** Defect 4 is live against the vectors currently
-vendored in [`tests/vectors/`](tests/vectors/), which are `v0.16`; it holds two
-files out of the suite via `DEFECTIVE` in
-[`tests/test_vectors.py`](tests/test_vectors.py). The other three were reported
+**Two open, four closed.** Defects 5 and 6 are live against the vectors
+currently vendored in [`tests/vectors/`](tests/vectors/), which are `v0.19`;
+together they hold three cases out of the suite via `DEFECTIVE` in
+[`tests/test_vectors.py`](tests/test_vectors.py). The other four were reported
 upstream and fixed.
 
 | | Defect | Found against | Status |
@@ -11,7 +11,19 @@ upstream and fixed.
 | 1 | Three decode-stage vectors omit `produced_by`/`produced_at` | `v0.12` | Fixed in `0.13` — CHANGELOG *Fixed*; all three now carry both options |
 | 2 | `vectors/README.md` contradicts the spec on the `isolate` tier | `v0.12` | Fixed in `0.14` — the README now reads "Rejecting an `isolate` vector, with a diagnostic, **is conformant**" |
 | 3 | `undecoded-in-capture` writes ids no reading of the text allows | `v0.15` | Fixed in `0.16` — CHANGELOG *Changed* ([#87](https://github.com/adamkjonsson/zipline/issues/87)); the vector's `session_id` `7` → `0` |
-| 4 | `tunnel/{inner,outer}.jsonl` spell the flow key `flow_key`, not `key` | `v0.16` | **Open** — reported as [#104](https://github.com/adamkjonsson/zipline/issues/104) |
+| 4 | `tunnel/{inner,outer}.jsonl` spell the flow key `flow_key`, not `key` | `v0.16` | Fixed in `0.17` ([#104](https://github.com/adamkjonsson/zipline/issues/104)), with a `check.py` guard building the key vocabulary from the spec's own tables |
+| 5 | `mixed-derivation`'s identity span writes `pid` and `session_id` transposed | `v0.19` | **Open** — reported as [#141](https://github.com/adamkjonsson/zipline/issues/141) |
+| 6 | `handshake-at-origin` and `unplaceable-below-origin` write `tcp_role` one below the value their `.jsonl` states | `v0.18`, `v0.19` | **Open** — reported as [#141](https://github.com/adamkjonsson/zipline/issues/141) |
+
+**Defects 5 and 6 share a root**, which is why they were reported as one issue:
+`build.py` authors the `.zpf` and the `.jsonl` faces of each vector
+independently, so the two can disagree and nothing upstream notices. The `.hex`
+is generated from the same description as the bytes, so it reproduces the wrong
+value rather than contradicting it; `check.py` is barred from parsing block
+bodies by the suite's own ground rule 2, which is exactly what comparing the
+faces would need. So the agreement of a vector's two faces is unguarded by
+construction, and an implementation reading the binary is the only thing that
+tests it. That is now how three of the six defects here surfaced.
 
 Defect 1 also generalised upstream. The principle this file drew out of it — **a
 negative vector must carry exactly one violation** — is now stated in the vectors
@@ -20,16 +32,108 @@ README and *enforced*: every manifest entry declares a `violations` count, and
 vector cannot be written without confronting the number.
 
 Defects 1 and 2 were found during the 0.9 → 0.12 port, against `vectors/` at tag
-`v0.12` (commit `c291afc`). Defect 3 came out of the `0.15` review, and defect 4
-out of Phase 1 of the 0.14 → 0.16 port. Both are recorded next; the frozen 0.12
-report follows them.
+`v0.12` (commit `c291afc`). Defect 3 came out of the `0.15` review, defect 4 out
+of Phase 1 of the 0.14 → 0.16 port, and defects 5 and 6 out of Phase 0 of the
+0.16 → 0.19 port. Each is recorded next; the frozen 0.12 report follows them.
+
+---
+
+## Defects 5 and 6 — three vectors whose `.zpf` contradicts their own `.jsonl`
+
+**Open at `v0.19`.** Found at Phase 0 of the 0.16 → 0.19 port, by projecting
+every vendored `.zpf` through our JSONL face and diffing against the shipped
+`.jsonl`. Of the 40 files carrying both faces, three disagree, and in every case
+the **binary** is the wrong half — which is the half an implementation is tested
+against.
+
+### What is wrong
+
+| Vector | The `.zpf` holds | The `.jsonl` says | Wrong since |
+|---|---|---|---|
+| `mixed-derivation` | span `pid = 8, session_id = 0` | `session_id = 8, pid = 0` | `0.19` |
+| `handshake-at-origin` | `tcp_role` 0 then 1 | `initiator` then `responder` — 1 then 2 | `0.18` |
+| `unplaceable-below-origin` | `tcp_role` 0 | `initiator` — 1 | `0.19` |
+
+Semantics settle which face is right in each case, and it is always the `.jsonl`.
+
+`mixed-derivation`'s session 11 preserves a stream whose input is session 8,
+participant 0; the sibling span in the same file cites `(source 1, pid 0,
+session 7)` correctly, and a participant id of 8 in a file whose participants
+are all pid 0 is not a reading anyone intended.
+
+`handshake-at-origin`'s pid 0 sends the first SYN at `ts 1000` carrying no
+`ack`, and pid 1 answers at `ts 1100` with `ack 1001`. So pid 0 is the initiator
+and pid 1 the responder, which is what the `.jsonl` says and what the vector's
+own summary describes. The bytes say *unknown* then *initiator*: the enum
+shifted down by one. `unplaceable-below-origin` carries the same shift.
+
+### The cause
+
+`build.py` authors the two faces independently, so they can disagree:
+
+```python
+# handshake-at-origin, the binary
+participant(7, 0, [o_endpoint("10.0.0.1:51000"), o_isn(1000), o_tcp_role(0)]),
+participant(7, 1, [o_endpoint("93.184.216.34:80"), o_isn(5000), o_tcp_role(1)]),
+# ... and, separately, its jsonl
+"tcp_role": "initiator",
+"tcp_role": "responder",
+```
+
+`o_tcp_role` takes the wire value, so those should be `1` and `2`.
+`escape-unknown-enum` writes `o_tcp_role(7)` against `"tcp_role": 7` and is
+correct, so the helper is not at fault.
+
+The span case has a sharper proximate cause. `o_spans` takes its tuple in
+**byte** order rather than logical order:
+
+```python
+u16(sr) + u16(pid) + u64(se) + ...   for sr, pid, se, a, b in entries
+```
+
+Every other statement of that triple — the specification's prose, the JSONL, the
+`input_extents` entry — puts `session_id` before `pid`; the u16s lead only for
+alignment. So `o_spans([(1, 8, 0, 0, 10)])` reads naturally as *session 8, pid 0*
+and packs the opposite.
+
+### Why nothing upstream caught it, and why that matters
+
+The `.hex` is generated from the same description as the `.zpf`, so it
+reproduces the wrong byte and annotates it faithfully:
+`option 0x0063 tcp_role, len = 1  (0)`. `check.py` is barred from parsing block
+bodies by ground rule 2, which is exactly what comparing the faces needs. The
+capability check sees both option ids present and is satisfied; only their
+*values* are wrong.
+
+So the agreement of a vector's two faces is unguarded by construction, and the
+only thing that tests it is an implementation reading the binary and projecting
+it. Three of the six defects in this register surfaced that way.
+
+### What we do about it
+
+All three go into `DEFECTIVE` and are held out of the ratchet. Two of them carry
+a lesson the defect does not touch, and neither is bent to fit:
+
+- **`handshake-at-origin`** exists for the non-descending ordering MUST
+  ([zipline#124](https://github.com/adamkjonsson/zipline/issues/124)), and that
+  lesson is intact — the `seq_start` tie is in the bytes and correct. Only the
+  projection is wrong.
+- **`unplaceable-below-origin`**'s extent lesson is intact too, `tcp_role` having
+  nothing to do with placement. We assert its extent through `_ACCEPT_EXTENTS`,
+  which reads the `.zpf` and not the projection, so the defect does not cost us
+  the guard that vector was added for.
 
 ---
 
 ## Defect 4 — `tunnel/inner.jsonl` and `tunnel/outer.jsonl` use the binary field name for the flow key
 
-**Open at `v0.16`.** Found at Phase 1 of the 0.14 → 0.16 port, when the version
-gate moved and `tunnel/outer` became readable for the first time.
+**Closed in `0.17`.** Found at Phase 1 of the 0.14 → 0.16 port, when the version
+gate moved and `tunnel/outer` became readable for the first time. Both files
+spell the key `"key"` at `v0.19`, and
+[zipline#104](https://github.com/adamkjonsson/zipline/issues/104) added a
+`check.py` guard that builds the projection's key vocabulary from the
+specification's own tables — the part that outlives the fix, since it closes the
+class rather than the instance. The report below is kept as written.
 
 ### What is wrong
 

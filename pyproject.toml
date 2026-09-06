@@ -34,7 +34,7 @@ classifiers = [
 zpf = "zpf.cli:main"
 
 [project.urls]
-Specification = "https://github.com/adamkjonsson/zipline/blob/v0.16/docs/zipline-payload-format.md"
+Specification = "https://github.com/adamkjonsson/zipline/blob/v0.19/docs/zipline-payload-format.md"
 Changelog = "https://github.com/adamkjonsson/python-zipline/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]

@@ -345,6 +345,10 @@ class ConformanceChecker:
         self._live: dict[int, _SessionState] = {}
         self._ended: set[int] = set()
         self._holes: dict[tuple[int, int, int], list[tuple[int, int]]] = {}
+        # Regions the producer said it *removed*, which is the second arm of
+        # the seam predicate and the only one that tests a word rather than a
+        # class. See _check_unmarked_breaks.
+        self._removed: dict[tuple[int, int, int], list[tuple[int, int]]] = {}
         self._breaks: list[_BreakCandidate] = []
         self._transform_digest: str | None = None
         self._saw_zpf_sourced = False
@@ -608,9 +612,12 @@ class ConformanceChecker:
         if kind == SourceKind.CAPTURE:
             self._check_against_capture(block, described)
             return
-        if _reason_class(block) == "hole" and block.off_start < block.off_end:
+        if block.off_start < block.off_end:
             key = (block.source_id, block.session_id, block.participant_id)
-            self._holes.setdefault(key, []).append((block.off_start, block.off_end))
+            if _reason_class(block) == "hole":
+                self._holes.setdefault(key, []).append((block.off_start, block.off_end))
+            elif block.reason == "dropped":
+                self._removed.setdefault(key, []).append((block.off_start, block.off_end))
         # Against a `zpf-input` source. Not a decode-stage marker any more:
         # a pass-through preserving a decoded layer re-emits its input's
         # Undecoded blocks unchanged, which is what carries the input's
@@ -838,10 +845,25 @@ class ConformanceChecker:
     def _check_unmarked_breaks(self) -> None:
         """Rule on the held pairs, once every Undecoded block is in.
 
-        Where a ``hole``-class region lies between the input regions of two
-        adjacent output units, no other reading is available: no bytes
-        existed there, so no content can have been carried forward, and the
-        two units cannot join.
+        The predicate has **two arms**, and they are not symmetric.
+
+        A ``hole``-class region between the input regions of two adjacent
+        output units admits no other reading: no bytes existed there, so no
+        content can have been carried forward, and the two cannot join. That
+        arm tests a *class*, so it reaches the whole open vocabulary — ``gap``,
+        ``truncated``, and any producer's own hole word carrying
+        ``reason_class: hole``.
+
+        The second arm tests a **word**, ``reason = dropped``, because
+        content-removed has no class of its own: bytes-exist is the wrong set,
+        holding ``skipped`` — which joins — and ``undecodable``, which decides
+        nothing. ``0.17`` coined the word so the case became decidable from one
+        file at all, and ``0.18`` closed the escape it left by requiring a
+        stage that removed content to spell it exactly this way, putting any
+        specificity in ``comment``. So the asymmetry is the specification's and
+        deliberate. Do **not** widen this arm to bytes-class, which would fire
+        on ``undecoded-skipped``, where a discarded byte-order mark withholds
+        no content and the text either side runs straight on.
 
         **Satisfying this is not satisfying the duty.** It is the minimum a
         checker owes, deliberately conservative, and every pair it declines
@@ -849,20 +871,24 @@ class ConformanceChecker:
         producer knowledge and is mostly not mechanically decidable. A
         producer that emits the block only where this fires has misread it.
         """
+        arms = (
+            (self._holes, "a hole-class Undecoded region", "no bytes existed in"),
+            (self._removed, "an Undecoded region marked dropped", "content was removed from"),
+        )
         for candidate in self._breaks:
             start, end = candidate.gap
-            for hole_start, hole_end in self._holes.get(candidate.stream, ()):
-                if hole_start < end and start < hole_end:
-                    source_id, session_id, pid = candidate.stream
-                    msg = (
-                        f"{candidate.described} and the record before it are stored as "
-                        f"neighbours, but a hole-class Undecoded region lies between "
-                        f"their input regions on (source {source_id}, session "
-                        f"{session_id}, pid {pid}): no bytes existed in [{start}, "
-                        f"{end}), so the two cannot join and a Discontinuity between "
-                        f"them is required"
-                    )
-                    raise SemanticError(msg)
+            for regions, named, because in arms:
+                for region_start, region_end in regions.get(candidate.stream, ()):
+                    if region_start < end and start < region_end:
+                        source_id, session_id, pid = candidate.stream
+                        msg = (
+                            f"{candidate.described} and the record before it are stored "
+                            f"as neighbours, but {named} lies between their input "
+                            f"regions on (source {source_id}, session {session_id}, pid "
+                            f"{pid}): {because} [{start}, {end}), so the two cannot join "
+                            f"and a Discontinuity between them is required"
+                        )
+                        raise SemanticError(msg)
 
     def _close_participants(self, state: _SessionState) -> None:
         """Rule on every stream of a session, once its records are all in.

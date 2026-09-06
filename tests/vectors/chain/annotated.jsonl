@@ -1,12 +1,12 @@
-{"type":"file","format":"zipline-payload/0.16","tick_hz":1000000,"produced_by":"zpf-annotate 0.2","produced_at":1719520000}
-{"type":"source","source_id":1,"kind":"zpf-input","uri":"raw.zpf","digest":"sha256:e62b72a5eecb38c8b2bd104ae900b8611ae3b4533f6207c797a79648bcebf178"}
-{"type":"source","source_id":2,"kind":"zpf-input","uri":"decoded.zpf","digest":"sha256:46176f2c83ffda8642a5acf43aea31eb1515e2003e3e9d3ccba63d76bafe8a60"}
+{"type":"file","format":"zipline-payload/0.19","tick_hz":1000000,"produced_by":"zpf-annotate 0.2","produced_at":1719520000}
+{"type":"source","source_id":1,"kind":"zpf-input","uri":"raw.zpf","digest":"sha256:7707213c2671fccbd29fcd1f45ffd89660a133ac2b8f9260fdadcff97891a782"}
+{"type":"source","source_id":2,"kind":"zpf-input","uri":"decoded.zpf","digest":"sha256:e5610687fda96fdecbd73c1904a205891a7e159a73ff3d64ad86b2c0a9da01a1"}
 {"type":"decoder","decoder_id":1,"output_layer":"decoded","name":"http/1.1","version":"0.4"}
 {"type":"session","session_id":7,"proto":"http"}
-{"type":"participant","session_id":7,"pid":0,"endpoint":["10.0.0.1:51000"],"origin":{"source_id":2,"session_id":7,"pid":0}}
-{"type":"participant","session_id":7,"pid":1,"endpoint":["93.184.216.34:80"],"origin":{"source_id":2,"session_id":7,"pid":1}}
+{"type":"participant","session_id":7,"pid":0,"endpoint":["10.0.0.1:51000"]}
+{"type":"participant","session_id":7,"pid":1,"endpoint":["93.184.216.34:80"]}
 {"type":"name","session_id":7,"pid":1,"label":"example.com","kind":"tls-sni"}
-{"type":"record","session_id":7,"sender_pid":0,"source_id":2,"ts":1000,"payload":"UkVROkdFVCAv","decoder_id":1,"content_type":"dec:request"}
-{"type":"record","session_id":7,"sender_pid":1,"source_id":2,"ts":1100,"payload":"UkVTUDoyMDA=","decoder_id":1,"content_type":"dec:response"}
+{"type":"record","session_id":7,"sender_pid":0,"source_id":2,"ts":1000,"payload":"UkVROkdFVCAv","decoder_id":1,"spans":[{"source_id":2,"session_id":7,"pid":0,"off_start":0,"off_end":9}],"content_type":"dec:request"}
+{"type":"record","session_id":7,"sender_pid":1,"source_id":2,"ts":1100,"payload":"UkVTUDoyMDA=","decoder_id":1,"spans":[{"source_id":2,"session_id":7,"pid":1,"off_start":0,"off_end":8}],"content_type":"dec:response"}
 {"type":"undecoded","source_id":1,"session_id":7,"pid":1,"off_start":16,"off_end":20,"reason":"undecodable","decoder_id":1}
 {"type":"end"}

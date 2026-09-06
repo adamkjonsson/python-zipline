@@ -1,14 +1,14 @@
-"""Conformance-vector harness for the upstream 0.16 vectors.
+"""Conformance-vector harness for the upstream 0.19 vectors.
 
 The vectors in ``tests/vectors/`` are hand-built from the specification's
 normative text (see ``tests/vectors/VENDORED.md``). They are the acceptance
-criteria for the 0.14 → 0.16 migration: each phase of the port is done when the
+criteria for the 0.16 → 0.19 migration: each phase of the port is done when the
 vectors it targets pass.
 
 **The ratchet.** A vector case is a hard requirement only once its name is added
 to :data:`KNOWN_PASSING`; every other case is ``xfail(strict=False)``. That keeps
 the suite green across a migration that starts with every file unreadable — until
-the version gate moves, a 0.16 file is refused whatever else is implemented. A
+the version gate moves, a 0.19 file is refused whatever else is implemented. A
 case that starts passing shows up as ``XPASS`` — that is the progress signal —
 and is then promoted into :data:`KNOWN_PASSING` so it can never silently
 regress.
@@ -16,17 +16,29 @@ regress.
 So the migration invariant is: ``KNOWN_PASSING`` only ever grows, and the suite
 is green at every step.
 
-The ratchet was reset at Phase 0 of the 0.16 port, when the tree was re-vendored.
-It is not a record of what this library once passed — under 0.14 it passed all 39
-vectors then shipped — only of what it passes against *these* files.
+**With one qualification the 0.19 port is the first to need.** ``0.19`` is a
+*subtractive* release: it deleted nine vectors along with the rules they pinned.
+A name whose file no longer exists upstream guards nothing, so it leaves the set
+at the re-vendor. The rule is therefore "a name is never removed **while its
+vector exists**", and a removal is only ever justified by the fixture being gone
+— never by our failing it.
+
+The ratchet was reset at Phase 0 of the 0.16 port and re-based at Phase 0 of this
+one. It is not a record of what this library once passed — under 0.14 it passed
+all 39 vectors then shipped — only of what it passes against *these* files.
 
 **Three tests here are not ratchet-gated**, because they are parametrized over
 every readable case rather than over a tier: the escape-contract test, the
-JSONL → binary direction, and the canonical re-encode. Phase 0 held them behind
-a version-gate mark, Phase 1 moved the gate and retired it, and Phase 2 emptied
-what remained. All three now run unmarked against every vector except the
-:data:`DEFECTIVE` ones — so a regression in either face shows up as a failure
-rather than as a silently missing XPASS.
+JSONL → binary direction, and the canonical re-encode. They run unmarked against
+every vector except those held by :data:`DEFECTIVE` or :data:`UNIMPLEMENTED` —
+so a regression in either face shows up as a failure rather than as a silently
+missing XPASS. The two hold sets are kept apart on purpose: one says the fixture
+is wrong, the other says we are behind, and collapsing them is how an
+implementation ends up bent to match a broken vector.
+
+**And one test is not driven by the manifest at all.** The accept tier declares a
+projection and a violation count, and neither catches a reader that computes the
+wrong *offset* in silence — see :data:`_ACCEPT_EXTENTS`.
 """
 
 from __future__ import annotations
@@ -44,40 +56,37 @@ import zpf
 
 VECTORS = Path(__file__).parent / "vectors"
 
-#: Vector cases that MUST pass. Grow it as phases land; never remove a name,
-#: because that is the regression guard.
+#: Vector cases that MUST pass. Grow it as phases land; never remove a name
+#: while its vector exists, because that is the regression guard.
 #:
-#: Phase 4: per-participant classification, replacing file purity.
-#: ``mixed-derivation`` is the shape the old file-wide rule could not express
-#: — one file decoding one session while passing another through. The three
-#: ``isolate`` vectors are rules that had nowhere to live until the unit was
-#: the stream: a participant resolving to two layers, a ``zpf``-sourced
-#: participant bound to no input, and a decoder declaring a layer this
-#: version does not define.
+#: **53 names, 59 files, and 52 in this set at the ``0.19`` re-vendor.** The
+#: arithmetic from ``0.16``'s 56: seven names left because ``0.19`` *deleted*
+#: their vectors with the rules they pinned (``annotator-decoded``,
+#: ``file-clock-metadata``, ``isolate-sequenced-no-basis``,
+#: ``partially-hinted-sequenced``, ``passthrough-discontinuity``,
+#: ``passthrough-transport``, ``sequenced-basis``); ``tunnel/inner`` and
+#: ``tunnel/outer`` arrived from :data:`DEFECTIVE`, ``0.17`` having fixed the
+#: flow-key defect that held them; four names joined from the new vectors; and
+#: ``mixed-derivation`` left for :data:`DEFECTIVE`.
 #:
-#: Phase 5: the Undecoded body read by the referenced source's ``kind``.
-#: ``undecoded-in-capture`` is the conformant case — a reassembler declaring
-#: an overlap it discarded, with no ids and no derived header — and
-#: ``isolate-hole-against-capture`` the barred one, where the gap is already
-#: carried by the reassembled stream's own hole-inclusive offsets.
+#: What is **not** here yet, and what puts it here:
 #:
-#: Phase 6: ``isolate-unmarked-break`` for the Discontinuity predicate, and
-#: ``isolate-self-derived`` for a check only a reader that knows the path it
-#: opened can make. ``advisory-transport-content-type`` was already here and
-#: now passes for the right reason — accepted *and* reported, which is the
-#: format's first violation that accepts.
+#: * ``advisory-transport-role`` and ``decoded-field-roles`` — Phase 6, which
+#:   implements ``role``. Held in :data:`UNIMPLEMENTED`.
+#: * ``handshake-at-origin``, ``unplaceable-below-origin``,
+#:   ``mixed-derivation`` — held in :data:`DEFECTIVE` until upstream fixes the
+#:   fixtures, and not ours to earn.
 #:
-#: **Every vector name is now in this set.** What stays xfailed is
-#: :data:`DEFECTIVE`, which is upstream's to fix and not a phase to wait for.
+#: So the set reaches 55 when Phase 6 lands, and 58 if `zipline#141
+#: <https://github.com/adamkjonsson/zipline/issues/141>`_ is fixed.
 #:
 #: ``splice`` is one name for two files, because its violation belongs to
-#: neither of them — 52 names for 59 files, which is the honest arithmetic.
-#: :data:`PAIRWISE` routes it to :func:`test_a_pairwise_vector_is_caught`, and
-#: the per-file tiers skip it.
+#: neither of them, which is why 53 names cover 59 files. :data:`PAIRWISE`
+#: routes it to :func:`test_a_pairwise_vector_is_caught`, and the per-file
+#: tiers skip it.
 KNOWN_PASSING: frozenset[str] = frozenset(
     {
         "advisory-transport-content-type",
-        "annotator-decoded",
         "broken-chain",
         "chain/annotated",
         "chain/decoded",
@@ -92,7 +101,6 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "escape-unknown-enum",
         "escape-unknown-option",
         "external-session-id",
-        "file-clock-metadata",
         "filtered-decoded",
         "hintless-merge-backwards-ts",
         "isolate-coverage-gap",
@@ -103,17 +111,13 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "isolate-hole-against-capture",
         "isolate-mixed-layer-participant",
         "isolate-self-derived",
-        "isolate-sequenced-no-basis",
         "isolate-unbound-zpf-stream",
         "isolate-undeclared-session",
         "isolate-unknown-output-layer",
         "isolate-unknown-source-kind",
         "isolate-unmarked-break",
+        "isolate-unmarked-drop",
         "merge-timestamp-tie",
-        "mixed-derivation",
-        "partially-hinted-sequenced",
-        "passthrough-discontinuity",
-        "passthrough-transport",
         "proxy-decoded",
         "raw-minimal",
         "reassembler-declared",
@@ -123,15 +127,18 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "reject-unknown-major",
         "reject-unknown-minor",
         "reordered-decoded",
-        "sequenced-basis",
+        "sequenced-session",
         "session-fan-out",
         "sessionization-stage",
         "splice",
         "tunnel/http",
+        "tunnel/inner",
+        "tunnel/outer",
         "tunnel/packets",
         "undecoded-in-capture",
         "undecoded-reason-class",
         "undecoded-skipped",
+        "unplaceable-no-seq-start",
     }
 )
 
@@ -140,16 +147,85 @@ KNOWN_PASSING: frozenset[str] = frozenset(
 #: that nobody bends this implementation to match a broken fixture: if one of
 #: these starts passing, the vector was fixed — or we got it wrong.
 #:
-#: Two entries at ``v0.16``, both the same defect: ``tunnel/inner.jsonl`` and
-#: ``tunnel/outer.jsonl`` spell the Session flow key ``"flow_key"``, but the
-#: normative JSONL mapping lists it among the **brevity aliases** as ``"key"``
-#: — and ``descriptive-metadata.jsonl`` in this same suite writes ``"key"``.
-#: See ``VECTOR-DEFECTS.md`` defect 4. Our face follows the mapping table, so
-#: these two cannot pass until upstream fixes them, and must not be chased at
-#: Phase 2 when the other ``tunnel/`` members turn green.
+#: Three entries at ``v0.19``, and they share a root: ``build.py`` upstream
+#: authors each vector's ``.zpf`` and ``.jsonl`` **independently**, so the two
+#: faces can disagree. In all three the binary is the wrong half — which is the
+#: half we are tested against — and the projection states what was intended.
+#: See ``VECTOR-DEFECTS.md`` defects 5 and 6, reported as
+#: `zipline#141 <https://github.com/adamkjonsson/zipline/issues/141>`_.
+#:
+#: **Two of them carry a lesson the defect does not touch**, and neither is
+#: bent to fit. ``handshake-at-origin`` exists for the non-descending ordering
+#: MUST, and its ``seq_start`` tie is in the bytes and correct; only its
+#: projection is wrong. ``unplaceable-below-origin`` exists for the extent an
+#: unplaceable record leaves alone, which ``tcp_role`` has nothing to do with —
+#: so :data:`_ACCEPT_EXTENTS` asserts it from the ``.zpf`` and runs for
+#: ``DEFECTIVE`` cases too, and the defect costs us no guard.
+#:
+#: ``v0.16``'s defect 4 — ``tunnel/{inner,outer}.jsonl`` spelling the flow key
+#: ``"flow_key"`` where the mapping says ``"key"`` — was fixed upstream in
+#: ``0.17``, so both names leave this dict at the ``0.19`` re-vendor.
 DEFECTIVE: dict[str, str] = {
-    "tunnel/inner": "defect 4: .jsonl writes flow_key where the mapping says key",
-    "tunnel/outer": "defect 4: .jsonl writes flow_key where the mapping says key",
+    "handshake-at-origin": (
+        "defect 6: .zpf writes tcp_role 0/1 where its .jsonl says initiator/responder (1/2)"
+    ),
+    "unplaceable-below-origin": (
+        "defect 6: .zpf writes tcp_role 0 where its .jsonl says initiator (1)"
+    ),
+    "mixed-derivation": (
+        "defect 5: the identity span packs pid=8, session_id=0 where its .jsonl "
+        "says session_id=8, pid=0"
+    ),
+}
+
+#: Vectors **we** cannot project yet, because a phase of this port has not
+#: landed. The mirror image of :data:`DEFECTIVE` and deliberately a separate
+#: name: these say *we* are behind, where those say the fixture is wrong. A
+#: name here is removed by the phase that implements the feature, and one here
+#: that starts passing is a phase that landed without its entry being cleared.
+#:
+#: Both entries are ``role`` (``0x0092``), which Phase 6 implements. Until it
+#: does, the option survives the round trip inside ``extra_options`` — the
+#: escape contract working — so these files *read* cleanly all along and only
+#: their projection differs.
+UNIMPLEMENTED: dict[str, str] = {
+    "advisory-transport-role": "role (0x0092) lands in Phase 6",
+    "decoded-field-roles": "role (0x0092) lands in Phase 6",
+}
+
+#: The extent each accept vector's lesson names, per ``(session_id, pid)``.
+#:
+#: **Why this table exists.** The accept tier asserts two things: the file reads
+#: with the diagnostics the manifest declares, and its projection matches the
+#: shipped ``.jsonl``. Both are satisfied by a reader that is *wrong about where
+#: the bytes are*, because a miscomputed offset produces no violation and
+#: round-trips unchanged. ``_REJECT_REASONS`` and :data:`_ISOLATE_REASONS` exist
+#: because a negative vector passing for the wrong reason is worse than one
+#: failing; this is the same discipline for the tier that had no equivalent.
+#:
+#: It earned itself immediately. ``unplaceable-below-origin`` is an accept vector
+#: whose whole lesson is that an unplaceable record contributes nothing, and at
+#: the ``0.19`` re-vendor this library accepted it, projected it correctly, and
+#: computed an extent of 4 294 967 303 against the 16 the vector states — the
+#: exact reading its own summary names as wrong. Nothing in the manifest could
+#: say so. Reported upstream as
+#: `zipline#140 <https://github.com/adamkjonsson/zipline/issues/140>`_, which
+#: asks for the numbers to be declared as data; if they ever are, this table
+#: reads them instead of transcribing them from each vector's ``expect`` prose.
+#:
+#: Measured from the ``.zpf``, never from the projection, so a case held in
+#: :data:`DEFECTIVE` for a *projection* defect is still asserted here.
+_ACCEPT_EXTENTS: dict[str, dict[tuple[int, int], int]] = {
+    "unplaceable-below-origin": {(7, 0): 16},
+    "unplaceable-no-seq-start": {(9, 0): 6},
+}
+
+#: Entries of :data:`_ACCEPT_EXTENTS` we do not satisfy yet, and what will.
+#: Held separately from the table so the expected numbers stay stated even
+#: while we get them wrong — the table is what the vectors say, this is where
+#: we are against it.
+_EXTENTS_PENDING: dict[str, str] = {
+    "unplaceable-below-origin": "the one offset rule lands in Phase 1 (#63)",
 }
 
 #: What each ``reject`` vector must be refused *for*. Asserting only that some
@@ -192,11 +268,11 @@ _ISOLATE_REASONS: dict[str, str] = {
     "isolate-hole-against-capture": "only the bytes-exist class is available",
     "isolate-mixed-layer-participant": "resolves to two layers",
     "isolate-self-derived": "which is this file",
-    "isolate-sequenced-no-basis": "sequenced_basis",
     "isolate-unbound-zpf-stream": "neither origin nor records with spans",
     "isolate-unknown-output-layer": "does not define",
     "isolate-undeclared-session": "undeclared session",
     "isolate-unmarked-break": "a Discontinuity between them is required",
+    "isolate-unmarked-drop": "a Discontinuity between them is required",
     "isolate-unknown-source-kind": "unknown kind",
 }
 
@@ -352,8 +428,9 @@ def _projected_params() -> list[Any]:
         if case.expected_jsonl is None:
             continue
         marks: tuple[Any, ...] = ()
-        if case.name in DEFECTIVE:
-            marks = (pytest.mark.xfail(reason=DEFECTIVE[case.name], strict=False),)
+        held = DEFECTIVE.get(case.name) or UNIMPLEMENTED.get(case.name)
+        if held is not None:
+            marks = (pytest.mark.xfail(reason=held, strict=False),)
         params.append(pytest.param(case, id=case.name, marks=marks))
     return params
 
@@ -377,7 +454,9 @@ def _params(tier: str) -> list[Any]:
         if case.name in KNOWN_PASSING:
             marks: tuple[Any, ...] = ()
         else:
-            reason = DEFECTIVE.get(case.name, "not yet ported to 0.16")
+            reason = DEFECTIVE.get(case.name) or UNIMPLEMENTED.get(
+                case.name, "not yet ported to 0.19"
+            )
             marks = (pytest.mark.xfail(reason=reason, strict=False),)
         params.append(pytest.param(case, id=case.name, marks=marks))
     return params
@@ -444,7 +523,7 @@ def test_manifest_covers_the_tree() -> None:
 
 
 def test_every_case_has_a_file() -> None:
-    """The manifest expands to exactly the files `v0.16` ships.
+    """The manifest expands to exactly the files `v0.19` ships.
 
     The count is exact rather than a floor, so a half-copied re-vendoring
     fails here instead of quietly shrinking the suite: 53 manifest entries,
@@ -561,6 +640,47 @@ def test_accept(case: Case) -> None:
             assert got == want, f"{case.name}: line {index + 1} differs"
 
 
+def _extent_params() -> list[Any]:
+    """Build one param per :data:`_ACCEPT_EXTENTS` entry, holding the pending."""
+    params = []
+    for name in sorted(_ACCEPT_EXTENTS):
+        marks: tuple[Any, ...] = ()
+        if name in _EXTENTS_PENDING:
+            marks = (pytest.mark.xfail(reason=_EXTENTS_PENDING[name], strict=False),)
+        params.append(pytest.param(name, id=name, marks=marks))
+    return params
+
+
+@pytest.mark.parametrize("name", _extent_params())
+def test_an_accept_vector_puts_its_bytes_where_it_says(name: str) -> None:
+    """A vector whose lesson is an offset is asserted on the offset.
+
+    The tier tests cannot do this. A reader that misplaces a record reports no
+    violation and projects the file unchanged, so ``test_accept`` passes it —
+    which is how this library read ``unplaceable-below-origin`` at the moment
+    the vector arrived. See :data:`_ACCEPT_EXTENTS` for why the number is
+    transcribed here rather than read from the manifest.
+
+    Measured through :func:`zpf.stream_extent`, which is the same rule
+    ``check_coverage`` uses, so the reader and the coverage checker cannot
+    drift apart without this failing.
+    """
+    case = next(c for c in CASES if c.name == name)
+    with zpf.open(case.path) as reader:
+        for (session_id, pid), want in sorted(_ACCEPT_EXTENTS[name].items()):
+            session = reader.session(session_id)
+            got = zpf.stream_extent(
+                session.participant(pid),
+                list(session.stream_blocks(pid)),
+                session.layer(pid),
+            )
+            assert got == want, (
+                f"{name}: session {session_id} pid {pid} measures {got}, but the "
+                f"vector's stream is [0, {want}) — an unplaceable record covers no "
+                f"byte and contributes nothing to the extent"
+            )
+
+
 @pytest.mark.parametrize("case", _params("reject"))
 def test_reject(case: Case) -> None:
     """Structural corruption is refused, and refused for the right reason.
@@ -612,7 +732,7 @@ def _pairwise_params() -> list[Any]:
     for name in PAIRWISE:
         marks: tuple[Any, ...] = ()
         if name not in KNOWN_PASSING:
-            marks = (pytest.mark.xfail(reason="not yet ported to 0.16", strict=False),)
+            marks = (pytest.mark.xfail(reason="not yet ported to 0.19", strict=False),)
         params.append(pytest.param(name, id=name, marks=marks))
     return params
 
@@ -668,15 +788,24 @@ def test_a_clean_pair_reports_nothing() -> None:
     assert zpf.check_splice(chain / "decoded.zpf", chain / "raw.zpf") == []
 
 
-def test_the_unmarked_break_predicate_fires_on_exactly_one_vector() -> None:
+def test_the_unmarked_break_predicate_fires_on_exactly_two_vectors() -> None:
     """The claim the predicate is only worth having if it holds.
 
     A conservative check is useless if it also fires on conformant files, so
-    this asserts the whole suite rather than the one vector: every near-miss
+    this asserts the whole suite rather than the two vectors: every near-miss
     is excluded by the clause that exists for it — ``sessionization-stage``
     and ``tunnel/inner`` by the layer test, ``reordered-decoded`` and
-    ``session-fan-out`` by the overlap clause, ``filtered-decoded`` because
-    its region between records is bytes-class.
+    ``session-fan-out`` by the overlap clause.
+
+    **``filtered-decoded`` is the one to watch**, and it changed sides in
+    ``0.17``. It carries a bytes-class region between two adjacent units, so
+    the hole arm cannot see it; what keeps it passing now is its
+    Discontinuity, not its class. Its twin ``isolate-unmarked-drop`` is the
+    same file with that block deleted, and the *only* thing that distinguishes
+    them is ``reason = dropped`` — which is why the second arm tests a word.
+    If a future widening of that arm to bytes-class ever lands,
+    ``undecoded-skipped`` joins this set and the widening is wrong: a
+    discarded byte-order mark withholds no content and owes no block.
     """
     wanted = "a Discontinuity between them is required"
     fired = set()
@@ -692,7 +821,7 @@ def test_the_unmarked_break_predicate_fires_on_exactly_one_vector() -> None:
             reported = str(exc)
         if wanted in reported:
             fired.add(case.name)
-    assert fired == {"isolate-unmarked-break"}
+    assert fired == {"isolate-unmarked-break", "isolate-unmarked-drop"}
 
 
 @pytest.mark.parametrize("case", _readable_params())

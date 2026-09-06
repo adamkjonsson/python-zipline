@@ -1,0 +1,96 @@
+# unplaceable-below-origin
+#
+# Generated from the same description as the .zpf -- never edited
+# by hand, so the annotation cannot drift from the bytes.
+
+0000  01 00                    type   = 0x0001  File Header
+0002  00 00                    reserved
+0004  10 00 00 00              length = 16
+0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
+000C  00 00                    version_major = 0
+000E  13 00                    version_minor = 19
+0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
+
+0018  02 00                    type   = 0x0002  Source Descriptor
+001A  00 00                    reserved
+001C  18 00 00 00              length = 24
+0020  01 00                    source_id = 1
+0022  00                       kind = 0  (capture)
+0023  00                       _reserved
+0024  20 00 0D 00              option 0x0020 uri, len = 13
+0028  6F 66 66 62 79 6F 6E 65  "offbyone.pcap"
+0030  2E 70 63 61 70
+0035  00 00 00                 value padding
+
+0038  10 00                    type   = 0x0010  Session Descriptor
+003A  00 00                    reserved
+003C  10 00 00 00              length = 16
+0040  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+0048  50 00 03 00              option 0x0050 proto, len = 3
+004C  74 63 70                 "tcp"
+004F  00                       value padding
+
+0050  11 00                    type   = 0x0011  Participant Descriptor
+0052  00 00                    reserved
+0054  30 00 00 00              length = 48
+0058  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+0060  00 00                    participant_id = 0
+0062  00 00                    _reserved
+0064  60 00 0E 00              option 0x0060 endpoint, len = 14
+0068  31 30 2E 30 2E 30 2E 31  "10.0.0.1:51000"
+0070  3A 35 31 30 30 30
+0076  00 00                    value padding
+0078  61 00 04 00              option 0x0061 isn, len = 4  (1000)
+007C  E8 03 00 00
+0080  63 00 01 00              option 0x0063 tcp_role, len = 1  (0)
+0084  00
+0085  00 00 00                 value padding
+
+0088  20 00                    type   = 0x0020  Record
+008A  00 00                    reserved
+008C  2C 00 00 00              length = 44
+0090  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+0098  00 00                    sender_pid = 0
+009A  01 00                    source_id  = 1
+009C  E8 03 00 00 00 00 00 00  timestamp  = 1000
+00A4  00 00                    _reserved  (u16 = 0)
+00A6  01 00                    flags      = 0x0001
+00A8  08 00 00 00              payload_len = 8
+00AC  4C 4F 53 54 42 59 54 45  "LOSTBYTE"
+00B4  70 00 04 00              option 0x0070 seq_start, len = 4  (1000)
+00B8  E8 03 00 00
+
+00BC  20 00                    type   = 0x0020  Record
+00BE  00 00                    reserved
+00C0  2C 00 00 00              length = 44
+00C4  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+00CC  00 00                    sender_pid = 0
+00CE  01 00                    source_id  = 1
+00D0  D0 07 00 00 00 00 00 00  timestamp  = 2000
+00D8  00 00                    _reserved  (u16 = 0)
+00DA  01 00                    flags      = 0x0001
+00DC  08 00 00 00              payload_len = 8
+00E0  41 41 41 41 42 42 42 42  "AAAABBBB"
+00E8  70 00 04 00              option 0x0070 seq_start, len = 4  (1001)
+00EC  E9 03 00 00
+
+00F0  20 00                    type   = 0x0020  Record
+00F2  00 00                    reserved
+00F4  2C 00 00 00              length = 44
+00F8  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+0100  00 00                    sender_pid = 0
+0102  01 00                    source_id  = 1
+0104  B8 0B 00 00 00 00 00 00  timestamp  = 3000
+010C  00 00                    _reserved  (u16 = 0)
+010E  01 00                    flags      = 0x0001
+0110  08 00 00 00              payload_len = 8
+0114  43 43 43 43 44 44 44 44  "CCCCDDDD"
+011C  70 00 04 00              option 0x0070 seq_start, len = 4  (1009)
+0120  F1 03 00 00
+
+0124  41 00                    type   = 0x0041  End of file
+0126  00 00                    reserved
+0128  04 00 00 00              length = 4
+012C  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
+
+0130                           (end of file, 304 bytes)

@@ -70,7 +70,7 @@ def test_parsing_the_golden_bytes_yields_the_blocks():
 
 def test_parsed_field_values_match_the_spec_annotations():
     header, source, session, participant, record = list(zpf.BlockReader(io.BytesIO(GOLDEN)))
-    assert (header.version_major, header.version_minor) == (0, 16)
+    assert (header.version_major, header.version_minor) == (0, 19)
     assert header.tick_hz == 1_000_000
     assert (source.source_id, source.kind, source.uri) == (1, zpf.SourceKind.CAPTURE, "sideA.pcap")
     assert (session.session_id, session.proto) == (7, "tcp")

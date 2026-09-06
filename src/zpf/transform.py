@@ -896,9 +896,17 @@ def _rewrite_stream(
             )
     kept = sorted([cited[id(record)] for record in survivors] + holes)
     extent = ranges[-1][1] if ranges else 0
+    # `dropped`, not `skipped`, and the distinction is normative since 0.17.
+    # Both are bytes-class; what separates them is what this stage did. A
+    # filter *removed content of the stream*, so the survivors either side may
+    # not join — which is what the Discontinuity `_declare_seam` emits says.
+    # `skipped` is for withholding something that carried no content, and
+    # writing it here would produce a conformant-looking file whose seam duty
+    # no checker could test. 0.18 made the spelling a MUST for exactly that
+    # reason; any further specificity belongs in `comment`.
     for start, end in complement(kept, extent):
         writer.undecoded(
-            derived.source, session.session_id, pid, start, end, reason="skipped"
+            derived.source, session.session_id, pid, start, end, reason="dropped"
         )
 
 
