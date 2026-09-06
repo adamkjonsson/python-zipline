@@ -22,6 +22,8 @@ it back from the installed distribution metadata.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-06
+
 Implements spec **v0.19** (`SPEC_VERSION == (0, 19)`), up from `0.16`. Files
 written by `0.2.0` are refused at the version gate, and files written by this
 release are unreadable by `0.2.0` — the `0.x` rule, working rather than
@@ -298,6 +300,7 @@ as "1.0" and renumbered without rewriting its bytes.
 - The streaming causal merge and `SEQUENCED` verification.
 - The merge transform, the coverage validator, and the `zpf` CLI.
 
-[Unreleased]: https://github.com/adamkjonsson/python-zipline/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/python-zipline/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/adamkjonsson/python-zipline/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/adamkjonsson/python-zipline/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/adamkjonsson/python-zipline/releases/tag/v0.1.0
