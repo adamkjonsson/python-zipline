@@ -51,11 +51,13 @@ already makes. So on the read side it stays opt-in, as
 {meth}`~zpf.reader.SessionReader.verify` and `zpf validate --verify`.
 
 One guard is load-bearing enough to name here: the interior-hole check runs for
-a **decode stage** only. A pass-through re-emits records rather than citing
-them, so it carries no `spans` and its only covered ranges are the Undecoded
-blocks it inherited — everything before them would read as an unaccounted hole.
-The coverage guarantee is a decode stage's obligation, and applying it to a
-pass-through fails conformant files.
+an input stream **some record's `spans` cited**. Through `0.18` that was a way
+of saying "a decode stage only", because a pass-through cited nothing; since
+`0.19` it cites everything and is answerable for its inputs exactly as a decode
+stage is, which is why {func}`zpf.merge_files` marks its inputs' holes. What
+the gate still excludes is the shape the specification names separately: a
+`zpf-input` Source declared only so that an *inherited* Undecoded block still
+resolves. No record's spans name it, so this file is not answerable for it.
 
 ## The ConformanceChecker
 
@@ -96,8 +98,16 @@ Three design points worth preserving when editing it:
 
   | Rule | Why a reader can only ignore it |
   | ---- | ------------------------------- |
-  | Reserved bits set in any flags field (File Header, Session, Record) | The format defines no meaning for them, so there is nothing to act on. Isolating would discard well-framed data — and dropping a File Header or Session Descriptor takes every block that depends on it. |
   | An illegal `prim:` token, or a width that disagrees with `payload_len` | The spec says to treat the label as unknown and keep the payload: "MUST NOT pad, truncate, or reinterpret". |
+  | A `content_type` at the **transport** layer | Dropping the label loses nothing and the record stays fully readable, so there is no unit a reader could soundly discard. `role` joins this row when Phase 6 implements it — the bar names both labels in one sentence and gives them one strength. |
+
+  **Reserved flag bits are not an advisory rule**, though they read like one.
+  The specification groups a nonzero reserved field with unknown block types
+  and unknown option ids as part of the extension mechanism — "not a violation
+  … the normal, conformant path" — so the checker accepts them in silence and
+  the bit survives uninterpreted. Diagnosing one would report conformant data
+  as suspect. This table listed it until the `0.19` port, which is worth
+  recording because the code comment saying so has been there all along.
 
 ### The unit is the stream, not the file
 
@@ -137,15 +147,15 @@ subject, from the reader's side.
 ## Going beyond the standard
 
 Per `CLAUDE.md`, support must stay complete *and* must not silently exceed the
-v0.16 spec: any behavior beyond the standard has to be flagged to the user with
-an explicit callout. As of this version nothing does — the checker's rules are
-the spec's, and the two out-of-band checks (sequenced order, coverage) are
-spec requirements enforced elsewhere, not extensions. A new rule that isn't in
-v0.16 does not belong in the `ConformanceChecker`.
+v0.19 spec: any behavior beyond the standard has to be flagged to the user with
+an explicit callout. The checker's rules are the spec's, and the two out-of-band
+checks (sequenced order, coverage) are spec requirements enforced elsewhere,
+not extensions. A new rule that isn't in v0.19 does not belong in the
+`ConformanceChecker`.
 
 ### What the standard asks for and no reader can check
 
-Two `0.16` rules are **writer-only**, and their absence from the checker is a
+Two rules are **writer-only**, and their absence from the checker is a
 decision rather than an oversight.
 
 **A stage emitting a transport layer MUST NOT withhold content from a stream
@@ -168,18 +178,30 @@ conservative, and every pair it declines to test may still be one where the
 duty binds. On the write side {meth}`~zpf.DecodeStage.record` asks the
 producer directly, through `seam=`.
 
-### One recommendation the standard did not take
+### One recommendation the standard declined, then took
 
 Our [review of `0.15`](https://github.com/adamkjonsson/python-zipline/blob/main/plans/SPEC-0.15-REVIEW.md)
 argued (Finding 5) for splitting the bytes-exist vocabulary in two — `skipped`
 for content withheld where the survivors still join, and something else for
 content removed where they do not — so that a filter's duty would be decidable
-from one file. `0.16` did not take it, on the grounds that the reason word must
-not decide the duty. The consequence is worth knowing when reading the checker:
-`undecoded-skipped` and `filtered-decoded` are byte-shaped alike — a
+from one file. `0.16` declined it, on the grounds that the reason word must not
+decide the duty.
+
+**`0.17` took it after all**, coining `dropped` for content that was removed.
+The problem `0.16`'s reasoning left standing is what changed its mind:
+`undecoded-skipped` and `filtered-decoded` were byte-shaped alike — a
 bytes-class region between two adjacent units — and one owes a Discontinuity
-while the other does not. Nothing here can tell them apart, and nothing is
-missing that could.
+while the other does not, so a checker raising on either raised wrongly on the
+other. `dropped` is what tells them apart, and it is the second arm of
+`_check_unmarked_breaks`.
+
+The word still does not *decide* the duty; the test remains whether the
+survivors join. What it does is let a producer state that it removed content,
+which a checker can then act on. `0.18` closed the escape that left by making
+`dropped` the **only** spelling for removed content, so a producer taking the
+vocabulary's openness up on `{"reason": "filtered", "reason_class": "bytes"}`
+can no longer say something true and sidestep the only single-file test on the
+bytes side.
 
 ## Conformance vectors
 
@@ -190,7 +212,7 @@ conformant file, with its expected JSONL projection), `reject` (structural
 corruption), and `isolate` (a semantic violation the reader must not pass
 silently).
 
-`0.16` adds a key rather than a fourth tier: an `accept` entry marked
+`0.16` added a key rather than a fourth tier: an `accept` entry marked
 `advisory` declares **one** violation instead of none, and the reader must
 both accept the file completely *and* report it. It is a key because a tier
 names what a reader *does*, and a reader accepts these files. It is the
@@ -206,8 +228,8 @@ that wrong reason during the 0.12 port, and two did again at the start of the
 moved. And
 a vector is never edited to make a test pass: they are subordinate to the
 normative text, so a vector that looks wrong is a question for the spec
-repository. Two that were defective upstream have since been fixed there;
-`VECTOR-DEFECTS.md` is the closed record.
+repository. Four have been found so far; `VECTOR-DEFECTS.md` records them, and
+two are open against `v0.19`.
 
 One vector is judged as a **pair**. `splice` ships two files that are each
 individually conformant — stage 1 declares a break, stage 2 spans across it —

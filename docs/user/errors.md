@@ -49,15 +49,22 @@ Pass `strict=True` to escalate the first such violation to a raised
 A few of the format's MUSTs bind the *writer* alone, because they leave a
 reader nothing it could act on. Two exist today:
 
-- **Reserved `flags` bits** (File Header, Session, Record). A writer must
-  leave them 0, but the format defines no meaning for them, so a reader can
-  only ignore the bits and use the block. Isolating it would throw away
-  well-framed data over flags nobody reads — and losing a File Header or
-  Session Descriptor would take everything that depends on it.
 - **A `prim:` content type the payload contradicts** — an illegal token, or a
   width that disagrees with `payload_len`. The reader "MUST NOT pad,
   truncate, or reinterpret", so it keeps the payload untouched and treats the
   label as unknown.
+- **A `content_type` at the transport layer.** A transport record's
+  boundaries are wherever the reassembler chunked the stream, so a label
+  asserting what the unit *is* asserts a unit where there is a slice. Dropping
+  the label loses nothing and the record stays readable, so there is no unit a
+  reader could soundly discard.
+
+**Reserved `flags` bits are not one of these**, though they look like it. A
+writer must leave them 0, but the format groups a nonzero reserved field with
+unknown block types and unknown option ids as part of its extension mechanism
+— the normal, conformant path — so a reader accepts them in silence and the
+bit survives uninterpreted. Reporting one would call conformant data
+suspect.
 
 {class}`~zpf.AdvisoryError` is a `SemanticError` subclass, which lets both
 duties hold at once:

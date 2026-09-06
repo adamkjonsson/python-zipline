@@ -39,16 +39,28 @@ the specification tells a reader that meets them to ignore the offending
 label and keep the bytes — and those raise
 :class:`~zpf.errors.AdvisoryError`, a :class:`~zpf.errors.SemanticError`
 subclass, so writers still refuse the block while a lenient reader can
-report it and hand the block over. Three rules are advisory today: reserved
-flag bits set in any flags field (the format gives them no meaning a reader
-could act on, so ignoring them is the only reading available); the
-``prim:`` content-type ones (illegal token, width against ``payload_len``
-— the label grammar and the vocabulary they check against live in
-:mod:`zpf.content`); and a ``content_type`` at the **transport** layer,
-which 0.16 made a MUST NOT with this strength deliberately — dropping the
-label loses nothing and the record stays fully readable, so there is no
-unit a reader could soundly discard. A block with several such findings
-reports them all in one message.
+report it and hand the block over. **Two** rules are advisory today:
+
+* the ``prim:`` content-type ones — an illegal token, or a width that
+  disagrees with ``payload_len``. The specification tells a reader to treat
+  the label as unknown and keep the payload, so the breach costs it nothing.
+  The label grammar and the vocabulary live in :mod:`zpf.content`.
+* a ``content_type`` at the **transport** layer. Dropping the label loses
+  nothing and the record stays fully readable, so there is no unit a reader
+  could soundly discard.
+
+A block with several such findings reports them all in one message.
+
+Reserved flag bits are **not** among them, despite reading like a third: the
+format groups a nonzero reserved field with unknown block types and unknown
+option ids as part of the extension mechanism, so diagnosing one would report
+conformant data as suspect. The comment above ``_ParticipantState`` says so at
+the point where a reader of this module would look for the check.
+
+``role`` (``0x0092``) joins the second rule when it is implemented — the
+transport-layer bar names both labels in one sentence and gives them one
+strength, so the two checks should share this implementation rather than
+duplicate it.
 
 Memory stays bounded on unbounded streams: per-session state is freed at
 the session's Session End; only the set of ended session ids is retained
@@ -948,16 +960,24 @@ def _transport_content_type(
     chunk the stream. Two conformant reassemblers chunk one stream
     differently and both are right, which is the property the logical offset
     space exists to neutralise; labelling an arbitrary window ``prim:bytes``
-    asserts it is a unit when it is a slice.
+    asserts it is a unit when it is a slice. It would also type identical
+    bytes differently by provenance, a capture-sourced reassembler declaring
+    itself being only a SHOULD.
 
-    **Advisory, and it is the only MUST NOT in the specification with that
-    strength.** Dropping the label loses nothing and the record stays fully
-    readable, so there is no unit a reader could soundly discard and nothing
-    it would gain by discarding one — the treatment ``tcp_role`` gets, not
-    the one an ``origin`` on a capture-sourced stream gets. A reader MUST
-    ignore the label and SHOULD report it; what it MUST NOT do is take the
-    label as evidence that the stream is decoded after all, which would put
-    every later offset in that participant in the wrong space.
+    **Advisory rather than isolating.** Dropping the label loses nothing and
+    the record stays fully readable, so there is no unit a reader could
+    soundly discard and nothing it would gain by discarding one — the
+    treatment ``tcp_role`` gets. A reader MUST ignore the label and SHOULD
+    report it.
+
+    Two statements this docstring used to make are gone, and both were
+    already wrong before ``0.19`` removed their basis. It called this the
+    *only* MUST NOT with that strength, which stopped being true at ``0.17``
+    when ``role`` joined it under one sentence. And it carried the clause
+    forbidding a reader to read *layer* from the label, which ``0.19``
+    removed as redundant: a reader that ignores a label cannot also draw a
+    conclusion from it. Nothing here changes as a result — the layer comes
+    from the decoder's ``output_layer`` and never from a label.
 
     Args:
         block: The record to check.
@@ -972,8 +992,7 @@ def _transport_content_type(
         return None
     return (
         f"{described} is at the transport layer and MUST NOT carry a content_type "
-        f"({block.content_type!r}); the label is ignored and the record kept, and it "
-        f"is not evidence that the stream is decoded"
+        f"({block.content_type!r}); the label is ignored and the record kept"
     )
 
 
