@@ -1,5 +1,5 @@
-{"type":"file","format":"zipline-payload/0.16","tick_hz":1000000,"produced_by":"zpf-http 0.4","produced_at":1719650000}
-{"type":"source","source_id":1,"kind":"zpf-input","uri":"tls-records.zpf","digest":"sha256:6d944d6f39dc39300038b2139d7a38d2773b7d85362368b4857cefdba44ae746"}
+{"type":"file","format":"zipline-payload/0.19","tick_hz":1000000,"produced_by":"zpf-http 0.4","produced_at":1719650000}
+{"type":"source","source_id":1,"kind":"zpf-input","uri":"tls-records.zpf","digest":"sha256:d958e63748a4f1fa375ad65417fd977eec94c7f8ab4288605d64fdd873d3b5bb"}
 {"type":"decoder","decoder_id":1,"output_layer":"decoded","name":"http/1.1","version":"0.4"}
 {"type":"session","session_id":7,"proto":"http"}
 {"type":"participant","session_id":7,"pid":0,"endpoint":["10.0.0.1:51000"]}

@@ -32,14 +32,18 @@ with zpf.create("rest_transport.zpf", tick_hz=1_000_000) as writer:
     ) as session:
         client = session.participant("10.0.0.1:51000", isn=CLIENT_ISN)
         server = session.participant("93.184.216.34:80", isn=SERVER_ISN)
-        session.record(client, ts=1, payload=REQ_1, seq_start=CLIENT_ISN + 1)
-        session.record(client, ts=2, payload=REQ_2, seq_start=CLIENT_ISN + 1 + len(REQ_1))
+        session.record(client, ts=1, payload=REQ_1, hints=zpf.Hints(seq_start=CLIENT_ISN + 1))
+        session.record(
+            client,
+            ts=2,
+            payload=REQ_2,
+            hints=zpf.Hints(seq_start=CLIENT_ISN + 1 + len(REQ_1)),
+        )
         session.record(
             server,
             ts=3,
             payload=RESP,
-            seq_start=SERVER_ISN + 1,
-            ack=CLIENT_ISN + 1 + len(REQ_1) + len(REQ_2),
+            hints=zpf.Hints(seq_start=SERVER_ISN + 1, ack=CLIENT_ISN + 1 + len(REQ_1) + len(REQ_2)),
         )
 
 # Read it back the way a decoder does: walk every session, one reassembly

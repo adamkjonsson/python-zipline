@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 from typing import TYPE_CHECKING
 
 import pytest
@@ -25,12 +26,20 @@ def raw_file(*, gap: bool = False) -> bytes:
         with writer.begin_session(proto="tcp", key="c <-> s", session_id=7) as session:
             client = session.participant("10.0.0.1:51000", isn=1000)
             server = session.participant("93.184.216.34:80", isn=5000)
-            session.record(client, ts=10, payload=REQUEST, seq_start=1001)
+            session.record(client, ts=10, payload=REQUEST, hints=zpf.Hints(seq_start=1001))
             if gap:
                 # 4 bytes lost, then more request bytes.
-                session.record(client, ts=11, payload=b"MORE", seq_start=1001 + len(REQUEST) + 4)
+                session.record(
+                    client,
+                    ts=11,
+                    payload=b"MORE",
+                    hints=zpf.Hints(seq_start=1001 + len(REQUEST) + 4),
+                )
             session.record(
-                server, ts=12, payload=RESPONSE, seq_start=5001, ack=1001 + len(REQUEST)
+                server,
+                ts=12,
+                payload=RESPONSE,
+                hints=zpf.Hints(seq_start=5001, ack=1001 + len(REQUEST)),
             )
     return sink.getvalue()
 
@@ -548,12 +557,16 @@ def test_a_stage_declares_how_long_its_inputs_were(tmp_path: Path):
         w.add_source("capture", uri="t.pcap")
         with w.begin_session(proto="tcp", session_id=7) as s:
             sender = s.participant("a", isn=1000)
-            s.record(sender, ts=1, payload=b"HELLO WORLD", seq_start=1001)
+            s.record(sender, ts=1, payload=b"HELLO WORLD", hints=zpf.Hints(seq_start=1001))
     with zpf.decode_stage(raw, out, decoder="http/1.1", produced_by="d 1", produced_at=1) as stage:
         for stream in stage.streams():
             for datagram in stream.datagrams():
-                stage.record(stream, ts=datagram.ts, payload=datagram.data[:5],
-                             spans=(stream.cite(0, 5),))
+                stage.record(
+                    stream,
+                    ts=datagram.ts,
+                    payload=datagram.data[:5],
+                    cites=(stream.cite(0, 5),),
+                )
     with zpf.open(out) as reader:
         end = reader.session(7).end
         assert end is not None
@@ -574,10 +587,10 @@ def test_a_stage_can_break_its_own_output(tmp_path: Path):
         w.add_source("capture", uri="t.pcap")
         with w.begin_session(proto="tcp", session_id=7) as s:
             sender = s.participant("a", isn=1000)
-            s.record(sender, ts=1, payload=b"HELLO WORLD", seq_start=1001)
+            s.record(sender, ts=1, payload=b"HELLO WORLD", hints=zpf.Hints(seq_start=1001))
     with zpf.decode_stage(raw, out, decoder="tls", produced_by="d 1", produced_at=1) as stage:
         for stream in stage.streams():
-            stage.record(stream, ts=0, payload=b"HELLO", spans=(stream.cite(0, 5),))
+            stage.record(stream, ts=0, payload=b"HELLO", cites=(stream.cite(0, 5),))
             stage.discontinuity(stream, reason="tls-record-lost")
     with zpf.open(out) as reader:
         (block,) = [b for b in reader.blocks() if isinstance(b, zpf.Discontinuity)]
@@ -608,8 +621,8 @@ def test_a_sessionization_stage_emits_a_transport_layer(tmp_path: Path):
         source = w.add_source("capture", uri="tap.pcap")
         with w.begin_session(proto="tcp", session_id=4) as s:
             p = s.participant("10.0.0.1:51000", isn=1000)
-            s.record(p, ts=1000, payload=b"A" * 50, source=source, seq_start=1001)
-            s.record(p, ts=1200, payload=b"B" * 30, source=source, seq_start=1051)
+            s.record(p, ts=1000, payload=b"A" * 50, source=source, hints=zpf.Hints(seq_start=1001))
+            s.record(p, ts=1200, payload=b"B" * 30, source=source, hints=zpf.Hints(seq_start=1051))
 
     with zpf.decode_stage(
         src, out,
@@ -688,18 +701,15 @@ def test_a_stages_first_record_has_no_seam_to_declare(tmp_path: Path):
 # --- sequenced= : causal output order (#50) -------------------------------------------
 
 
-def hintless_file(*, single_clock: bool = False, sequenced_basis: str | None = None) -> bytes:
+def hintless_file(*, sequenced: bool = False) -> bytes:
     """Build a two-participant session whose records carry no seq/ack at all."""
     sink = io.BytesIO()
-    with zpf.create(
-        sink, tick_hz=1_000_000, time_epoch=42, single_clock=single_clock
-    ) as writer:
+    with zpf.create(sink, tick_hz=1_000_000, time_epoch=42) as writer:
         writer.add_source("capture", uri="chat.pcap")
         with writer.begin_session(
             proto="irc",
             session_id=7,
-            sequenced=sequenced_basis is not None,
-            sequenced_basis=sequenced_basis,
+            sequenced=sequenced,
         ) as session:
             alice = session.participant("alice")
             bob = session.participant("bob")
@@ -749,8 +759,15 @@ def test_sequenced_stage_emits_the_inputs_timeline_not_two_monologues():
     assert [pid for pid, _ in order] == [0, 1]  # client, then server
 
 
-def test_sequenced_stage_derives_protocol_from_a_tcp_input():
-    """The input's records carried seq/ack, so the order rests on those edges."""
+def test_a_sequenced_stage_sets_the_flag_and_orders_causally():
+    """The flag, and the order it announces — which is what survived package B.
+
+    Through `0.18` this also asserted ``sequenced_basis == "protocol"``,
+    derived from the input's records carrying seq/ack. `0.19` removed the
+    option; what it never removed is the obligation the flag creates, so this
+    asserts the part a reader can still act on: stored order is a valid causal
+    order, and :meth:`~zpf.SessionReader.verify` agrees.
+    """
     sink = io.BytesIO()
     with zpf.decode_stage(
         io.BytesIO(raw_file()),
@@ -765,29 +782,33 @@ def test_sequenced_stage_derives_protocol_from_a_tcp_input():
             dec.record(stream, whole, ts=1, cites=(0, len(whole)))
     with zpf.open(io.BytesIO(sink.getvalue())) as reader:
         (session,) = reader.sessions()
-        assert session.descriptor.sequenced_basis == "protocol"
+        assert session.sequenced
+        session.verify()
 
 
-@pytest.mark.parametrize(
-    ("kwargs", "expected"),
-    [
-        ({"single_clock": True}, "clock"),
-        ({"sequenced_basis": "external"}, "external"),
-    ],
-)
-def test_sequenced_stage_derives_a_hintless_inputs_basis(kwargs: object, expected: str):
-    """No seq/ack: fall back to what the input itself says its order rests on."""
+def test_a_sequenced_stage_over_a_hintless_input_no_longer_needs_a_basis():
+    """Package B, from the stage's side: the refusal is gone.
+
+    Through `0.18` this input was the case ``derive_from`` refused. Its records
+    carry no ``seq``/``ack``, it declared no basis of its own, and its file
+    declared no SINGLE_CLOCK — so there was nothing true to write in
+    ``sequenced_basis``, and naming one anyway was worse than raising, a reader
+    being entitled to act on the flag.
+
+    `0.19` removed the option, so there is nothing left to be unable to say.
+    The stage sets SEQUENCED, linearizes, and the assertion rests on the same
+    trust a reader already extends to any stored order. What answers "where did
+    this order come from" is now the build provenance this output carries.
+    """
     sink = io.BytesIO()
     with zpf.decode_stage(
-        io.BytesIO(hintless_file(**kwargs)),
+        io.BytesIO(hintless_file()),
         sink,
         decoder="chat",
         produced_by="d 1",
         produced_at=1,
         sequenced=True,
     ) as dec:
-        # A hint-less participant is packet-oriented: no seq_start, so no
-        # stream to reassemble — its records are datagrams.
         for stream in dec.streams():
             for datagram in stream.datagrams():
                 dec.record(
@@ -798,20 +819,12 @@ def test_sequenced_stage_derives_a_hintless_inputs_basis(kwargs: object, expecte
                 )
     with zpf.open(io.BytesIO(sink.getvalue())) as reader:
         (session,) = reader.sessions()
-        assert session.descriptor.sequenced_basis == expected
-
-
-def test_sequenced_stage_refuses_an_input_that_supports_no_order():
-    """No hints, no declared basis, no SINGLE_CLOCK — so there is no honest answer."""
-    with pytest.raises(zpf.ZpfError, match="no basis for a causal order"):
-        zpf.decode_stage(
-            io.BytesIO(hintless_file()),
-            io.BytesIO(),
-            decoder="chat",
-            produced_by="d 1",
-            produced_at=1,
-            sequenced=True,
-        )
+        assert session.sequenced
+        assert reader.diagnostics == []
+        # The forensic answer moved here, and it is the whole of what a
+        # consumer gets: which run of which tool asserted the order.
+        assert reader.header.produced_by == "d 1"
+        assert reader.header.produced_at == 1
 
 
 # --- chained stages: input shape follows the records (#56) ----------------------------
@@ -896,3 +909,171 @@ def test_a_stage_can_name_its_records_with_a_comment(tmp_path: Path):
         assert reader.diagnostics == []
         comments = [record.comment for record in reader.session(7).records()]
     assert comments == ["dns.header.id", None, "dns.header.id", None]
+
+
+# --- ts derived from cites (#62) ------------------------------------------------------
+
+
+def test_a_stage_omitting_ts_derives_the_normative_one():
+    """#62's case, end to end: the right answer is now the default one.
+
+    Three messages arrive in three packets, reassembly offers them as one run,
+    and the stage cites each without saying when it happened. The rule is per
+    span set, so each record gets the time of the packet it came from — where
+    passing `ts=segment.ts` would have stamped all three 3000, which is the
+    mistake the issue reports and the docs used to teach.
+    """
+    raw = io.BytesIO()
+    with zpf.create(raw, tick_hz=1_000_000) as w:
+        w.add_source("capture", uri="t.pcap")
+        with w.begin_session(proto="tcp", session_id=7) as s:
+            p = s.participant("10.0.0.1:51000", isn=1000)
+            s.record(p, ts=1000, payload=b"AAAA", hints=zpf.Hints(seq_start=1001))
+            s.record(p, ts=2000, payload=b"BBBB", hints=zpf.Hints(seq_start=1005))
+            s.record(p, ts=3000, payload=b"CCCC", hints=zpf.Hints(seq_start=1009))
+
+    out = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw.getvalue()), out, decoder="x", produced_by="d 1", produced_at=1
+    ) as dec:
+        for stream in dec.streams():
+            for segment in stream.segments():
+                for i in range(0, len(segment.data), 4):
+                    dec.record(
+                        stream,
+                        segment.data[i : i + 4],
+                        cites=(segment.off_start + i, segment.off_start + i + 4),
+                    )
+
+    with zpf.open(io.BytesIO(out.getvalue())) as reader:
+        assert [r.timestamp for r in reader.session(7).records()] == [1000, 2000, 3000]
+        assert reader.diagnostics == []
+
+
+def test_a_derived_ts_ignores_a_retransmit_that_contributed_nothing():
+    """The favour-old policy reaches the derived timestamp too."""
+    raw = io.BytesIO()
+    with zpf.create(raw, tick_hz=1_000_000) as w:
+        w.add_source("capture", uri="t.pcap")
+        with w.begin_session(proto="tcp", session_id=7) as s:
+            p = s.participant("10.0.0.1:51000", isn=1000)
+            s.record(p, ts=1000, payload=b"AAAA", hints=zpf.Hints(seq_start=1001))
+            s.record(
+                p,
+                ts=9999,
+                payload=b"AAAA",
+                flags=zpf.RecordFlags.RETRANSMIT,
+                hints=zpf.Hints(seq_start=1001),
+            )
+
+    out = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw.getvalue()), out, decoder="x", produced_by="d 1", produced_at=1
+    ) as dec:
+        for stream in dec.streams():
+            for segment in stream.segments():
+                dec.record(stream, segment.data, cites=(0, 4))
+
+    with zpf.open(io.BytesIO(out.getvalue())) as reader:
+        (record,) = reader.session(7).records()
+        assert record.timestamp == 1000  # not 9999
+
+
+def test_an_explicit_ts_still_wins():
+    """A stage whose output has no single citable range says so itself."""
+    raw = io.BytesIO()
+    with zpf.create(raw, tick_hz=1_000_000) as w:
+        w.add_source("capture", uri="t.pcap")
+        with w.begin_session(proto="tcp", session_id=7) as s:
+            p = s.participant("10.0.0.1:51000", isn=1000)
+            s.record(p, ts=1000, payload=b"AAAA", hints=zpf.Hints(seq_start=1001))
+
+    out = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw.getvalue()), out, decoder="x", produced_by="d 1", produced_at=1
+    ) as dec:
+        for stream in dec.streams():
+            dec.record(stream, b"summary", ts=4242, cites=(0, 4))
+
+    with zpf.open(io.BytesIO(out.getvalue())) as reader:
+        (record,) = reader.session(7).records()
+        assert record.timestamp == 4242
+
+
+def test_a_ts_that_cannot_be_derived_is_refused_rather_than_invented():
+    """An empty cited range has no time, and guessing one would be untraceable."""
+    raw = io.BytesIO()
+    with zpf.create(raw, tick_hz=1_000_000) as w:
+        w.add_source("capture", uri="t.pcap")
+        with w.begin_session(proto="tcp", session_id=7) as s:
+            p = s.participant("10.0.0.1:51000", isn=1000)
+            s.record(p, ts=1000, payload=b"AAAA", hints=zpf.Hints(seq_start=1001))
+
+    out = io.BytesIO()
+    with pytest.raises(zpf.SemanticError, match="cannot derive ts"), zpf.decode_stage(
+        io.BytesIO(raw.getvalue()), out, decoder="x",
+        produced_by="d 1", produced_at=1,
+    ) as dec:
+        for stream in dec.streams():
+            dec.record(stream, b"x", cites=(99, 100))
+
+
+# --- role: a decoded record's name, beside its type (#58) -----------------------------
+
+
+def test_a_record_can_carry_its_type_and_its_name_at_once():
+    """#58's whole point, and the case the format was changed for.
+
+    A protocol with four `u32` fields, one of them a checksum. Before `role` a
+    producer had to choose: `content_type = prim:u32` lets a generic reader
+    read every value and says nothing about which field is which, while
+    `dec:checksum` names it and destroys the normative typing — leaving
+    nothing to say the four records share a type. Position is not a contract
+    either, since an optional field the decoder later emits renumbers
+    everything after it.
+
+    The two options are independent, and this asserts both survive together.
+    """
+    raw = io.BytesIO()
+    with zpf.create(raw, tick_hz=1, produced_by="t", produced_at=1) as w:
+        cap = w.add_source("capture", uri="c.pcap")
+        with w.begin_session(proto="x", session_id=7) as s:
+            p = s.participant("a")
+            s.record(p, ts=1, payload=b"\x00\x01\x02\x03" * 4, source=cap)
+
+    out = io.BytesIO()
+    fields = ("version", "length", "seq_no", "checksum")
+    with zpf.decode_stage(
+        io.BytesIO(raw.getvalue()), out, decoder="proto/1",
+        produced_by="d 1", produced_at=1,
+    ) as dec:
+        for stream in dec.streams():
+            for i, name in enumerate(fields):
+                dec.record(
+                    stream,
+                    b"\x00\x01\x02\x03",
+                    content_type="prim:u32",
+                    role=name,
+                    cites=(i * 4, i * 4 + 4),
+                )
+
+    with zpf.open(io.BytesIO(out.getvalue())) as reader:
+        records = list(reader.session(7).records())
+        assert [r.role for r in records] == list(fields)
+        assert {r.content_type for r in records} == {"prim:u32"}
+        assert reader.diagnostics == []
+        # The typing survives, so a generic reader still reads every value.
+        # `prim:` is little-endian, so these four bytes are 0x03020100.
+        assert [reader.content(r) for r in records] == [0x03020100] * 4
+
+
+def test_role_survives_the_jsonl_round_trip():
+    """Key `role`, no alias — the general naming rule covers it."""
+    record = zpf.Record(
+        session_id=1, sender_pid=0, source_id=0, timestamp=1,
+        payload=b"\x00\x00\x00\x07", decoder_id=1,
+        content_type="prim:u32", role="checksum",
+    )
+    obj = json.loads(zpf.dumps_block(record))
+    assert obj["role"] == "checksum"
+    assert zpf.loads_block(json.dumps(obj)) == record

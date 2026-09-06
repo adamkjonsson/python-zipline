@@ -40,11 +40,11 @@ from zpf.blocks import InputExtent, OutputLayer, Span
 from zpf.errors import SemanticError, ZpfError
 from zpf.reader import FileReader
 from zpf.reassembly import Gap
-from zpf.writer import InputRef, create
+from zpf.writer import Decoded, Hints, InputRef, create
 
 if TYPE_CHECKING:
     import os
-    from collections.abc import Iterable, Iterator, Sequence
+    from collections.abc import Iterable, Iterator
     from datetime import datetime
     from types import TracebackType
     from typing import Self
@@ -63,26 +63,6 @@ if TYPE_CHECKING:
     _Cites = Span | tuple[int, int] | Iterable[Span | tuple[int, int]] | None
 
 _PAIR = 2
-
-
-@dataclass(frozen=True)
-class Hints:
-    """TCP ordering hints for a record at the **transport** layer.
-
-    Passed to :meth:`DecodeStage.record` as ``hints=``. A transport stream's
-    requirements bind on the layer, not on where its bytes came from, so a
-    sessionization stage carries these exactly as a capture's reassembled
-    stream does — which is the point of its output being a transport layer
-    at all.
-
-    Attributes:
-        seq_start: Absolute sequence number of the run's first byte.
-        ack: Cumulative acknowledgement in force, where known.
-
-    """
-
-    seq_start: int | None = None
-    ack: int | None = None
 
 
 @dataclass(frozen=True)
@@ -267,7 +247,7 @@ class DecodeStage:
         ``isn``. So a decoder that works on a transport input raises on the
         output of the stage before it, which is where chained stages bite.
         A stage emitting a **transport** layer is the exception — its
-        records carry :class:`Hints`, so its output is stream-oriented like
+        records carry :class:`~zpf.Hints`, so its output is stream-oriented like
         any capture.
 
         Returns:
@@ -285,19 +265,24 @@ class DecodeStage:
         return self._streams
 
     def record(  # noqa: PLR0913
-        # Eleven parameters, one over the limit. Two of them (seam, hints)
-        # are already bundles, so the count is the stage's genuine surface
-        # rather than a flat spill. Restructuring both record() signatures is
-        # tracked for v0.3.0, where a break is allowed; until then this is a
-        # suppression rather than a design.
+        # Eleven parameters, one over — and the second suppression in
+        # `src/zpf/`, where Phase 5 of #59 left one. `role` is what pushed it
+        # back over, and the policy in `docs/dev/option-exposure.md` says
+        # decoded-layer options join `Decoded`. Here they do not, for the
+        # reason that policy states as its one exception: **a decode stage's
+        # every record is decoded-layer**, so a `decoded=` wrapper would appear
+        # on every call and distinguish nothing. A bundle that is always
+        # present is ceremony, not structure — the opposite of what `Decoded`
+        # buys on `SessionWriter.record()`, where it marks the line between a
+        # record that speaks to the decoded layer and one that does not.
         self,
         stream: DecodeStream,
         payload: bytes = b"",
         *,
-        ts: int,
+        ts: int | None = None,
         content_type: str | None = None,
+        role: str | None = None,
         cites: _Cites = None,
-        spans: Sequence[Span] = (),
         decoder: DecoderHandle | None = None,
         flags: RecordFlags | int = 0,
         seam: Seam | None = None,
@@ -328,15 +313,39 @@ class DecodeStage:
         Args:
             stream: The input stream this record was decoded from.
             payload: The decoded bytes.
-            ts: Record time in the file's ticks — per the specification's
-                timestamp rule, the completion time of the last input
-                record the payload came from (a run's
-                :attr:`Segment.ts <zpf.reassembly.Segment.ts>`).
-            content_type: ``dec:``/``mime:``/``prim:`` payload label.
-            cites: The input range this record was built from: an
+            ts: Record time in the file's ticks. **Omit it and it is derived
+                from** ``cites``, which is the answer the specification's
+                timestamp rule gives: the completion time of the last input
+                record in this unit's span set. Deriving it is the point —
+                `#62 <https://github.com/adamkjonsson/python-zipline/issues/62>`_
+                exists because the wrong answer was the easy one to reach for,
+                a run's :attr:`Segment.ts <zpf.reassembly.Segment.ts>` being
+                right only for a unit that spans the whole run.
+
+                Pass it explicitly for a record citing no single range of one
+                input stream, where there is nothing to derive from.
+            content_type: ``dec:``/``mime:``/``prim:`` payload label — what
+                the payload **is**.
+            role: What this record **is**, in a vocabulary this decoder
+                documents — *which* field, where ``content_type`` says what
+                kind. Independent of it: a decoder emitting one record per
+                protocol field carries ``prim:u32`` and ``"checksum"``
+                together, which is the pair
+                `#58 <https://github.com/adamkjonsson/python-zipline/issues/58>`_
+                was filed to make expressible. Use ``comment`` for a note to a
+                human, never for this.
+            cites: The input ranges this record was built from — an
                 ``(off_start, off_end)`` pair, a ready
-                :class:`~zpf.blocks.Span`, or a sequence of either.
-            spans: Extra spans to append, already built.
+                :class:`~zpf.blocks.Span`, or a sequence of either, mixed
+                freely.
+
+                ``cites=`` and ``spans=`` used to be separate keywords for one
+                parameter, the first a shorthand that filled the ids in. They
+                are one now: a sequence may hold pairs and ready spans
+                together, so nothing is lost and there is one place to look.
+                It stays a flat keyword rather than joining a bundle — it is
+                the hot argument of the hot path, and burying it would trade a
+                lint count for real ergonomics.
             decoder: Override the stage's decoder for this record.
             flags: Record flags.
             seam: The break between this record and the previous one of the
@@ -348,17 +357,19 @@ class DecodeStage:
                 exactly as a capture's reassembled stream does. A decoded
                 record has no use for them — its offsets are positional.
             comment: Free-text note on the record. **Free text**: nothing
-                parses it and no consumer may depend on its shape. A stage
-                emitting one record per protocol field may use it to say
-                which field a record is, but that is a stopgap — the name is
-                load-bearing semantics carried in a field that promises
-                none.
+                parses it and no consumer may depend on its shape — it is for
+                a human reading the file. A stage naming the protocol field a
+                record represents wants ``role``, which is opaque to the
+                format but *declared* to the decoder's vocabulary; ``comment``
+                promises nothing, so a consumer parsing it depends on
+                something the format says means nothing. That use was a
+                stopgap until `0.17` added the option.
 
         Raises:
             SemanticError: If the record cites no input range.
 
         """
-        all_spans = tuple(spans) + _as_spans(stream, cites)
+        all_spans = _as_spans(stream, cites)
         if not all_spans:
             # A decode stage's records are *created*, and spans are what say
             # which input range each one corresponds to. Emitting one
@@ -373,6 +384,8 @@ class DecodeStage:
                 "from; pass cites= or spans=, or emit an Undecoded marker instead"
             )
             raise SemanticError(msg)
+        if ts is None:
+            ts = self._derive_ts(stream, all_spans)
         self._track(self._cited, all_spans)
         if seam is not None and stream.pid in self._emitted:
             stream.session.discontinuity(
@@ -383,14 +396,58 @@ class DecodeStage:
             stream.handle,
             ts=ts,
             payload=payload,
-            decoder=decoder if decoder is not None else self._decoder,
-            content_type=content_type,
-            spans=all_spans,
             flags=flags,
-            seq_start=None if hints is None else hints.seq_start,
-            ack=None if hints is None else hints.ack,
+            hints=hints,
+            decoded=Decoded(
+                decoder=decoder if decoder is not None else self._decoder,
+                content_type=content_type,
+                role=role,
+                spans=all_spans,
+            ),
             comment=comment,
         )
+
+    def _derive_ts(self, stream: DecodeStream, spans: tuple[Span, ...]) -> int:
+        """Work out a record's timestamp from the input ranges it cites.
+
+        The specification's rule, applied: a decoded record's ``timestamp`` is
+        that of the last source element **in its span set**. So this is the
+        maximum over every cited range of this stage's input, which for a unit
+        inside a reassembled run is *not* the run's own completion time.
+
+        Args:
+            stream: The input stream the record was decoded from.
+            spans: The record's spans, already normalised.
+
+        Returns:
+            The derived timestamp.
+
+        Raises:
+            SemanticError: If nothing can be derived — the record cites no
+                range of this stream, or names offsets it does not hold. The
+                alternative is inventing a time, and a timestamp nobody can
+                trace is worse than being asked for one.
+
+        """
+        source_id = self.derived.source.source_id
+        stamps = [
+            found
+            for span in spans
+            if span.source_id == source_id
+            and span.session_id == stream.session_id
+            and span.participant_id == stream.pid
+            for found in (stream.view.ts_for(span.off_start, span.off_end),)
+            if found is not None
+        ]
+        if not stamps:
+            msg = (
+                "cannot derive ts from cites: this record cites no range of "
+                f"(session {stream.session_id}, pid {stream.pid}) that any input "
+                "record contributed bytes to. Pass ts= explicitly, which is what a "
+                "record citing several streams or an empty range has to do"
+            )
+            raise SemanticError(msg)
+        return max(stamps)
 
     def undecoded(
         self,
@@ -576,9 +633,21 @@ class DecodeStage:
 
 
 def decode_stage(  # noqa: PLR0913
-    # The stage's own knobs, one over the limit. Same reasoning as
-    # SessionWriter.record(): bundling some into a struct to satisfy a count
-    # would obscure what a stage is configured by, not clarify it.
+    # Eleven parameters, one over the limit, and one of the two suppressions
+    # in `src/zpf/`. It is a **builder**, which is the difference: called once
+    # per stage with every argument named, configuring a pipeline rather than
+    # filling in a block's fields. `SessionWriter.record()` — #59's real
+    # subject — passes the limit on its own, grouped by the format's
+    # transport/decoded line rather than by arithmetic; `DecodeStage.record()`
+    # carries the other suppression, for the reason its own comment gives.
+    #
+    # The one bundle available here is `produced_by` + `produced_at`, which the
+    # format does name as a pair: a derived file MUST carry both. But they are
+    # spelled flat on `create()`, `merge_files` and `rewrite_decoded`, so
+    # bundling them *here alone* would make one of four call sites different to
+    # satisfy a count, and bundling them everywhere is a wider break than #59
+    # asked for. A consistent flat spelling is worth more than the suppression
+    # costs.
     source: str | os.PathLike[str] | IO[bytes] | IO[str] | FileReader,
     sink: str | os.PathLike[str] | IO[bytes] | IO[str],
     *,
@@ -634,10 +703,11 @@ def decode_stage(  # noqa: PLR0913
             Costs: the session is held in memory until it ends, and a
             :class:`~zpf.blocks.Discontinuity` cannot be emitted while it
             is on (its meaning is positional, and reordering is what moves
-            it). Each session's ``sequenced_basis`` is derived from the
-            input — see :meth:`zpf.FileWriter.derive_from` — and a session
-            whose input supports no causal order raises rather than
-            claiming one.
+            it). Through `0.18` a session whose input supported no causal
+            order raised rather than claim one; `0.19` removed the option
+            that refusal rested on, so the flag is now asserted and this
+            output's ``produced_by``/``produced_at`` identify who asserted
+            it — see :meth:`zpf.FileWriter.derive_from`.
         input_ref: How to describe the input in the output's Source — see
             :class:`~zpf.InputRef`. Both halves default: the URI to the path
             the input was opened from, the digest to SHA-256 of its bytes.

@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 # "A first example": a 3-party chat room, dave joins mid-stream. Blank lines
 # appear exactly as in the spec (they must be skipped).
 CHAT_EXAMPLE = """\
-{"type":"file","format":"zipline-payload/0.16","tick_hz":1000000}
+{"type":"file","format":"zipline-payload/0.19","tick_hz":1000000}
 {"type":"source","source_id":1,"kind":"capture","uri":"chat.pcap"}
 
 {"type":"session","session_id":8,"proto":"irc","key":"#zipline@irc.example.net"}
@@ -40,7 +40,7 @@ CHAT_EXAMPLE = """\
 
 # "Worked example: a skewed two-file capture".
 SKEWED_EXAMPLE = """\
-{"type":"file","format":"zipline-payload/0.16","tick_hz":1000000}
+{"type":"file","format":"zipline-payload/0.19","tick_hz":1000000}
 {"type":"source","source_id":1,"kind":"capture","uri":"sideA.pcap"}
 {"type":"source","source_id":2,"kind":"capture","uri":"sideB.pcap"}
 {"type":"session","session_id":7,"proto":"tcp","key":"10.0.0.1:51000 <-> 93.184.216.34:80"}
@@ -53,20 +53,22 @@ SKEWED_EXAMPLE = """\
 # The merged pass-through file derived from the skewed capture.
 MERGED_EXAMPLE = "\n".join(
     [
-        '{"type":"file","format":"zipline-payload/0.16","tick_hz":1000000,'
+        '{"type":"file","format":"zipline-payload/0.19","tick_hz":1000000,'
         '"produced_by":"zpf-merge 1.2","produced_at":1719510000}',
         '{"type":"source","source_id":1,"kind":"zpf-input","uri":"sideA.zpf","digest":"sha256:11aa…"}',
         '{"type":"source","source_id":2,"kind":"zpf-input","uri":"sideB.zpf","digest":"sha256:22bb…"}',
         '{"type":"session","session_id":1,"proto":"tcp",'
         '"key":"10.0.0.1:51000 <-> 93.184.216.34:80","sequenced":true}',
-        '{"type":"participant","session_id":1,"pid":0,"endpoint":["10.0.0.1:51000"],"isn":1000,'
-        '"origin":{"source_id":1,"session_id":7,"pid":0}}',
-        '{"type":"participant","session_id":1,"pid":1,"endpoint":["93.184.216.34:80"],"isn":5000,'
-        '"origin":{"source_id":2,"session_id":3,"pid":0}}',
+        '{"type":"participant","session_id":1,"pid":0,"endpoint":["10.0.0.1:51000"],"isn":1000}',
+        '{"type":"participant","session_id":1,"pid":1,"endpoint":["93.184.216.34:80"],"isn":5000}',
+        # Identity spans: the same range in as out, which is how a
+        # pass-through states its provenance since 0.19.
         '{"type":"record","session_id":1,"sender_pid":0,"source_id":1,"ts":1000,'
-        '"seq_start":1001,"ack":5001,"payload":"R0VUIC8gSFRUUC8xLjENCg0K"}',
+        '"seq_start":1001,"ack":5001,"payload":"R0VUIC8gSFRUUC8xLjENCg0K",'
+        '"spans":[{"source_id":1,"session_id":7,"pid":0,"off_start":0,"off_end":18}]}',
         '{"type":"record","session_id":1,"sender_pid":1,"source_id":2,"ts":995,'
-        '"seq_start":5001,"ack":1019,"payload":"SFRUUC8xLjEgMjAwIE9LDQouLi4="}',
+        '"seq_start":5001,"ack":1019,"payload":"SFRUUC8xLjEgMjAwIE9LDQouLi4=",'
+        '"spans":[{"source_id":2,"session_id":3,"pid":0,"off_start":0,"off_end":20}]}',
         "",
     ]
 )
@@ -74,7 +76,7 @@ MERGED_EXAMPLE = "\n".join(
 # "A decoded file, end to end" (payload placeholders replaced with real base64).
 DECODED_EXAMPLE = "\n".join(
     [
-        '{"type":"file","format":"zipline-payload/0.16","tick_hz":1000000,'
+        '{"type":"file","format":"zipline-payload/0.19","tick_hz":1000000,'
         '"produced_by":"zpf-decode 0.4","produced_at":1719500000}',
         '{"type":"source","source_id":1,"kind":"zpf-input","uri":"raw.zpf","digest":"sha256:9f2c…"}',
         '{"type":"decoder","decoder_id":1,"output_layer":"decoded","name":"http/1.1",'
@@ -141,8 +143,14 @@ def test_merged_example_parses_provenance():
     assert (header.produced_by, header.produced_at) == ("zpf-merge 1.2", 1_719_510_000)
     assert blocks[1].kind is zpf.SourceKind.ZPF_INPUT
     assert blocks[3].sequenced
-    assert blocks[4].origin == zpf.Origin(source_id=1, session_id=7, participant_id=0)
-    assert blocks[5].origin == zpf.Origin(source_id=2, session_id=3, participant_id=0)
+    # Provenance is an identity span per record since 0.19, not a participant
+    # origin: the same range in as out, naming the input stream directly.
+    assert blocks[6].spans == (
+        zpf.Span(source_id=1, session_id=7, participant_id=0, off_start=0, off_end=18),
+    )
+    assert blocks[7].spans == (
+        zpf.Span(source_id=2, session_id=3, participant_id=0, off_start=0, off_end=20),
+    )
 
 
 def test_decoded_example_parses_decode_stage():
@@ -185,7 +193,6 @@ FULL_BLOCKS = [
         creator="test 1.0",
         produced_by="zpf-merge 1.2",
         produced_at=1_719_510_000,
-        flags=zpf.FileFlags.SINGLE_CLOCK,
         comment="a header",
         extra_options=(zpf.RawOption(0x0FFF, b"x"),),
     ),
@@ -198,7 +205,6 @@ FULL_BLOCKS = [
         proto="tcp",
         flow_key="a <-> b",
         flags=zpf.SessionFlags.SEQUENCED,
-        sequenced_basis="clock",
         comment="s",
     ),
     zpf.Participant(
@@ -208,7 +214,6 @@ FULL_BLOCKS = [
         isn=0xFFFF_FFFF,
         identity="alice",
         tcp_role=zpf.TcpRole.RESPONDER,
-        origin=zpf.Origin(source_id=1, session_id=3, participant_id=0),
     ),
     zpf.SessionEnd(session_id=7, reason="fin", comment="bye"),
     zpf.Record(
@@ -262,7 +267,6 @@ def test_aliases_and_key_shapes():
     assert participant_obj["endpoint"] == ["vni:5001", "10.0.0.1:51000"]  # tunnel = array
     assert participant_obj["tcp_role"] == "responder"
     header_obj = block_to_obj(FULL_BLOCKS[0])
-    assert header_obj["single_clock"] is True
     assert header_obj["options"] == [{"id": "0x0FFF", "value": "eA=="}]
 
 
@@ -270,7 +274,6 @@ def test_zero_flags_and_absent_options_are_omitted():
     obj = block_to_obj(zpf.Record(session_id=1, sender_pid=0, source_id=0, timestamp=0))
     assert set(obj) == {"type", "session_id", "sender_pid", "source_id", "ts", "payload"}
     assert "sequenced" not in block_to_obj(zpf.Session(session_id=1))
-    assert "single_clock" not in block_to_obj(zpf.FileHeader(tick_hz=1))
 
 
 def test_tcp_role_unknown_is_omitted_like_absent():
@@ -291,7 +294,7 @@ def test_tick_hz_is_a_rate_never_a_unit_label(tick_hz: int):
 
 def test_tick_hz_accepts_decimal_strings():
     header = obj_to_block(
-        {"type": "file", "format": "zipline-payload/0.16", "tick_hz": str(2**60)}
+        {"type": "file", "format": "zipline-payload/0.19", "tick_hz": str(2**60)}
     )
     assert header.tick_hz == 2**60
 
@@ -299,13 +302,13 @@ def test_tick_hz_accepts_decimal_strings():
 def test_time_units_is_no_longer_accepted():
     """0.10 removed the key outright rather than deprecating it."""
     with pytest.raises(ValueError, match="tick_hz"):
-        obj_to_block({"type": "file", "format": "zipline-payload/0.16", "time_units": "us"})
+        obj_to_block({"type": "file", "format": "zipline-payload/0.19", "time_units": "us"})
 
 
 def test_format_string_round_trips_the_supported_version():
     header = zpf.FileHeader(tick_hz=1)
     obj = block_to_obj(header)
-    assert obj["format"] == "zipline-payload/0.16"
+    assert obj["format"] == "zipline-payload/0.19"
     assert obj_to_block(obj) == header
 
 
@@ -472,7 +475,7 @@ def test_reader_requires_a_file_line_first():
 
 
 def test_reader_rejects_second_file_line():
-    line = '{"type":"file","format":"zipline-payload/0.16","tick_hz":1000000}\n'
+    line = '{"type":"file","format":"zipline-payload/0.19","tick_hz":1000000}\n'
     with pytest.raises(zpf.StructuralError):
         read_all(line + line)
 

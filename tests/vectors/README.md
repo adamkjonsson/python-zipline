@@ -2,7 +2,7 @@
 
 Small `.zpf` files, each with its expected JSON-Lines projection or its expected
 failure, for testing an implementation of the
-[Zipline Payload Format](../docs/zipline-payload-format.md) `0.16`.
+[Zipline Payload Format](../docs/zipline-payload-format.md) `0.18`.
 
 Run `python3 check.py` to verify the tree is self-consistent.
 Run `python3 build.py` to regenerate it.
@@ -99,6 +99,19 @@ some vector, so **new syntax cannot ship uncovered**. Rules — permissions with
 id to derive, like session fan-out — are declared in `check.py`'s `RULES` beside
 the vector exercising each.
 
+**Every `.jsonl` key is one the mapping defines**, and since `0.17` that is
+enforced too. The JSONL projection is one rule plus a short list of exceptions: a
+key is a body field's or a registered option's canonical name, except where the
+[brevity alias table](../docs/zipline-payload-format.md#jsonl--binary-field-mapping)
+gives it a shorter one. `check.py` builds that vocabulary from the specification's
+own tables and requires every key in every projection to be in it.
+
+`tunnel/inner.jsonl` and `tunnel/outer.jsonl` shipped `flow_key` where the table
+says `key` (#104), and nothing could see it: both spellings name something real,
+so neither a JSON parse nor a registry lookup notices. Two of that fixture's four
+members were out of a conformant reader's accept tier for a reason unrelated to
+what the fixture exists to test.
+
 It hard-fails rather than warning. Session fan-out shipped in `0.13` as a
 *Clarified* item with nothing exercising it, and the gap survived a whole release
 until an implementation reviewed it; an advisory line is exactly what gets
@@ -129,11 +142,9 @@ tier, size, the specification section each comes from, and what a reader must do
 | Vector | What it exercises |
 |--------|-------------------|
 | `raw-minimal` | The whole container in 196 bytes. Identical to the specification's worked example. A capture-sourced transport stream — the name predates `0.15` retiring "raw" as a normative term, and is kept because it is an identifier. |
-| `file-clock-metadata` | The File Header's clock options: `time_epoch` moves the origin, so wall time is `(time_epoch + timestamp) / tick_hz`; **SINGLE_CLOCK** asserts one trustworthy clock across the file — a clock assertion, *not* an ordering one. |
-| `descriptive-metadata` | Four optional pass-through options, one per block that defines one: `link_type`, `flow_key`, `identity`, `ts_first`. None changes how anything else is read; the point is that a converter carries them rather than dropping them. |
+| `descriptive-metadata` | Five optional pass-through options, one per block that defines one: `time_epoch`, `link_type`, `flow_key`, `identity`, `ts_first`. None changes how anything else is read; the point is that a converter carries them rather than dropping them. |
 | `custom-block` | A Custom (`0xFF`) vendor block. **Recognised, not unknown** — a reader skips it by length, but a converter projects `pen`, `subtype` and a base64 `payload` rather than routing it through the unknown-block escape. |
 | `decoded-basic` | A decode stage: `spans` provenance, `content_type`, an Undecoded tail, an End block. Its Session End declares `input_extents`, so the coverage guarantee is checkable from this file alone — and it is the suite's only **Session End** block. |
-| `passthrough-transport` | A pass-through preserving a transport layer: `origin`, byte-run records, `SEQUENCED`. |
 | `broken-chain` | The provenance walk that **fails**: a `zpf-input` Source naming a `missing.zpf` that is deliberately not in the tree, with a bytes-exist Undecoded block pointing into it. `accept` tier — the file breaks no rule; what is absent is a sibling. See [the provenance chain](#the-provenance-chain). |
 
 ### The four escapes
@@ -152,16 +163,12 @@ naive implementation most often fails by treating extension as corruption.
 
 | Vector | What it exercises |
 |--------|-------------------|
-| `annotator-decoded` | A pass-through preserving a **decoded** layer — the construct `0.9` could not express. Records keep `decoder_id` and carry no `spans`; the inherited Undecoded block forces the grandparent Source to be declared. |
-| `passthrough-discontinuity` | The **two re-emission rules side by side**: an inherited Undecoded block copied *verbatim* (its statement is about a file further up the chain) next to a Discontinuity *renumbered* to this file's ids (its statement is about the stream carrying it). The input's `(7, 0)` becomes `(42, 1)`, so a verbatim copy is visibly wrong rather than accidentally right. |
 | `session-fan-out` | **One input stream demultiplexed into two output sessions** — the capability `0.13` clarified and nothing exercised. Its `[0,80)` is spanned by *both* sessions, since one ciphertext record's framing fed an inner unit in each, so the spans **overlap** — legal since `0.14`, where coverage became *at least once*. Neither session covers the extent 200 it declares; only the union across both does. **A checker that accumulates coverage per output session fails here and passes every other vector in the suite.** |
 | `undecoded-skipped` | `reason = skipped` for a deliberately-declined region (a BOM). Also **the case that must carry no Discontinuity**: a discarded BOM withholds nothing, so the text either side joins. A duty keyed on unspanned input bytes would demand a block here, and it would be a lie. |
 | `undecoded-reason-class` | A non-canonical `reason` carrying the required `reason_class`. |
-| `sequenced-basis` | A hint-less `SEQUENCED` session with its mandatory `sequenced_basis`. |
 | `hintless-merge-backwards-ts` | A hint-less session whose timestamps run backwards *across* participants. Every record is concurrent, so the whole order is the merge's tie-break — but each participant's own records keep stored order. A reader that rejects, or re-sorts within a participant, fails. |
 | `reordered-decoded` | A stage that reorders decoded records without decoding them — a decode stage, since stored order defines the offsets. **Its `spans` run downward against stored order**, which a reader assuming they ascend will fail. Since `0.15` its one seam carries a Discontinuity (`reason = reordered`, no `width`): the stage withholds nothing, but stored neighbours assert that they join and these two never did. |
 | `merge-timestamp-tie` | Two concurrent records from different participants with **identical timestamps**, stored in the *opposite* order to the one the merge must produce. Before `0.12` this tie was unresolved and two conformant readers could disagree; the tie-break is now ascending `participant_id`. |
-| `partially-hinted-sequenced` | A `SEQUENCED` session where **one** record carries `seq_start` and the rest carry nothing. A single hint anywhere means the session is not hint-less, so no `sequenced_basis` is required — even though most of the order rests on timestamps. Pins the answer to the question that took longest to settle. |
 
 ### Added in `0.13`
 
@@ -181,7 +188,7 @@ naive implementation most often fails by treating extension as corruption.
 | `proxy-decoded` | **Case G — a decoded stream with no predecessor file.** A TLS-terminating proxy: records carry `decoder_id` and reference a **`capture`** Source, with no `spans` and no `origin`, because the bytes their units were computed from were never written to a `.zpf`. The cell the two axes were conflated to forbid. The coverage guarantee does not apply — it is scoped per *input* participant stream and there is none — and the Decoder is a claim of **identity, not a recipe**: nothing can regenerate this output. |
 | `undecoded-in-capture` | An Undecoded block in a **capture-sourced** file, its offsets byte offsets into the capture. The stage is the *reassembler*, declaring an overlapping retransmit it discarded. Barred before `0.15` on the assumption that capture-sourced meant no transform had run — and reassembly is a transform. The stream stays at the transport layer, so its gap is expressed by sequence numbers and it still may not carry a Discontinuity. |
 | `mixed-derivation` | One derived file with a **decode-stage stream beside a pass-through stream**: session 10 carries `spans`, session 11's participant carries `origin`. Before `0.15` a derived file was exactly one of the two, which left a tool with a decoder for one protocol and not the other two dishonest options — pass everything through, or mark the second stream entirely Undecoded, **dropping those bytes from the output**. The replacement rule binds per participant, not per file. |
-| `filtered-decoded` | A **filter**: it keeps two decoded records and drops the one between them. The dropped region is Undecoded `skipped` — the same value a discarded BOM carries, which is the ambiguity [#78](https://github.com/adamkjonsson/zipline/issues/78) raised. What tells the two apart is not the reason but whether the survivors still **join**, and here they do not, so the seam carries a Discontinuity. Its `width` is **declared** as 40: a filter knows the length of what it dropped, and an absent width would claim otherwise. Declaring it keeps the output offset space aligned with the input's. |
+| `filtered-decoded` | A **filter**: it keeps two decoded records and drops the one between them. The removed region is Undecoded **`dropped`** — the word `0.17` adds for content that was removed rather than withheld, and what turns this file from an *example* of [#78](https://github.com/adamkjonsson/zipline/issues/78)'s duty into a positive test of it. Until then it wrote `skipped`, the same value a discarded BOM carries. What tells the two apart is still not the reason but whether the survivors **join**, and here they do not, so the seam carries a Discontinuity. Its `width` is **declared** as 40: a filter knows the length of what it dropped, and an absent width would claim otherwise. Declaring it keeps the output offset space aligned with the input's. |
 
 ### Reject tier
 
@@ -200,13 +207,12 @@ naive implementation most often fails by treating extension as corruption.
 | `isolate-undeclared-session` | A record naming a session that was never declared. |
 | `isolate-duplicate-id` | A `source_id` declared twice. |
 | `isolate-coverage-gap` | A decode stage leaving an input range neither covered by `spans` nor marked Undecoded. |
-| `isolate-sequenced-no-basis` | A hint-less `SEQUENCED` session with no `sequenced_basis`. Recording is unconditional — the trivially-sound cases write `trivial` rather than omitting it. **A reader can only raise this at Session End**, since hint-lessness is a property of the records. |
 | `isolate-unknown-source-kind` | An undefined Source `kind` — load-bearing, unlike `tcp_role`, because it decides how span offsets are read. |
 | `isolate-extent-exceeds-coverage` | A Session End declaring an input stream 40 bytes long while `spans` plus Undecoded blocks account for only `[0,20)`. A **trailing** gap — invisible without `input_extents`, which is what distinguishes it from `isolate-coverage-gap`'s interior one. |
 | `isolate-extents-disagree` | Two output sessions drawing on one input stream, declaring **different** extents for it — 200 and 160. An input stream has one length, and under fan-out every consuming session declares that whole length, so the two Session Ends contradict each other. Only reachable once fan-out is legal. |
 | `isolate-discontinuity-in-raw` | A Discontinuity block on a **transport-layer** stream. That offset space is already hole-inclusive, so the sequence numbers and a declared `width` are two accounts of the same missing bytes, with no rule for which to believe. Since `0.15` the bar is the layer rather than the file kind; the vector's name keeps the retired word because harnesses reference it. |
 | `isolate-self-derived` | **Intra-file derivation**: `spans` naming a `zpf-input` Source whose `uri` is this very file, with the stream they claim to come from sitting beside them. Only reachable once mixed-state files are legal, which is what makes it worth pinning. A stage reads its input and then writes its output, so a file cannot be among its own inputs. **Detection is partial by design** — the only signal is the `uri`, so a reader handed a *path* may compare and isolate, while one handed a file object cannot and is not obliged to. |
-| `isolate-unmarked-break` | **Finding 3 as one file**, and the vector this suite most needed: a decode stage whose own output breaks, saying nothing. It is `discontinuity-unknown-width` with the Discontinuity deleted and nothing else changed. Every other rule is satisfied — coverage is *complete*, because the guarantee is about the input and has no opinion on the output — so a checker that only accumulates ranges passes it. **Under `0.14` this file was conformant.** Unlike `splice/` it needs no second file: a `hole`-class Undecoded region between the input regions of two adjacent output units is the one shape of the duty decidable from a single file. |
+| `isolate-unmarked-break` | **Finding 3 as one file**, and the vector this suite most needed: a decode stage whose own output breaks, saying nothing. It is `discontinuity-unknown-width` with the Discontinuity deleted and nothing else changed. Every other rule is satisfied — coverage is *complete*, because the guarantee is about the input and has no opinion on the output — so a checker that only accumulates ranges passes it. **Under `0.14` this file was conformant.** Unlike `splice/` it needs no second file: a `hole`-class Undecoded region between the input regions of two adjacent output units is one of the two shapes of the duty decidable from a single file. Its twin is `isolate-unmarked-drop`. |
 
 ### Added in `0.16`
 
@@ -218,7 +224,28 @@ first **advisory** vector.
 | `isolate-mixed-layer-participant` | *(isolate)* **One participant, two layers**: a record whose decoder declares `decoded` beside one whose decoder declares `transport`. Every other rule holds — both decoders declared, coverage complete — which is the point: under `0.15` this file broke nothing stated. The layer fixes the stream's **offset space**, and this stream has two incompatible answers for it. Mixing *decoders* per record stays legal; mixing the **layers they declare**, within one participant, does not. |
 | `isolate-unbound-zpf-stream` | *(isolate)* A `zpf`-sourced participant that is **neither created nor preserved**: no `origin`, and its record carries no `spans`. Nothing says which stream inside the input its bytes came from. The two ways of producing a `zpf`-sourced stream are exhaustive and `0.15` never said so — the discriminator forbade being *both* and was silent on being *neither*, which is how `isolate-self-derived` shipped carrying this as a second, unintended violation. |
 | `isolate-hole-against-capture` | *(isolate)* A **`hole`**-class Undecoded region against a `capture` Source. `undecoded-in-capture` is the conformant shape of the same block; this is the class it may not use, because the reassembled stream is a transport layer whose hole-inclusive offsets already carry the gap. Two accounts of the same missing bytes with no rule for which to believe — the contradiction that also bars a Discontinuity there. |
-| `advisory-transport-content-type` | *(accept, **advisory**)* A transport-layer record carrying `content_type: prim:bytes`. A **MUST NOT**, and the only one whose violation is advisory: dropping the label loses nothing and the record stays readable, so there is no unit a reader could soundly discard. **Rejecting or isolating this file is not conformant.** A reader ignores the label, reports it, and MUST NOT conclude the stream is decoded — which would put every later offset in that participant in the wrong space. |
+| `advisory-transport-content-type` | *(accept, **advisory**)* A transport-layer record carrying `content_type: prim:bytes`. A **MUST NOT** whose violation is advisory: dropping the label loses nothing and the record stays readable, so there is no unit a reader could soundly discard. **Rejecting or isolating this file is not conformant.** A reader ignores the label, reports it, and MUST NOT conclude the stream is decoded — which would put every later offset in that participant in the wrong space. |
+
+### Added in `0.17`
+
+The suite's first vector for an option that names a record rather than typing it,
+a second **advisory** one, and the vector that turns `filtered-decoded` from an
+example of the origination duty into a positive test of it.
+
+| Vector | What it carries |
+|--------|-----------------|
+| `isolate-unmarked-drop` | *(isolate)* **#78's own title case as one file**, and the half of it that could not be tested until `0.17`: a filter that removes a record, declares the region `dropped`, and emits **no** Discontinuity — so a downstream stage may splice the survivors into a run that never existed. It is `filtered-decoded` with the block deleted and nothing else changed. Before `dropped` this region wrote `skipped`, which is also what a discarded BOM writes, and a BOM owes no block — so the two cases were byte-shaped alike and a checker raising this one would have raised `undecoded-skipped` too, wrongly. The `hole`-class twin is `isolate-unmarked-break`. |
+| `decoded-field-roles` | *(accept)* One record per protocol **field**, each named by `0.17`'s `role`. Four `u32` fields, contiguous and non-overlapping, each typed `prim:u32` — so before `role` this file could carry the **type** or the **name** and not both: `prim:u32` leaves a reader able to read every value and unable to tell which field is the checksum, `dec:checksum` names it and discards the normative typing. The two options are independent and every record here carries both. `role` is read in the namespace of the decoder `name` that `decoder_id` resolves to, exactly as a `dec:` token is. |
+
+### Added in `0.18`
+
+| Vector | What it carries |
+|--------|-----------------|
+| `advisory-transport-role` | *(accept, **advisory**)* `advisory-transport-content-type`'s twin, for the other label: a reassembly decoder declaring `output_layer = transport` labels its record `role: "segment"`. The same **MUST NOT** with the same advisory strength — `0.17` stated the bar for both labels in one sentence and shipped a vector for one. `role` is the likelier mistake, because its vocabulary is open: `prim:bytes` at least *looked* wrong on a slice, and `segment` reads as helpful. **Rejecting or isolating this file is not conformant.** |
+| `sequenced-session` | A **SEQUENCED** session, which nothing else carried once `0.19` removed the four sequencing vectors with the basis rule. A single tap that saw both directions emits one directly, so this is capture-sourced and the flag is the whole of what it shows. Its point is that SEQUENCED does **not** mean sorted by timestamp: the response is stored at `ts 995`, after the `ts 1000` request that caused it, because the causal order comes from seq/ack and the taps' clocks are skewed. |
+| `unplaceable-no-seq-start` | The **commoner** unplaceable shape on its own: a record with no `seq_start` on a stream whose earlier record has one, so the offset space cannot say where it belongs. Pinned inside `partially-hinted-sequenced` from `0.18`, and rehoused here when `0.19` removed that vector with the sequencing basis — placement keys on whether a stream is sequence-anchored, not on `SEQUENCED`, so the shape never needed a sequenced session to live in. Its twin is `advisory-below-origin-payload`, the other shape of one rule. |
+| `unplaceable-below-origin` | A below-origin record **carrying payload**. Since `0.19` it is not a violation — the floor stopped being a MUST NOT when the advisory tier stopped pinning repairs — but the **effect** survives and is what this pins: the record is unplaceable, covers no byte, and its eight bytes are outside the offset space. What `0.19` dropped is the exact range a reader reports for it. A reader that trusts the wrapped offset places it near 2³² and corrupts the extent for every other record. |
+| `handshake-at-origin` | *(accept)* The mandated shape of a recorded handshake, both directions, and the **tie** it necessarily produces: each SYN sits at `isn + 1` and the first data record of that direction starts at the same origin, so each participant has **two records at one `seq_start`**. The per-participant ordering MUST is *non-descending*, and a reader treating equal `seq_start` as out-of-order rejects this file — and with it every conformant capture whose handshake was observed. No vector in the suite carried a tie before `0.18`, so that reader passed the whole suite and failed on real traffic. Also the only file exercising the responder's SYN-ACK as its own zero-length `syn` record with an `ack`. |
 
 ## Multi-file fixtures
 

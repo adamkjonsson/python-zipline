@@ -18,7 +18,12 @@ def write_side_a(sink: object) -> None:
         w.add_source("capture", uri="sideA.pcap")
         s = w.begin_session(proto="tcp", key=KEY, session_id=7)
         client = s.participant("10.0.0.1:51000", isn=1000, tcp_role=zpf.TcpRole.INITIATOR)
-        s.record(client, ts=1000, payload=b"GET / HTTP/1.1\r\n\r\n", seq_start=1001, ack=5001)
+        s.record(
+            client,
+            ts=1000,
+            payload=b"GET / HTTP/1.1\r\n\r\n",
+            hints=zpf.Hints(seq_start=1001, ack=5001),
+        )
 
 
 def write_side_b(sink: object) -> None:
@@ -27,7 +32,12 @@ def write_side_b(sink: object) -> None:
         s = w.begin_session(proto="tcp", key=KEY, session_id=3)
         server = s.participant("93.184.216.34:80", isn=5000, tcp_role=zpf.TcpRole.RESPONDER)
         # Skewed clock: stamped before the request it answers.
-        s.record(server, ts=995, payload=b"HTTP/1.1 200 OK\r\n...", seq_start=5001, ack=1019)
+        s.record(
+            server,
+            ts=995,
+            payload=b"HTTP/1.1 200 OK\r\n...",
+            hints=zpf.Hints(seq_start=5001, ack=1019),
+        )
 
 
 @pytest.fixture
@@ -56,17 +66,69 @@ def test_merge_produces_the_specs_pass_through_file(sides: tuple[Path, Path], tm
         assert session.sequenced
         assert (session.proto, session.key) == ("tcp", KEY)
         client, server = session.participants
-        assert client.origin == zpf.Origin(source_id=0, session_id=7, participant_id=0)
-        assert server.origin == zpf.Origin(source_id=1, session_id=3, participant_id=0)
         assert (client.isn, server.isn) == (1000, 5000)
+        # Provenance is an identity span per record since 0.19 — the same
+        # range in as out — where the participant used to carry an origin.
+        by_pid = {r.sender_pid: r.spans for r in session.records()}
+        assert by_pid[0] == (
+            zpf.Span(source_id=0, session_id=7, participant_id=0,
+                     off_start=0, off_end=18),
+        )
+        assert by_pid[1] == (
+            zpf.Span(source_id=1, session_id=3, participant_id=0,
+                     off_start=0, off_end=20),
+        )
         records = list(session.records())
         # Causal order despite the timestamp inversion.
         assert [r.payload[:3] for r in records] == [b"GET", b"HTT"]
         assert [(r.seq_start, r.ack) for r in records] == [(1001, 5001), (5001, 1019)]
-        assert all(r.spans == () for r in records)  # pass-through: no spans
         assert all(r.decoder_id is None for r in records)
         session.verify()  # the baked-in order really is a causal linearization
         assert session.end is not None
+
+
+def test_a_merge_over_a_holed_input_closes_coverage(tmp_path: Path):
+    """Package A gave the merge a coverage obligation, and nothing upstream shows it.
+
+    Since `0.19` a pass-through writes an identity span per record, so a merge
+    **cites** its input streams — and a file citing a stream is answerable for
+    every offset of it. A transport input's holes are real ranges its offset
+    space carries and no payload covers, so without marking them the merge
+    emits a file its own reader reports as having an unaccounted gap.
+
+    The upstream suite has no merge vector with a holed input
+    (`zipline#133 <https://github.com/adamkjonsson/zipline/issues/133>`_ is
+    open for exactly that), so this test is the only thing holding the
+    behaviour. It asserts all three ways the guarantee can be checked: the
+    reader's own diagnostics, the file-alone check, and the check against the
+    input.
+
+    The hole is marked ``gap``, the ``hole`` class. ``skipped`` or ``dropped``
+    would claim the merge withheld bytes it had, sending a consumer up the
+    chain after data that was never captured.
+    """
+    side_a, side_b = tmp_path / "a.zpf", tmp_path / "b.zpf"
+    with zpf.create(side_a, tick_hz=1_000_000) as w:
+        w.add_source("capture", uri="a.pcap")
+        s = w.begin_session(proto="tcp", key=KEY, session_id=7)
+        p = s.participant("10.0.0.1:51000", isn=1000)
+        s.record(p, ts=1, payload=b"AAAA", hints=zpf.Hints(seq_start=1001))
+        s.record(p, ts=2, payload=b"CCCC", hints=zpf.Hints(seq_start=1009))  # [4, 8) never arrived
+    write_side_b(side_b)
+
+    output = tmp_path / "merged.zpf"
+    zpf.merge_files(side_a, side_b, output, produced_by="t 1", produced_at=1)
+
+    with zpf.open(output) as merged:
+        assert merged.diagnostics == []
+        assert [(u.off_start, u.off_end, u.reason) for u in merged.undecoded] == [(4, 8, "gap")]
+        assert zpf.UNDECODED_REASONS["gap"] == "hole"
+        # Declared, so the coverage answer needs no second file.
+        (end,) = [s.end for s in merged.sessions() if s.end is not None]
+        assert sorted((e.session_id, e.extent) for e in end.input_extents) == [(3, 20), (7, 12)]
+    assert zpf.check_extents(output) == []
+    assert zpf.check_coverage(output, side_a) == []
+    assert zpf.check_coverage(output, side_b) == []
 
 
 def test_merge_records_input_digests(sides: tuple[Path, Path], tmp_path: Path):
@@ -171,11 +233,11 @@ def write_raw(path: Path, *, hole: bool = False) -> None:
         p1 = s.participant("93.184.216.34:80", isn=5000)
         if hole:
             # [0, 10) then a 39-byte gap, then [49, 59): extent 59.
-            s.record(p0, ts=1, payload=b"x" * 10, seq_start=1001)
-            s.record(p0, ts=2, payload=b"y" * 10, seq_start=1050)
+            s.record(p0, ts=1, payload=b"x" * 10, hints=zpf.Hints(seq_start=1001))
+            s.record(p0, ts=2, payload=b"y" * 10, hints=zpf.Hints(seq_start=1050))
         else:
-            s.record(p0, ts=1, payload=b"x" * 18, seq_start=1001)
-        s.record(p1, ts=3, payload=b"z" * 139, seq_start=5001)
+            s.record(p0, ts=1, payload=b"x" * 18, hints=zpf.Hints(seq_start=1001))
+        s.record(p1, ts=3, payload=b"z" * 139, hints=zpf.Hints(seq_start=5001))
 
 
 def write_decoded(
@@ -193,15 +255,35 @@ def write_decoded(
         client = s.participant("10.0.0.1:51000")
         s.participant("93.184.216.34:80")
         s.record(
-            client, ts=1, payload=b"req", decoder=http,
-            spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
-                            off_start=0, off_end=18),),
+            client,
+            ts=1,
+            payload=b"req",
+            decoded=zpf.Decoded(
+                decoder=http,
+                spans=(zpf.Span(
+                    source_id=0,
+                    session_id=7,
+                    participant_id=0,
+                    off_start=0,
+                    off_end=18,
+                ),),
+            ),
         )
         for start, end in p1_spans:
             s.record(
-                client, ts=2, payload=b"resp", decoder=http,
-                spans=(zpf.Span(source_id=0, session_id=7, participant_id=1,
-                                off_start=start, off_end=end),),
+                client,
+                ts=2,
+                payload=b"resp",
+                decoded=zpf.Decoded(
+                    decoder=http,
+                    spans=(zpf.Span(
+                        source_id=0,
+                        session_id=7,
+                        participant_id=1,
+                        off_start=start,
+                        off_end=end,
+                    ),),
+                ),
             )
         for start, end in p1_undecoded:
             w.undecoded(src, 7, 1, start, end, reason="undecodable", decoder=http)
@@ -248,15 +330,35 @@ def test_hole_inclusive_extents(tmp_path: Path):
         s = w.begin_session(proto="http", session_id=7)
         client = s.participant("10.0.0.1:51000")
         s.record(
-            client, ts=1, payload=b"a", decoder=http,
-            spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
-                            off_start=0, off_end=10),),
+            client,
+            ts=1,
+            payload=b"a",
+            decoded=zpf.Decoded(
+                decoder=http,
+                spans=(zpf.Span(
+                    source_id=0,
+                    session_id=7,
+                    participant_id=0,
+                    off_start=0,
+                    off_end=10,
+                ),),
+            ),
         )
         w.undecoded(source, 7, 0, 10, 49, reason="gap")
         s.record(
-            client, ts=2, payload=b"b", decoder=http,
-            spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
-                            off_start=49, off_end=59),),
+            client,
+            ts=2,
+            payload=b"b",
+            decoded=zpf.Decoded(
+                decoder=http,
+                spans=(zpf.Span(
+                    source_id=0,
+                    session_id=7,
+                    participant_id=0,
+                    off_start=49,
+                    off_end=59,
+                ),),
+            ),
         )
         w.undecoded(source, 7, 1, 0, 139, reason="undecodable")
     assert zpf.check_coverage(decoded, raw) == []
@@ -273,33 +375,105 @@ def test_a_decode_stages_record_resolves_in_one_hop():
     assert (span.off_start, span.off_end) == (0, 9)
 
 
-def test_a_pass_throughs_record_resolves_in_two_hops():
-    # annotated.zpf re-emits decoded.zpf's records unchanged, so they carry
-    # no spans. The walk takes the participant's origin into decoded.zpf,
-    # finds the record occupying the same offsets, and reads its spans —
-    # which name raw.zpf. This file alone cannot answer the question.
+def test_a_pass_throughs_record_resolves_in_one_hop_too():
+    """What `0.19` changed, and it is the whole of package A from here.
+
+    Through `0.18` this was ``..._resolves_in_two_hops``: ``annotated.zpf``
+    re-emitted its input's records unchanged, so they carried **no** spans,
+    and the walk had to go through the participant's ``origin`` into
+    ``decoded.zpf`` to find out where the bytes came from. One file could not
+    answer the question.
+
+    Since `0.19` every ``zpf``-sourced record carries ``spans``, and a
+    pass-through writes an **identity span** — the same range in as out. So
+    the answer is in the file, the two shapes have one rule, and *which kind*
+    of stage produced a record is read from whether its spans are identity
+    rather than from which option is present.
+
+    The span here names ``decoded.zpf``'s own offsets, not ``raw.zpf``'s.
+    Walking further up the chain is a separate question and a separate
+    argument — see the ``hops`` work in Phase 3 — and this asserts one hop,
+    which is what the function's name has always promised.
+    """
     with zpf.open(CHAIN / "annotated.zpf") as f:
-        assert [r.spans for r in f.session(7).records()] == [(), ()]
+        spans = [r.spans for r in f.session(7).records()]
+    assert [len(s) for s in spans] == [1, 1], "every zpf-sourced record carries spans"
     (span,) = zpf.resolve_spans(CHAIN / "annotated.zpf", 7, 0, 0)
     assert (span.session_id, span.participant_id) == (7, 0)
     assert (span.off_start, span.off_end) == (0, 9)
     (other,) = zpf.resolve_spans(CHAIN / "annotated.zpf", 7, 1, 0)
-    assert (other.off_start, other.off_end) == (0, 16)
+    assert (other.off_start, other.off_end) == (0, 8)
 
 
 def test_a_raw_file_records_no_provenance_to_resolve():
     assert zpf.resolve_spans(CHAIN / "raw.zpf", 7, 0, 0) == ()
 
 
-def test_resolving_a_stream_needs_an_explicit_opener():
+def test_only_a_multi_hop_walk_needs_an_explicit_opener():
+    """One hop opens nothing, so it asks for nothing.
+
+    Through Phase 0 this raised for *every* call on a stream, because
+    `resolve_spans` built the opener before deciding whether it needed one —
+    a leftover from the two-hop walk, which always did. Requiring an argument
+    a call cannot use is how a parameter comes to look load-bearing when it is
+    not.
+    """
+    with (CHAIN / "annotated.zpf").open("rb") as handle:
+        # One hop reads the record's own spans: no input, no opener, no raise.
+        assert zpf.resolve_spans(handle, 7, 0, 0) != ()
+
     with (
         (CHAIN / "annotated.zpf").open("rb") as handle,
         pytest.raises(zpf.ZpfError, match="open_input"),
     ):
-        zpf.resolve_spans(handle, 7, 0, 0)
+        zpf.resolve_spans(handle, 7, 0, 0, hops=None)
 
 
-def test_an_opener_may_redirect_where_inputs_are_found():
+def test_a_walk_follows_the_chain_toward_the_capture():
+    """`hops` is the part of the old two-hop walk worth keeping.
+
+    The chain is annotated -> decoded -> raw, and raw is a capture. One hop
+    names `decoded.zpf`; two name `raw.zpf`; walking to the end stops there,
+    because raw's records are capture-sourced and carry no spans, so that span
+    is as deep as the chain records.
+    """
+    one = zpf.resolve_spans(CHAIN / "annotated.zpf", 7, 0, 0)
+    assert [(s.source_id, s.off_start, s.off_end) for s in one] == [(2, 0, 9)]
+
+    two = zpf.resolve_spans(CHAIN / "annotated.zpf", 7, 0, 0, hops=2)
+    assert [(s.source_id, s.off_start, s.off_end) for s in two] == [(1, 0, 9)]
+
+    # The ids are read in the namespace of the source each span names, so
+    # source 1 here is `decoded.zpf`'s raw.zpf, not `annotated.zpf`'s.
+    assert zpf.resolve_spans(CHAIN / "annotated.zpf", 7, 0, 0, hops=None) == two
+
+
+def test_a_walk_past_the_capture_stops_rather_than_emptying():
+    """A record that answers for itself ends the walk holding the answer."""
+    # decoded.zpf's input is the capture, so one hop is already the end.
+    deep = zpf.resolve_spans(CHAIN / "decoded.zpf", 7, 0, 0, hops=None)
+    assert [(s.source_id, s.off_start, s.off_end) for s in deep] == [(1, 0, 9)]
+    assert deep == zpf.resolve_spans(CHAIN / "decoded.zpf", 7, 0, 0)
+
+
+def test_hops_below_one_is_refused():
+    with pytest.raises(zpf.ZpfError, match="at least 1"):
+        zpf.resolve_spans(CHAIN / "annotated.zpf", 7, 0, 0, hops=0)
+
+
+def test_an_opener_is_not_needed_for_a_record_that_answers_for_itself():
+    """The opener exists for a walk this call no longer has to make.
+
+    Through `0.18` resolving a pass-through's record opened its input, so this
+    asserted that the opener saw ``decoded.zpf`` and nothing beyond it. Since
+    `0.19` the record carries its own identity span and one hop opens
+    **nothing** — which is the cost package A removed, not merely relocated.
+
+    The argument stays supported and stays tested: it is what
+    ``test_resolving_a_stream_needs_an_explicit_opener`` covers for a file
+    with no path, and it is what a multi-hop walk will need in Phase 3. This
+    asserts the hop that is now free.
+    """
     seen: list[str] = []
 
     def opener(source: zpf.Source) -> Path:
@@ -307,8 +481,12 @@ def test_an_opener_may_redirect_where_inputs_are_found():
         return CHAIN / source.uri
 
     (span,) = zpf.resolve_spans(CHAIN / "annotated.zpf", 7, 0, 0, open_input=opener)
-    assert seen == ["decoded.zpf"]  # only the immediate input needs opening
+    assert seen == [], "one hop reads the record's own spans and opens nothing"
     assert (span.off_start, span.off_end) == (0, 9)
+
+    # Two hops open exactly the file the span names, and no further.
+    zpf.resolve_spans(CHAIN / "annotated.zpf", 7, 0, 0, hops=2, open_input=opener)
+    assert seen == ["decoded.zpf"]
 
 
 # --- Filter / reorder stages (rewrite_decoded) -------------------------------
@@ -324,11 +502,21 @@ def decoded_input(path: Path, payloads: tuple[bytes, ...] = (b"AAA", b"BB", b"CC
             offset = 0
             for index, body in enumerate(payloads):
                 session.record(
-                    sender, ts=index, payload=body, source=source, decoder=decoder,
-                    content_type="dec:request",
-                    spans=(zpf.Span(source_id=source.source_id, session_id=7,
-                                    participant_id=0, off_start=offset,
-                                    off_end=offset + len(body)),),
+                    sender,
+                    ts=index,
+                    payload=body,
+                    source=source,
+                    decoded=zpf.Decoded(
+                        decoder=decoder,
+                        content_type="dec:request",
+                        spans=(zpf.Span(
+                            source_id=source.source_id,
+                            session_id=7,
+                            participant_id=0,
+                            off_start=offset,
+                            off_end=offset + len(body),
+                        ),),
+                    ),
                 )
                 offset += len(body)
 
@@ -349,9 +537,12 @@ def test_a_filter_stage_is_a_decode_stage_not_a_pass_through(tmp_path: Path):
         assert [[(s.off_start, s.off_end) for s in r.spans] for r in session.stream(0)] == [
             [(0, 3)], [(5, 9)]
         ]
-        # The dropped range is marked, not silently lost.
+        # The dropped range is marked, not silently lost — and marked
+        # `dropped` rather than `skipped`, which since 0.17 is the difference
+        # between content removed and content that was never content. Both are
+        # bytes-class; only this one says the survivors may not join.
         (marker,) = f.undecoded
-        assert (marker.off_start, marker.off_end, marker.reason) == (3, 5, "skipped")
+        assert (marker.off_start, marker.off_end, marker.reason) == (3, 5, "dropped")
 
 
 def test_the_coverage_guarantee_holds_over_a_filtered_stream(tmp_path: Path):
@@ -444,8 +635,13 @@ def test_check_extents_passes_every_conformant_vector():
     declares — only the union across both does. A checker keyed on the output
     session fails it and passes every other file in the suite.
     """
+    # `annotator-decoded` and `passthrough-discontinuity` stood here until
+    # 0.19 deleted them with the pass-through derivation kind. `filtered-decoded`
+    # replaces the pair: it is a decode stage whose removed region is marked and
+    # whose seam is declared, so it exercises the same accounting without the
+    # option that used to carry it.
     for name in ("decoded-basic", "broken-chain", "session-fan-out",
-                 "annotator-decoded", "passthrough-discontinuity",
+                 "filtered-decoded", "reordered-decoded",
                  "discontinuity-known-width", "discontinuity-unknown-width"):
         path = VECTORS / name / f"{name}.zpf"
         assert zpf.check_extents(path) == [], name
@@ -530,13 +726,39 @@ def test_check_splice_is_quiet_when_the_stage_carries_the_break_forward(tmp_path
         decoder = w.add_decoder("tls")
         with w.begin_session(session_id=7) as s:
             client = s.participant("a")
-            s.record(client, ts=0, payload=b"A" * 50, source=source, decoder=decoder,
-                     spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
-                                     off_start=0, off_end=50),))
+            s.record(
+                client,
+                ts=0,
+                payload=b"A" * 50,
+                source=source,
+                decoded=zpf.Decoded(
+                    decoder=decoder,
+                    spans=(zpf.Span(
+                        source_id=0,
+                        session_id=7,
+                        participant_id=0,
+                        off_start=0,
+                        off_end=50,
+                    ),),
+                ),
+            )
             s.discontinuity(client, reason="tls-record-lost")
-            s.record(client, ts=1, payload=b"B" * 30, source=source, decoder=decoder,
-                     spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
-                                     off_start=50, off_end=80),))
+            s.record(
+                client,
+                ts=1,
+                payload=b"B" * 30,
+                source=source,
+                decoded=zpf.Decoded(
+                    decoder=decoder,
+                    spans=(zpf.Span(
+                        source_id=0,
+                        session_id=7,
+                        participant_id=0,
+                        off_start=50,
+                        off_end=80,
+                    ),),
+                ),
+            )
 
     def write_stage2(path: Path, *, weld: bool) -> None:
         with zpf.create(path, tick_hz=1, produced_by="s2", produced_at=2) as w:
@@ -545,17 +767,56 @@ def test_check_splice_is_quiet_when_the_stage_carries_the_break_forward(tmp_path
             with w.begin_session(session_id=7) as s:
                 client = s.participant("a")
                 if weld:
-                    s.record(client, ts=0, payload=b"M", source=source, decoder=decoder,
-                             spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
-                                             off_start=0, off_end=80),))
+                    s.record(
+                        client,
+                        ts=0,
+                        payload=b"M",
+                        source=source,
+                        decoded=zpf.Decoded(
+                            decoder=decoder,
+                            spans=(zpf.Span(
+                                source_id=0,
+                                session_id=7,
+                                participant_id=0,
+                                off_start=0,
+                                off_end=80,
+                            ),),
+                        ),
+                    )
                 else:
-                    s.record(client, ts=0, payload=b"M", source=source, decoder=decoder,
-                             spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
-                                             off_start=0, off_end=50),))
+                    s.record(
+                        client,
+                        ts=0,
+                        payload=b"M",
+                        source=source,
+                        decoded=zpf.Decoded(
+                            decoder=decoder,
+                            spans=(zpf.Span(
+                                source_id=0,
+                                session_id=7,
+                                participant_id=0,
+                                off_start=0,
+                                off_end=50,
+                            ),),
+                        ),
+                    )
                     s.discontinuity(client, reason="tls-record-lost")
-                    s.record(client, ts=1, payload=b"N", source=source, decoder=decoder,
-                             spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
-                                             off_start=50, off_end=80),))
+                    s.record(
+                        client,
+                        ts=1,
+                        payload=b"N",
+                        source=source,
+                        decoded=zpf.Decoded(
+                            decoder=decoder,
+                            spans=(zpf.Span(
+                                source_id=0,
+                                session_id=7,
+                                participant_id=0,
+                                off_start=50,
+                                off_end=80,
+                            ),),
+                        ),
+                    )
 
     honest, welded = tmp_path / "honest.zpf", tmp_path / "welded.zpf"
     write_stage2(honest, weld=False)
@@ -576,13 +837,39 @@ def test_a_units_spans_are_judged_together(tmp_path: Path):
         decoder = w.add_decoder("tls")
         with w.begin_session(session_id=7) as s:
             client = s.participant("a")
-            s.record(client, ts=0, payload=b"A" * 50, source=source, decoder=decoder,
-                     spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
-                                     off_start=0, off_end=50),))
+            s.record(
+                client,
+                ts=0,
+                payload=b"A" * 50,
+                source=source,
+                decoded=zpf.Decoded(
+                    decoder=decoder,
+                    spans=(zpf.Span(
+                        source_id=0,
+                        session_id=7,
+                        participant_id=0,
+                        off_start=0,
+                        off_end=50,
+                    ),),
+                ),
+            )
             s.discontinuity(client, reason="stream-gap")
-            s.record(client, ts=1, payload=b"B" * 30, source=source, decoder=decoder,
-                     spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
-                                     off_start=50, off_end=80),))
+            s.record(
+                client,
+                ts=1,
+                payload=b"B" * 30,
+                source=source,
+                decoded=zpf.Decoded(
+                    decoder=decoder,
+                    spans=(zpf.Span(
+                        source_id=0,
+                        session_id=7,
+                        participant_id=0,
+                        off_start=50,
+                        off_end=80,
+                    ),),
+                ),
+            )
     stage2 = tmp_path / "stage2.zpf"
     with zpf.create(stage2, tick_hz=1, produced_by="s2", produced_at=2) as w:
         source = w.add_source("zpf-input", uri=str(stage1))
@@ -590,12 +877,22 @@ def test_a_units_spans_are_judged_together(tmp_path: Path):
         with w.begin_session(session_id=7) as s:
             client = s.participant("a")
             s.record(
-                client, ts=0, payload=b"M", source=source, decoder=decoder,
-                spans=(
-                    zpf.Span(source_id=0, session_id=7, participant_id=0,
-                             off_start=0, off_end=50),
-                    zpf.Span(source_id=0, session_id=7, participant_id=0,
-                             off_start=50, off_end=80),
+                client,
+                ts=0,
+                payload=b"M",
+                source=source,
+                decoded=zpf.Decoded(
+                    decoder=decoder,
+                    spans=(
+                        zpf.Span(
+                            source_id=0, session_id=7, participant_id=0,
+                            off_start=0, off_end=50,
+                        ),
+                        zpf.Span(
+                            source_id=0, session_id=7, participant_id=0,
+                            off_start=50, off_end=80,
+                        ),
+                    ),
                 ),
             )
     assert [f.category for f in zpf.check_splice(stage2, stage1)] == ["discontinuity-splice"]
@@ -616,9 +913,22 @@ def decoded_with_a_break(path: Path) -> None:
             ):
                 if index == 2:
                     s.discontinuity(client, width=5, reason="tls-record-lost")
-                s.record(client, ts=index, payload=body, source=source, decoder=decoder,
-                         spans=(zpf.Span(source_id=0, session_id=7, participant_id=0,
-                                         off_start=start, off_end=end),))
+                s.record(
+                    client,
+                    ts=index,
+                    payload=body,
+                    source=source,
+                    decoded=zpf.Decoded(
+                        decoder=decoder,
+                        spans=(zpf.Span(
+                            source_id=0,
+                            session_id=7,
+                            participant_id=0,
+                            off_start=start,
+                            off_end=end,
+                        ),),
+                    ),
+                )
             w.undecoded(source, 7, 0, 20, 30, reason="undecodable")
 
 
@@ -640,12 +950,18 @@ def test_a_rewrite_carries_its_inputs_breaks_forward(tmp_path: Path):
     assert zpf.check_splice(out, src) == []
 
 
-def test_a_rewrite_marks_a_break_as_a_hole_not_as_skipped(tmp_path: Path):
+def test_a_rewrite_marks_a_break_as_a_hole_not_as_removed_content(tmp_path: Path):
     """A break's range holds no bytes, and the reason has to say so.
 
-    ``skipped`` is the ``bytes`` class — the data exists upstream, go and
+    ``dropped`` is the ``bytes`` class — the data exists upstream, go and
     fetch it. For the range a declared width covers that is false, and acting
     on it would send a consumer after bytes that were never sent.
+
+    The two reasons this file writes are the whole distinction: ``gap`` for
+    the input's own declared break, where nothing ever existed, and
+    ``dropped`` for the record this stage removed, where the bytes are one hop
+    up. Getting them the wrong way round is not a labelling error — it decides
+    whether a consumer's recovery walk has anywhere to go.
     """
     src, out = tmp_path / "in.zpf", tmp_path / "out.zpf"
     decoded_with_a_break(src)
@@ -657,7 +973,8 @@ def test_a_rewrite_marks_a_break_as_a_hole_not_as_skipped(tmp_path: Path):
     by_range = {(b.off_start, b.off_end): b.reason for b in marked}
     assert by_range[(5, 10)] == "gap"  # the break: no bytes anywhere
     assert zpf.UNDECODED_REASONS["gap"] == "hole"
-    assert by_range[(3, 5)] == "skipped"  # the dropped record: bytes upstream
+    assert by_range[(3, 5)] == "dropped"  # the removed record: bytes upstream
+    assert zpf.UNDECODED_REASONS["dropped"] == "bytes"
     assert zpf.check_coverage(out, src) == []
 
 
@@ -727,3 +1044,36 @@ def test_check_coverage_refuses_an_open_reader(tmp_path: Path):
         pytest.raises(TypeError, match="FileReader"),
     ):
         zpf.check_coverage(reader, raw)
+
+
+def test_a_rewrite_carries_role_forward_with_content_type(tmp_path: Path):
+    """The carry-forward obligation, and why losing `role` is worse.
+
+    A lost `content_type` degrades to something the format defines: opaque
+    payload, fall back to the decoder `name`. A lost `role` leaves records
+    typed `prim:u32` with nothing saying which is the checksum — the state the
+    option was added to end, reintroduced by a stage whose whole purpose is to
+    change nothing. And because the option is advisory, no reader can detect
+    that it happened, which is why this needs a test rather than a checker.
+    """
+    src, out = tmp_path / "in.zpf", tmp_path / "out.zpf"
+    fields = ("version", "length", "checksum")
+    with zpf.create(src, tick_hz=1, produced_by="t", produced_at=1) as w:
+        cap, decoder = w.add_source("capture", uri="c.pcap"), w.add_decoder("proto/1")
+        with w.begin_session(proto="x", session_id=7) as s:
+            p = s.participant("a")
+            for i, name in enumerate(fields):
+                s.record(
+                    p, ts=i + 1, payload=b"\x00\x00\x00\x07", source=cap,
+                    decoded=zpf.Decoded(
+                        decoder=decoder, content_type="prim:u32", role=name
+                    ),
+                )
+
+    zpf.rewrite_decoded(src, out, produced_by="f 1", produced_at=2)
+
+    with zpf.open(out) as reader:
+        records = list(reader.session(7).records())
+        assert [r.role for r in records] == list(fields)
+        assert {r.content_type for r in records} == {"prim:u32"}
+        assert reader.diagnostics == []

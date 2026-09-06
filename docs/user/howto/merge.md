@@ -69,11 +69,15 @@ A pass-through file that preserves the inputs faithfully:
   changed.
 - The output session carries the **SEQUENCED** flag, and its records are
   stored in causal order.
-- Every participant's `origin` points back to its input stream.
 - Records are re-emitted **byte-identically** — payloads, timestamps,
-  `seq_start`/`ack` hints, flags, and unknown options all preserved. Only
-  `spans` are stripped, because a pass-through file's provenance is its
-  `origin` plus the preserved offsets.
+  `seq_start`/`ack` hints, flags, and unknown options all preserved.
+- Each record carries an **identity span** naming the input range it re-emits:
+  the same range in as out. That is how a pass-through states its provenance
+  since `0.19`, where its participants used to carry an `origin` instead.
+- Because it cites its inputs, the output is answerable for their **coverage**.
+  A hinted input's holes are ranges its offset space carries and no payload
+  covers, so they are marked `gap`, and each input stream's extent is declared
+  on Session End.
 
 Because the digest is recorded, you can later re-validate the merge against
 its inputs; see [Validate a file](validate.md#in-python) and

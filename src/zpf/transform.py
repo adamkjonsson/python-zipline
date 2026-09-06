@@ -17,8 +17,8 @@ transform-side tools the specification describes:
   participant stream must be either covered by a decoded record's
   ``spans`` or marked Undecoded — nothing silently dropped, and never
   both.
-* :func:`resolve_spans` — the provenance walk: one hop for a record its own
-  stage built, two for one a pass-through re-emitted.
+* :func:`resolve_spans` — the provenance lookup: one hop, always, since
+  every ``zpf``-sourced record carries ``spans`` of its own.
 
 This version of the merge handles the canonical two-tap case exactly:
 two raw inputs, each holding one session with one participant (one
@@ -36,19 +36,21 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING
 
 from zpf._intervals import complement, intersections
-from zpf.blocks import Discontinuity, Origin, OutputLayer, Record, SourceKind, Span
+from zpf.blocks import Discontinuity, InputExtent, OutputLayer, Record, SourceKind, Span
 from zpf.conformance import CoverageLedger
 from zpf.errors import Diagnostic, ZpfError
 from zpf.order import causal_merge
 from zpf.reader import FileReader, SessionReader
 from zpf.reassembly import layer_name, stream_extent
 from zpf.writer import (
+    Decoded,
     DecoderHandle,
     DerivedInput,
     FileWriter,
     InputRef,
     ParticipantHandle,
     SessionWriter,
+    SourceHandle,
 )
 
 if TYPE_CHECKING:
@@ -77,11 +79,17 @@ def merge_files(
     The output is a **pass-through** derived file per the specification:
     each input is declared as a ``zpf-input`` Source (with a sha256
     ``digest`` when the input is a path), the output session carries the
-    SEQUENCED flag, every participant maps back to its input stream via
-    ``origin``, and records are re-emitted byte-identically — payloads,
+    SEQUENCED flag, and records are re-emitted byte-identically — payloads,
     timestamps, ``seq_start``/``ack`` hints, flags, and unknown options
-    preserved; ``spans`` stripped (``origin`` plus preserved offsets are a
-    pass-through file's provenance).
+    preserved.
+
+    Each record additionally carries an **identity span**, the same range in
+    as out, which since `0.19` is how a pass-through states its provenance;
+    through `0.18` its participants carried an ``origin`` instead and its
+    records carried no spans at all. Citing the inputs makes this file
+    answerable for their coverage, so the holes in a hinted input's offset
+    space are marked ``gap`` and each input stream's extent is declared on
+    Session End.
 
     Args:
         side_a: First input — a raw file holding one session with one
@@ -130,8 +138,8 @@ def merge_files(
             session = writer.begin_session(
                 proto=session_a.proto, key=session_a.key, sequenced=True
             )
-            out_a = _copy_participant(session, session_a, source_a.source_id)
-            out_b = _copy_participant(session, session_b, source_b.source_id)
+            out_a = _copy_participant(session, session_a)
+            out_b = _copy_participant(session, session_b)
             streams = {
                 out_a.pid: _reissued(session_a, session.session_id, out_a.pid,
                                      source_a.source_id),
@@ -140,7 +148,53 @@ def merge_files(
             }
             for record in causal_merge(streams):
                 writer.write_block(record)
-            session.end()
+            # The output cites both inputs, so it is answerable for them.
+            extents = [
+                _account_for_input(writer, session_in, handle)
+                for session_in, handle in ((session_a, source_a), (session_b, source_b))
+            ]
+            session.end(input_extents=extents)
+
+
+def _account_for_input(
+    writer: FileWriter, input_session: SessionReader, source: SourceHandle
+) -> InputExtent:
+    """Mark the input's holes, and measure it, so coverage closes.
+
+    **A consequence of package A that nothing upstream demonstrates.** Since
+    ``0.19`` a pass-through writes an identity span per record, so a merge
+    *cites* its input streams — and a file that cites a stream is answerable
+    for every offset of it under the coverage guarantee. A transport input's
+    holes are real ranges of its offset space that no payload covers, so
+    without this the merge emits a file its own reader reports as having an
+    unaccounted gap. Through ``0.18`` the question did not arise: a
+    pass-through cited nothing and owed nothing.
+
+    The holes are marked ``gap`` — the ``hole`` class, meaning no bytes exist
+    there to go and fetch. ``skipped`` or ``dropped`` would claim the merge
+    withheld something it had, and send a consumer up the chain after bytes
+    that were never captured.
+
+    Returns:
+        The input stream's extent, for the output's Session End. Declaring it
+        is what makes the merge's coverage checkable from the output alone —
+        without a declared length, coverage stopping early is indistinguishable
+        from a stream that was that short.
+
+    """
+    pid = input_session.participants[0].participant_id
+    ranges = input_session.ranges(pid)
+    extent = max((end for _, end in ranges), default=0)
+    for start, end in complement(sorted(ranges), extent):
+        writer.undecoded(
+            source, input_session.session_id, pid, start, end, reason="gap"
+        )
+    return InputExtent(
+        source_id=source.source_id,
+        session_id=input_session.session_id,
+        participant_id=pid,
+        extent=extent,
+    )
 
 
 def _require_mergeable(reader_a: FileReader, reader_b: FileReader) -> None:
@@ -188,9 +242,16 @@ def _require_mergeable(reader_a: FileReader, reader_b: FileReader) -> None:
 
 
 def _copy_participant(
-    session: SessionWriter, input_session: SessionReader, source_id: int
+    session: SessionWriter, input_session: SessionReader
 ) -> ParticipantHandle:
-    """Re-declare an input's participant in the output, with its origin."""
+    """Re-declare an input's participant in the output.
+
+    ``isn`` **is** copied here, unlike in
+    :meth:`~zpf.FileWriter.derive_from`. A merge preserves its inputs' offset
+    space rather than replacing it, so the output stream is still anchored at
+    the same origin and its records still carry the input's ``seq_start``
+    values; dropping ``isn`` would leave those unanchored.
+    """
     participant = input_session.participants[0]
     return session.participant(
         participant.endpoints,
@@ -198,26 +259,47 @@ def _copy_participant(
         tcp_role=participant.tcp_role,
         identity=participant.identity,
         comment=participant.comment,
-        origin=Origin(
-            source_id=source_id,
-            session_id=input_session.session_id,
-            participant_id=participant.participant_id,
-        ),
     )
 
 
 def _reissued(
-    input_session: SessionReader, session_id: int, pid: int, source_id: int
+    input_session: SessionReader,
+    session_id: int,
+    pid: int,
+    source_id: int,
 ) -> Iterator[Record]:
-    """Yield an input stream's records re-addressed to the output ids."""
+    """Yield an input stream's records re-addressed to the output ids.
+
+    Each carries an **identity span** — the same range in as out — which
+    since ``0.19`` is how a pass-through states its provenance and how a
+    reader tells it from a decode stage. Through ``0.18`` these records
+    carried no ``spans`` at all and the participant carried an ``origin``
+    instead; the option is gone and every ``zpf``-sourced record owes spans.
+
+    The range comes from :meth:`~zpf.SessionReader.ranges`, which is the
+    input's own offset space — and the output preserves that space, so the
+    same pair is correct on both sides. That is what makes the span an
+    *identity* rather than a citation.
+    """
     input_pid = input_session.participants[0].participant_id
-    for record in input_session.stream(input_pid):
+    ranges = input_session.ranges(input_pid)
+    for record, (off_start, off_end) in zip(
+        input_session.stream(input_pid), ranges, strict=True
+    ):
         yield dataclasses.replace(
             record,
             session_id=session_id,
             sender_pid=pid,
             source_id=source_id,
-            spans=(),  # pass-through records carry no spans
+            spans=(
+                Span(
+                    source_id=source_id,
+                    session_id=input_session.session_id,
+                    participant_id=input_pid,
+                    off_start=off_start,
+                    off_end=off_end,
+                ),
+            ),
         )
 
 
@@ -378,90 +460,132 @@ def resolve_spans(
     index: int,
     *,
     open_input: Callable[[Source], str | os.PathLike[str] | IO[bytes] | IO[str]] | None = None,
+    hops: int | None = 1,
 ) -> tuple[Span, ...]:
     """Resolve which upstream ranges a record's bytes came from.
 
-    A record's provenance is one hop or two, and which it is depends on
-    whether this file's own stage *built* the record:
+    **One hop answers for the immediate input, and since `0.19` every
+    ``zpf``-sourced record can.** Its ``spans`` name the ranges it corresponds
+    to in the file it was derived from — a decode stage's naming what its unit
+    was built from, a pass-through's an **identity span**, the same range in as
+    out. Which kind of stage wrote the record does not change the lookup, which
+    is what package A bought: through `0.18` a pass-through's records carried no
+    spans at all, and answering for one meant opening its input.
 
-    * A **decode stage's** record carries ``spans`` naming the input ranges
-      it was built from. One hop; those spans are the answer.
-    * A **pass-through's** record carries none — ``origin`` plus offset
-      preservation is its provenance. So the walk takes the participant's
-      ``origin`` to the corresponding stream in the input, computes the
-      record's :meth:`~zpf.SessionReader.ranges` position (offsets are
-      preserved, so it is the same range there), and reads the ``spans`` of
-      the record it finds. That file alone cannot say which raw bytes a
-      record came from, which is the asymmetry this function hides.
-
-    Chained pass-throughs recurse, one level at a time.
+    **More hops follow the chain toward the capture.** Each level resolves the
+    ranges from the level before, so ``hops=2`` over ``chain/annotated.zpf``
+    returns spans naming ``raw.zpf`` rather than ``decoded.zpf``, and
+    ``hops=None`` walks until the records answering are capture-sourced and
+    have no spans of their own. A span that cannot go further is returned as it
+    stands, that being as deep as the chain records.
 
     Args:
         derived: The file holding the record.
         session_id: Its session id, in *this* file's namespace.
         pid: Its participant id, in this file's namespace.
         index: The record's position in that participant's stored order.
-        open_input: How to open a ``zpf-input`` Source this file names.
+        open_input: How to open a ``zpf-input`` Source. Needed only when
+            ``hops`` asks for more than one, since one hop opens nothing.
             Defaults to resolving the Source's ``uri`` beside ``derived``,
             which requires ``derived`` to be a path.
+        hops: How far to follow the chain. ``1`` (the default) is the record's
+            own spans, which is what the function's name promises; ``None``
+            walks to the capture. Must be at least 1.
 
     Returns:
-        The spans naming the upstream ranges, empty when the file records
-        no provenance for it (a raw file, or a participant with no
-        ``origin``). Each span's ids are read in the namespace of *the
-        source it names*, as spans always are — which for a two-hop
-        resolution is a file further up the chain than ``derived``, not
-        ``derived`` itself.
+        The spans naming the upstream ranges, empty when the file records no
+        provenance for the record — a capture-sourced one, whose ``source_id``
+        is the whole of its provenance. Each span's ids are read in the
+        namespace of *the source it names*, as spans always are, so a
+        multi-hop result is read against a file further up the chain than
+        ``derived``.
 
     Raises:
         IndexError: If the participant has no record at ``index``.
-        ZpfError: If an input must be opened but no ``open_input`` was
-            given and ``derived`` is not a path.
+        ZpfError: If ``hops`` is less than 1, or if a hop must open an input
+            and ``derived`` is not a path with no ``open_input`` given.
+
+    Example:
+        >>> zpf.resolve_spans("annotated.zpf", 7, 0, 0)             # its input
+        >>> zpf.resolve_spans("annotated.zpf", 7, 0, 0, hops=None)  # the capture
 
     """
-    opener = open_input or _sibling_opener(derived)
+    if hops is not None and hops < 1:
+        msg = f"hops must be at least 1 (the record's own spans), got {hops}"
+        raise ZpfError(msg)
     with FileReader(derived) as reader:
         session = reader.session(session_id)
         records = list(session.stream(pid))
-        record = records[index]
-        if record.spans:
-            return record.spans
-        origin = session.participant(pid).origin
-        if origin is None:
-            return ()
-        wanted = session.ranges(pid)[index]
-        source = reader.sources[origin.source_id]
-    return _resolve_at(opener(source), origin, wanted, opener)
+        spans = records[index].spans
+        sources = dict(reader.sources)
+    if hops is not None and hops == 1:
+        # Nothing is opened, so nothing is needed to open it with. Asking for
+        # an opener here is what made `open_input` look load-bearing when it
+        # was not.
+        return spans
+    opener = open_input or _sibling_opener(derived)
+    remaining = None if hops is None else hops - 1
+    found: list[Span] = []
+    for span in spans:
+        found.extend(_follow(span, sources, opener, remaining))
+    return tuple(found)
+
+
+def _follow(
+    span: Span,
+    sources: dict[int, Source],
+    opener: Callable[[Source], str | os.PathLike[str] | IO[bytes] | IO[str]],
+    remaining: int | None,
+) -> tuple[Span, ...]:
+    """Resolve one span in the file it names, recursing while hops remain.
+
+    Args:
+        span: The range to resolve, in the namespace of the source it names.
+        sources: The declared Sources of the file the span was read from.
+        opener: How to open a ``zpf-input`` Source.
+        remaining: Hops left, or ``None`` for as far as the chain goes.
+
+    Returns:
+        What the span resolves to, or the span itself where it can go no
+        further — a capture-sourced source, or records that carry no spans.
+
+    """
+    source = sources.get(span.source_id)
+    if source is None or source.kind != SourceKind.ZPF_INPUT:
+        return (span,)
+    return _resolve_at(opener(source), span, opener, remaining)
 
 
 def _resolve_at(
     target: str | os.PathLike[str] | IO[bytes] | IO[str],
-    origin: Origin,
-    wanted: tuple[int, int],
+    span: Span,
     opener: Callable[[Source], str | os.PathLike[str] | IO[bytes] | IO[str]],
+    remaining: int | None,
 ) -> tuple[Span, ...]:
-    """Collect the spans covering ``wanted`` in one input stream."""
-    found: list[Span] = []
-    deeper: list[tuple[Origin, tuple[int, int]]] = []
+    """Collect what ``span`` corresponds to inside the file it names."""
     with FileReader(target) as reader:
-        session = reader.session(origin.session_id)
-        pid = origin.participant_id
-        inner = session.participant(pid).origin
+        session = reader.session(span.session_id)
+        pid = span.participant_id
+        found: list[Span] = []
         for record, (start, end) in zip(
             session.stream(pid), session.ranges(pid), strict=True
         ):
-            if end <= wanted[0] or start >= wanted[1]:
+            if end <= span.off_start or start >= span.off_end:
                 continue
-            if record.spans:
-                found.extend(record.spans)
-            elif inner is not None:
-                deeper.append((inner, (start, end)))
+            found.extend(record.spans)
         sources = dict(reader.sources)
-    for next_origin, next_range in deeper:
-        found.extend(
-            _resolve_at(opener(sources[next_origin.source_id]), next_origin, next_range, opener)
+    if not found:
+        # The records answering here carry no spans of their own, so this is
+        # the deepest the chain records and the span we came with is the answer.
+        return (span,)
+    if remaining is not None and remaining <= 1:
+        return tuple(found)
+    deeper: list[Span] = []
+    for inner in found:
+        deeper.extend(
+            _follow(inner, sources, opener, None if remaining is None else remaining - 1)
         )
-    return tuple(found)
+    return tuple(deeper)
 
 
 def _sibling_opener(
@@ -696,15 +820,16 @@ def rewrite_decoded(
     """Filter and/or reorder a decoded file's records into a new stage.
 
     Dropping or reordering a decoded record changes that participant's
-    offset space, because stored order is what *defines* it. So this is
-    **not** a pass-through, however byte-preserving it looks: the output
-    cannot claim to have preserved what it just moved. It is a decode stage,
-    and it carries a decode stage's obligations —
+    offset space, because stored order is what *defines* it, so an output that
+    did either cannot claim to have preserved what it just moved. It is then a
+    decode stage, and carries a decode stage's obligations —
 
     * every emitted record cites the input range it came from in ``spans``;
-    * every dropped range is marked :class:`~zpf.Undecoded` with
-      ``reason="skipped"``, a deliberate decision not to carry data forward,
-      so the coverage guarantee holds over the whole input;
+    * every removed range is marked :class:`~zpf.Undecoded` with
+      ``reason="dropped"`` — content of the stream that was taken out, which
+      since `0.17` is a different statement from ``skipped`` and is what makes
+      the seam duty checkable — so the coverage guarantee holds over the whole
+      input;
     * ``decoder_id`` names a **layer**, not a stage, so the input's are
       inherited and their Decoder Descriptors re-declared. This stage
       declares no decoder of its own — a filtered HTTP message is still an
@@ -713,6 +838,18 @@ def rewrite_decoded(
     A reordering stage's spans will *not* ascend with stored order. That is
     expected: coverage depends on which ranges are covered, not on the order
     they appear in.
+
+    **Which kind of stage this is, is decided per run, and `0.19` is what made
+    that sayable.** This docstring used to open by declaring the output "not a
+    pass-through, however byte-preserving it looks", which was true while the
+    discriminator was which *option* was present — a pass-through carried
+    ``origin`` and this function never wrote one. Since `0.19` the
+    discriminator is whether a record's spans are **identity**, the same range
+    in as out, and with ``keep=None, reorder=None`` every span this writes is
+    exactly that. So an unfiltered, unreordered run *is* a pass-through by the
+    specification's own test, and a filtering or reordering one is not. Nothing
+    about the output changed; what changed is that the file now says which,
+    and says it per record rather than per file.
 
     **The gap this used to fill is now the standard's.** Through ``0.14``
     nothing required a block at a drop point: the MUST NOT was written about
@@ -872,15 +1009,27 @@ def _rewrite_stream(
             payload=record.payload,
             source=derived.source,
             flags=record.flags,
-            decoder=None if record.decoder_id is None else decoders[record.decoder_id],
-            content_type=record.content_type,
-            spans=(
-                Span(
-                    source_id=derived.source.source_id,
-                    session_id=session.session_id,
-                    participant_id=pid,
-                    off_start=off_start,
-                    off_end=off_end,
+            decoded=Decoded(
+                decoder=None if record.decoder_id is None else decoders[record.decoder_id],
+                content_type=record.content_type,
+                # Carried forward with content_type, per
+                # https://github.com/adamkjonsson/zipline/issues/121. A lost
+                # content_type degrades to something the format defines —
+                # opaque payload, fall back to the decoder name. A lost `role`
+                # leaves records typed `prim:u32` with nothing saying which is
+                # the checksum, which is the state the option was added to end,
+                # reintroduced by a stage whose whole purpose is to change
+                # nothing. And because the option is advisory, no reader can
+                # detect that it happened.
+                role=record.role,
+                spans=(
+                    Span(
+                        source_id=derived.source.source_id,
+                        session_id=session.session_id,
+                        participant_id=pid,
+                        off_start=off_start,
+                        off_end=off_end,
+                    ),
                 ),
             ),
         )
@@ -896,9 +1045,17 @@ def _rewrite_stream(
             )
     kept = sorted([cited[id(record)] for record in survivors] + holes)
     extent = ranges[-1][1] if ranges else 0
+    # `dropped`, not `skipped`, and the distinction is normative since 0.17.
+    # Both are bytes-class; what separates them is what this stage did. A
+    # filter *removed content of the stream*, so the survivors either side may
+    # not join — which is what the Discontinuity `_declare_seam` emits says.
+    # `skipped` is for withholding something that carried no content, and
+    # writing it here would produce a conformant-looking file whose seam duty
+    # no checker could test. 0.18 made the spelling a MUST for exactly that
+    # reason; any further specificity belongs in `comment`.
     for start, end in complement(kept, extent):
         writer.undecoded(
-            derived.source, session.session_id, pid, start, end, reason="skipped"
+            derived.source, session.session_id, pid, start, end, reason="dropped"
         )
 
 

@@ -8,7 +8,7 @@
 0004  2C 00 00 00              length = 44
 0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
 000C  00 00                    version_major = 0
-000E  10 00                    version_minor = 16
+000E  13 00                    version_minor = 19
 0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
 0018  12 00 0C 00              option 0x0012 produced_by, len = 12
 001C  7A 70 66 2D 74 6F 6F 6C  "zpf-tool 0.1"

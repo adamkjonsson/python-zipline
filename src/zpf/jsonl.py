@@ -45,11 +45,9 @@ from zpf.blocks import (
     Decoder,
     Discontinuity,
     End,
-    FileFlags,
     FileHeader,
     InputExtent,
     NameResolution,
-    Origin,
     OutputLayer,
     Participant,
     Record,
@@ -267,7 +265,7 @@ class _ObjReader:
             on_issue(f"unknown key {key!r} has no binary encoding and was dropped")
 
 
-# --- spans / origin ----------------------------------------------------------
+# --- spans ----------------------------------------------------------
 
 
 def _span_to_json(span: Span) -> dict[str, Any]:
@@ -320,28 +318,6 @@ def _input_extent_from_json(value: Any) -> InputExtent:
     return extent
 
 
-def _origin_to_json(origin: Origin) -> dict[str, Any]:
-    return {
-        "source_id": origin.source_id,
-        "session_id": _num64(origin.session_id),
-        "pid": origin.participant_id,
-    }
-
-
-def _origin_from_json(value: Any) -> Origin:
-    if not isinstance(value, dict):
-        msg = f"origin must be an object, got {value!r}"
-        raise ValueError(msg)
-    reader = _ObjReader(value)
-    origin = Origin(
-        source_id=reader.require_int("source_id"),
-        session_id=reader.require_int("session_id"),
-        participant_id=reader.require_int("pid"),
-    )
-    reader.finish(_raise_issue)
-    return origin
-
-
 def _raise_issue(message: str) -> None:
     raise ValueError(message)
 
@@ -364,8 +340,6 @@ def _enc_file(block: FileHeader, on_issue: Callable[[str], None]) -> dict[str, A
     _put(obj, "produced_by", block.produced_by)
     _put(obj, "produced_at", None if block.produced_at is None else _num64(block.produced_at))
     _put(obj, "transform_params_digest", block.transform_params_digest)
-    if block.flags & FileFlags.SINGLE_CLOCK:
-        obj["single_clock"] = True
     _put(obj, "comment", block.comment)
     return obj
 
@@ -406,7 +380,6 @@ def _enc_session(block: Session, on_issue: Callable[[str], None]) -> dict[str, A
     _put(obj, "key", block.flow_key)
     if block.flags & SessionFlags.SEQUENCED:
         obj["sequenced"] = True
-    _put(obj, "sequenced_basis", block.sequenced_basis)
     # Opaque bytes, so base64 rather than spelled out — a reader MUST NOT
     # assume it is text even when it decodes to printable ASCII.
     if block.external_session_id is not None:
@@ -434,8 +407,6 @@ def _enc_participant(block: Participant, on_issue: Callable[[str], None]) -> dic
         # No defined label: the escape is the raw number. UNKNOWN and absent
         # both project as an omitted key, per the enum table.
         obj["tcp_role"] = int(block.tcp_role)
-    if block.origin is not None:
-        obj["origin"] = _origin_to_json(block.origin)
     _put(obj, "comment", block.comment)
     return obj
 
@@ -492,6 +463,9 @@ def _enc_record(block: Record, on_issue: Callable[[str], None]) -> dict[str, Any
     if block.spans:
         obj["spans"] = [_span_to_json(span) for span in block.spans]
     _put(obj, "content_type", block.content_type)
+    # Key `role`, no alias: the general naming rule covers it, an option's
+    # JSON key being its canonical name unless the brevity table says otherwise.
+    _put(obj, "role", block.role)
     if block.flags:
         obj["flags"] = _record_flag_tokens(block.flags, on_issue)
     obj["payload"] = _b64e(block.payload)
@@ -604,7 +578,6 @@ _ENCODERS: dict[type[Block], Callable[[Any, Callable[[str], None]], dict[str, An
 def _dec_file(reader: _ObjReader) -> FileHeader:
     version_major, version_minor = _parse_format(reader.require("format"))
     tick_hz = reader.require_int("tick_hz")
-    flags = FileFlags.SINGLE_CLOCK if _take_flag(reader, "single_clock") else FileFlags(0)
     return FileHeader(
         tick_hz=tick_hz,
         version_major=version_major,
@@ -614,7 +587,6 @@ def _dec_file(reader: _ObjReader) -> FileHeader:
         produced_by=reader.take_str("produced_by"),
         produced_at=reader.take_int("produced_at"),
         transform_params_digest=reader.take_str("transform_params_digest"),
-        flags=flags,
         comment=reader.take_str("comment"),
         extra_options=reader.options(),
     )
@@ -674,7 +646,6 @@ def _dec_session(reader: _ObjReader) -> Session:
         proto=reader.take_str("proto"),
         flow_key=reader.take_str("key"),
         flags=flags,
-        sequenced_basis=reader.take_str("sequenced_basis"),
         external_session_id=external,
         comment=reader.take_str("comment"),
         extra_options=reader.options(),
@@ -704,7 +675,6 @@ def _dec_participant(reader: _ObjReader) -> Participant:
     else:
         # The escape for an enum value with no label is the raw number.
         tcp_role = _dec_int(raw_role, "tcp_role")
-    raw_origin = reader.take("origin")
     return Participant(
         session_id=reader.require_int("session_id"),
         participant_id=reader.require_int("pid"),
@@ -712,7 +682,6 @@ def _dec_participant(reader: _ObjReader) -> Participant:
         isn=reader.take_int("isn"),
         identity=reader.take_str("identity"),
         tcp_role=tcp_role,
-        origin=None if raw_origin is None else _origin_from_json(raw_origin),
         comment=reader.take_str("comment"),
         extra_options=reader.options(),
     )
@@ -771,6 +740,7 @@ def _dec_record(reader: _ObjReader, on_issue: Callable[[str], None]) -> Record:
         spans=() if raw_spans is None else tuple(_span_from_json(entry) for entry in raw_spans),
         decoder_id=reader.take_int("decoder_id"),
         content_type=reader.take_str("content_type"),
+        role=reader.take_str("role"),
         comment=reader.take_str("comment"),
         extra_options=reader.options(),
     )

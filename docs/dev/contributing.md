@@ -83,7 +83,20 @@ literal hides, which is what actually goes stale.
 1. **Re-vendor the conformance vectors** at the new tag and reset
    `KNOWN_PASSING` in `tests/test_vectors.py`. Vectors are copied verbatim and
    are the acceptance criteria; never edit one to make a test pass. A name is
-   never *removed* from the ratchet.
+   never *removed* from the ratchet **while its vector exists** — the 0.19 port
+   added that qualification, because a subtractive release deletes vectors, and
+   a name whose file is gone guards nothing. A removal is justified by the
+   fixture being gone, never by our failing it.
+
+   Two things the 0.19 port learned here, both worth repeating:
+
+   - **Diff the vendored tree against the tag** (`diff -r`, excluding upstream's
+     `build.py`/`check.py`), rather than trusting the copy.
+   - **Project every `.zpf` and compare it to the shipped `.jsonl`.** That one
+     sweep found three vector defects upstream could not see, because their
+     `.hex` is generated from the same description as the bytes and their
+     checker is barred from parsing block bodies. It is a five-line script and
+     it belongs in every port.
 2. **Move the gate.** `SPEC_VERSION` in `src/zpf/blocks.py` is the single
    source of truth for the version, and the only place the number is decided.
 3. **Follow the tests.** With 1 and 2 done, the suite tells you what the port

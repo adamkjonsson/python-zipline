@@ -70,10 +70,12 @@ with zpf.decode_stage(
             for start, end, kind in messages:
                 # cites=(...) mints the span for us: the input's ids are filled
                 # in, and offsets are relative to the whole stream.
+                # No ts=: it is derived from cites, which is the timestamp
+                # rule's answer — the completion time of the last input record
+                # in THIS unit's span set, not the whole run's.
                 dec.record(
                     stream,
                     segment.data[start:end],
-                    ts=segment.ts,
                     content_type=f"dec:http-{kind}",
                     cites=(segment.off_start + start, segment.off_start + end),
                 )

@@ -13,7 +13,7 @@ Example:
     ...     with w.begin_session(proto="tcp", key="a <-> b") as s:
     ...         alice = s.participant("10.0.0.1:51000", isn=1000)
     ...         s.record(alice, ts=1000, payload=b"GET / HTTP/1.1\r\n\r\n",
-    ...                  seq_start=1001, ack=5001)
+    ...                  hints=zpf.Hints(seq_start=1001, ack=5001))
     ...         s.end(reason="fin")
     ... # End block written on clean exit; skipped if the body raised
 
@@ -36,7 +36,6 @@ from zpf.blocks import (
     Decoder,
     Discontinuity,
     End,
-    FileFlags,
     FileHeader,
     InputExtent,
     NameResolution,
@@ -53,9 +52,9 @@ from zpf.blocks import (
     Undecoded,
 )
 from zpf.conformance import ConformanceChecker
-from zpf.errors import ZpfError
+from zpf.errors import SemanticError, ZpfError
 from zpf.jsonl import JsonlWriter
-from zpf.order import _StoredOrder, causal_merge
+from zpf.order import SEQ_SPACE, _StoredOrder, causal_merge, seq_lt
 
 if TYPE_CHECKING:
     import os
@@ -63,8 +62,8 @@ if TYPE_CHECKING:
     from types import TracebackType
     from typing import Self
 
-    from zpf.blocks import Origin, Span
-    from zpf.reader import FileReader, SessionReader
+    from zpf.blocks import Span
+    from zpf.reader import FileReader
 
 _KIND_NAMES = {"capture": SourceKind.CAPTURE, "zpf-input": SourceKind.ZPF_INPUT}
 
@@ -163,6 +162,79 @@ class ParticipantHandle:
 
 
 @dataclass(frozen=True)
+class Hints:
+    """TCP ordering hints for a record at the **transport** layer.
+
+    The two options the format's *Per Record (TCP)* table names, and the pair
+    a causal order is derived from: `seq_start` says where the bytes sit,
+    `ack` says what the sender had already seen. They travel together because
+    the rules that use them do.
+
+    A transport stream's requirements bind on the **layer**, not on where its
+    bytes came from, so a sessionization stage carries these exactly as a
+    capture's reassembled stream does — which is the point of its output being
+    a transport layer at all. A decoded record has no use for them: its offsets
+    are positional.
+
+    Passed as ``hints=`` to :meth:`SessionWriter.record` and to
+    :meth:`zpf.DecodeStage.record`, which is the inconsistency `0.3.0` closed —
+    the two writers used to spell one concept two ways.
+
+    Attributes:
+        seq_start: Absolute sequence number of the run's first byte.
+        ack: Cumulative acknowledgement in force, where known.
+
+    """
+
+    seq_start: int | None = None
+    ack: int | None = None
+
+
+@dataclass(frozen=True)
+class Decoded:
+    """What a record says about itself at the **decoded** layer.
+
+    Not a bag of leftovers: these are exactly the options the layer rule
+    governs. ``content_type`` MUST NOT appear at the transport layer, ``spans``
+    are the derived-file surface, and ``decoder`` is what resolves the layer in
+    the first place. The specification states two of them as one object —
+    ``provenance = { decoder, spans }`` — and the third is barred from the
+    other side of the same line.
+
+    So the grouping is the transport/decoded split the format is built on, and
+    a record either speaks to that layer or does not::
+
+        session.record(alice, ts=1000, payload=b"GET /",
+                       hints=zpf.Hints(seq_start=1001, ack=5001),
+                       decoded=zpf.Decoded(decoder=http,
+                                           content_type="mime:text/plain"))
+
+    It also leaves headroom: the next decoded-layer option the format adds
+    joins here rather than widening the signature, which is the policy
+    ``docs/dev/`` records.
+
+    Attributes:
+        decoder: The declared :class:`DecoderHandle` whose layer this record
+            belongs to. Absent means the transport layer, by the format's
+            layer rule.
+        content_type: ``mime:``/``prim:``/``dec:`` label for the payload —
+            what it **is**.
+        role: What the record **is**, in a vocabulary its decoder documents —
+            *which* field, where ``content_type`` says what kind. The two are
+            independent, and a record may carry either, both or neither.
+        spans: The input ranges these bytes correspond to. Every
+            ``zpf``-sourced record carries them, whether its stage created the
+            layer or preserved it.
+
+    """
+
+    decoder: DecoderHandle | None = None
+    content_type: str | None = None
+    role: str | None = None
+    spans: tuple[Span, ...] = ()
+
+
+@dataclass(frozen=True)
 class DerivedInput:
     """The output scaffolding :meth:`FileWriter.derive_from` built from an input.
 
@@ -195,63 +267,6 @@ class DerivedInput:
 
         """
         return self.participants[participant.session_id, participant.participant_id]
-
-
-def _derive_sequenced_basis(session: SessionReader, *, single_clock: bool) -> str:
-    """Say what a derived session's causal order actually rests on.
-
-    A derived stage's records are hint-less — decoding replaces `seq`/`ack`
-    with positional offsets — so a SEQUENCED one must name its basis, and
-    the honest answer is whatever the **input's** order rested on. Each
-    branch below is a different such answer, tried most-specific first.
-
-    Args:
-        session: The input session being mirrored.
-        single_clock: Whether the input file declares SINGLE_CLOCK.
-
-    Returns:
-        The ``sequenced_basis`` to declare on the output session.
-
-    Raises:
-        ZpfError: If nothing about the input supports a causal order. The
-            alternative would be naming a basis that is not true, which is
-            worse than refusing: a reader may act on the flag.
-
-    """
-    if len(session.participants) <= 1:
-        # Nothing to interleave, so nothing to get wrong.
-        return "trivial"
-    if _has_ordering_hints(session):
-        # The interleaving came from seq/ack happens-before edges, which
-        # are the transport protocol's, carried in the input's records.
-        return "protocol"
-    if session.sequenced and session.descriptor.sequenced_basis is not None:
-        # The input already answered this question; re-answering it
-        # differently would be a second account of the same order.
-        return session.descriptor.sequenced_basis
-    if single_clock:
-        # No edges, but the input asserts one trustworthy clock — which is
-        # exactly what the (timestamp, pid) merge needs to be sound.
-        return "clock"
-    msg = (
-        f"session {session.session_id} gives no basis for a causal order: its "
-        "records carry no seq/ack, it is not itself sequenced with a declared "
-        "basis, and the input file does not declare SINGLE_CLOCK. Order it "
-        "yourself and pass sequenced_basis explicitly, or derive it unsequenced"
-    )
-    raise ZpfError(msg)
-
-
-def _has_ordering_hints(session: SessionReader) -> bool:
-    """Whether any of the session's records carries a seq/ack hint.
-
-    Stops at the first hint, so the common TCP case is O(1) — the opening
-    record carries one. Only a genuinely hint-less session is walked in
-    full, and only when ``sequenced=`` was asked for.
-    """
-    return any(
-        record.seq_start is not None or record.ack is not None for record in session.records()
-    )
 
 
 def _allocate(used: set[int], explicit: int | None, hint: int) -> tuple[int, int]:
@@ -292,7 +307,6 @@ class FileWriter:
         produced_by: str | None = None,
         produced_at: int | datetime | None = None,
         transform_params_digest: str | None = None,
-        single_clock: bool = False,
         comment: str | None = None,
         face: Literal["binary", "jsonl"] = "binary",
     ) -> None:
@@ -318,7 +332,6 @@ class FileWriter:
         # option. Each session hands its own callback over, which is why
         # this is a list of closures rather than of writers.
         self._linearizing: list[Callable[[], None]] = []
-        flags = FileFlags.SINGLE_CLOCK if single_clock else FileFlags(0)
         self._header = FileHeader(
             tick_hz=tick_hz,
             time_epoch=time_epoch,
@@ -326,7 +339,6 @@ class FileWriter:
             produced_by=produced_by,
             produced_at=None if produced_at is None else unix_seconds(produced_at),
             transform_params_digest=transform_params_digest,
-            flags=flags,
             comment=comment,
         )
         self._emit(self._header)
@@ -375,7 +387,7 @@ class FileWriter:
                 allocated automatically when omitted.
 
         Returns:
-            The handle records, spans, and origins reference.
+            The handle records and spans reference.
 
         """
         if isinstance(kind, str):
@@ -438,7 +450,6 @@ class FileWriter:
         proto: str | None = None,
         key: str | None = None,
         sequenced: bool = False,
-        sequenced_basis: str | None = None,
         verify_order: bool = True,
         linearize: bool = False,
         external_session_id: bytes | None = None,
@@ -454,13 +465,6 @@ class FileWriter:
                 emit this session's records in a valid causal order. That
                 assertion is checked as the records are written; see
                 ``verify_order``.
-            sequenced_basis: What that order rests on — ``"clock"``,
-                ``"protocol"``, ``"external"`` or ``"trivial"``. Required
-                when a sequenced session's records carry no ``seq``/``ack``,
-                since then the order rests on nothing the file records. Safe
-                to set here even though hint-lessness is not settled until
-                the records are written: a producer names what it is
-                *relying on*, which it knows the moment it sets the flag.
             verify_order: Check, as each record is written, that a
                 ``sequenced`` session's stored order really is a valid
                 causal linearization — the per-participant ``seq_start``
@@ -511,7 +515,6 @@ class FileWriter:
                 proto=proto,
                 flow_key=key,
                 flags=flags,
-                sequenced_basis=sequenced_basis,
                 external_session_id=external_session_id,
                 comment=comment,
             )
@@ -565,16 +568,18 @@ class FileWriter:
                 sessions are opened with ``linearize=True``, so records are
                 buffered and interleaved when each session ends.
 
-                Derived records are hint-less — they carry no ``seq``/``ack``
-                — so each session must declare what its order rests on, and
-                that is **derived from the input** rather than guessed:
-                ``trivial`` for a single-participant session; ``protocol``
-                where the input's records carried TCP hints, since those
-                edges are what the order came from; the input's own
-                ``sequenced_basis`` where it declared one; and ``clock``
-                where the input file declares SINGLE_CLOCK. If none of those
-                holds, the input supports no causal order and this raises
-                rather than name a basis that is not true.
+                Derived records are hint-less — decoding replaces
+                ``seq``/``ack`` with positional offsets — so the flag is the
+                producer's assertion and nothing in the file justifies it.
+                Through `0.18` this method refused to set it unless the input
+                gave a basis it could name; `0.19` removed the option that
+                refusal stood on, so the assertion is now taken on the same
+                trust a reader already extends to the stored order itself.
+                What answers "where did this order come from" is the build
+                provenance of the file that set the flag —
+                ``produced_by``/``produced_at``, and
+                ``transform_params_digest`` where a merge's ordering key
+                lives — reached by walking ``zpf-input`` Sources back.
             comment: Free-text note for the Source.
 
         Returns:
@@ -605,11 +610,6 @@ class FileWriter:
                 key=session.key,
                 session_id=session.session_id,
                 sequenced=sequenced,
-                sequenced_basis=(
-                    _derive_sequenced_basis(session, single_clock=header.single_clock)
-                    if sequenced
-                    else None
-                ),
                 linearize=sequenced,
             )
             sessions[session.session_id] = out
@@ -768,6 +768,7 @@ class SessionWriter:
         self._default_source = default_source
         self.session_id = session_id
         self._pids: set[int] = set()
+        self._isn: dict[int, int] = {}  # per pid, for the placement guards
         self._next_pid = 0
         self._ended = False
         # Only a sequenced session has an order to keep, so only a sequenced
@@ -796,7 +797,6 @@ class SessionWriter:
         isn: int | None = None,
         tcp_role: TcpRole | None = None,
         identity: str | None = None,
-        origin: Origin | None = None,
         comment: str | None = None,
         pid: int | None = None,
     ) -> ParticipantHandle:
@@ -809,7 +809,6 @@ class SessionWriter:
                 handshake was observed.
             tcp_role: Which side opened the connection, when known.
             identity: Stable identity distinct from a transient endpoint.
-            origin: Input-stream mapping (pass-through files only).
             comment: Free-text note.
             pid: Explicit participant id; allocated automatically when
                 omitted.
@@ -828,36 +827,36 @@ class SessionWriter:
                 isn=isn,
                 tcp_role=tcp_role,
                 identity=identity,
-                origin=origin,
                 comment=comment,
             )
         )
         self._pids.add(chosen)
+        if isn is not None:
+            self._isn[chosen] = isn
         return ParticipantHandle(session_id=self.session_id, pid=chosen)
 
-    def record(  # noqa: PLR0913
-        # Twelve parameters, two over the limit. These are the Record block's
-        # own options and the format decides how many there are, so bundling
-        # some into a struct purely to get under a count would hide the
-        # block's shape rather than simplify it. The suppression is not the
-        # long-term answer either: restructuring both record() signatures is
-        # tracked for v0.3.0, where a break is allowed.
+    def record(
         self,
         sender: ParticipantHandle,
         ts: int,
         payload: bytes = b"",
         *,
         source: SourceHandle | None = None,
-        seq_start: int | None = None,
-        ack: int | None = None,
+        hints: Hints | None = None,
+        decoded: Decoded | None = None,
         ts_first: int | None = None,
         flags: RecordFlags | int = 0,
-        decoder: DecoderHandle | None = None,
-        content_type: str | None = None,
-        spans: tuple[Span, ...] = (),
         comment: str | None = None,
     ) -> None:
         """Write one record of this session.
+
+        **The signature is grouped by the format's own lines**, which is what
+        `#59 <https://github.com/adamkjonsson/python-zipline/issues/59>`_ asked
+        for. Twelve flat keywords became nine, and not by inventing bags: the
+        two bundles are the transport and decoded layers, which the format
+        already separates and states rules across. What stays flat is what
+        belongs to no layer — who sent it, when, the bytes, the source, the
+        flags, the note.
 
         Args:
             sender: The participant that sent these bytes.
@@ -866,8 +865,11 @@ class SessionWriter:
             payload: The payload bytes (empty for a pure-ACK record).
             source: Which declared Source the bytes came from; may be
                 omitted when the file declares exactly one.
-            seq_start: Absolute TCP sequence number of the first byte.
-            ack: The acknowledgement number from the wire.
+            hints: TCP ordering hints — see :class:`Hints`. Transport layer
+                only; a decoded record's offsets are positional.
+            decoded: What this record says about itself at the decoded layer —
+                see :class:`Decoded`: its decoder, its ``content_type``, and
+                the input ranges its bytes correspond to.
             ts_first: Time of the **first** packet contributing bytes to
                 this record, where ``ts`` is the last. Optional, and only
                 meaningful for a record coalesced from several packets.
@@ -877,19 +879,20 @@ class SessionWriter:
                 a ``zpf-input`` Source, so for a capture converter this is
                 the only place that time can be recorded.
             flags: Record flags.
-            decoder: The decoder that produced this record (decoded
-                records only; its presence is what makes a record decoded).
-            content_type: ``mime:``/``prim:``/``dec:`` payload label.
-            spans: Source ranges the bytes were built from.
             comment: Free-text note. **Free text**: nothing parses it and no
                 consumer may depend on its shape, so it is for a human
                 reading the file, not a channel for semantics another tool
-                will read back. A producer that needs a *load-bearing* name
-                per record — a protocol field path, say — is asking for
-                something the format does not yet have.
+                will read back. A producer wanting a name per record — a
+                protocol field, say — wants :class:`Decoded`'s ``role``, which
+                the format added in `0.17`: also opaque to it, but *declared*
+                to the decoder's vocabulary rather than promising nothing.
 
-        The one Record option without a keyword here (``extra_options``)
-        goes through :meth:`FileWriter.write_block`.
+        ``extra_options`` is the one Record option without a keyword here, and
+        the only hatch by design: it is for ids this library does not know, not
+        a way around one it does. It goes through
+        :meth:`FileWriter.write_block`. Where a *new* option belongs — a
+        keyword, :class:`Hints`, or :class:`Decoded` — is settled in
+        ``docs/dev/option-exposure.md``.
 
         """
         if sender.session_id != self.session_id:
@@ -899,6 +902,8 @@ class SessionWriter:
             )
             raise ZpfError(msg)
         resolved = source if source is not None else self._default_source()
+        wire = hints if hints is not None else Hints()
+        layer = decoded if decoded is not None else Decoded()
         block = Record(
             session_id=self.session_id,
             sender_pid=sender.pid,
@@ -906,12 +911,13 @@ class SessionWriter:
             timestamp=ts,
             payload=payload,
             flags=flags,
-            seq_start=seq_start,
-            ack=ack,
+            seq_start=wire.seq_start,
+            ack=wire.ack,
             ts_first=ts_first,
-            spans=spans,
-            decoder_id=None if decoder is None else decoder.decoder_id,
-            content_type=content_type,
+            spans=tuple(layer.spans),
+            decoder_id=None if layer.decoder is None else layer.decoder.decoder_id,
+            content_type=layer.content_type,
+            role=layer.role,
             comment=comment,
         )
         if self._pending is not None:
@@ -920,13 +926,71 @@ class SessionWriter:
         self._emit_record(block)
 
     def _emit_record(self, block: Record) -> None:
-        """Guard the stored order, then write."""
+        """Guard the record's placement and the stored order, then write."""
         # Before the emit, so a refused record is not written and the guard's
         # state stays consistent — the same block-isolation discipline the
         # ConformanceChecker follows.
+        self._guard_placement(block)
         if self._order is not None:
             self._order.observe(block)
         self._emit(block)
+
+    def _guard_placement(self, block: Record) -> None:
+        """Refuse a record this stream's offset space could not place.
+
+        Two shapes, and they do not have the same standing.
+
+        A **handshake record away from the origin** breaks a MUST: the format
+        fixes a ``syn``-flagged record at ``isn + 1``, the SYN consuming a
+        sequence number without delivering a byte. A reader meeting one accepts
+        and reports, but a *writer* is being told about its own output at the
+        moment it can still fix it, which is where the ordering guard above
+        draws the same line.
+
+        A **payload-carrying record below the origin** is where this goes
+        **beyond the standard**, and says so. `0.19` permits the file: the
+        record is unplaceable, its bytes are in no offset, and they are simply
+        excluded from the extent and from every coverage answer — "the price of
+        not trusting the wrapped offset", in the specification's words. No
+        producer wants to pay that price silently. The only instance anyone has
+        seen was a bug
+        (`#63 <https://github.com/adamkjonsson/python-zipline/issues/63>`_,
+        where every file zpfwire had ever written carried it), and a writer
+        that emits one is throwing its own bytes away. So this refuses, and the
+        error says it is stricter than the format requires.
+
+        Neither check lives in :class:`~zpf.ConformanceChecker`: the first is
+        advisory there rather than isolating, and the second is not the
+        specification's rule at all, which is the line ``CLAUDE.md`` draws
+        around that class.
+
+        Raises:
+            SemanticError: On either shape.
+
+        """
+        isn = self._isn.get(block.sender_pid)
+        if isn is None or block.seq_start is None:
+            return
+        origin = (isn + 1) % SEQ_SPACE
+        if block.flags & RecordFlags.SYN and block.seq_start != origin:
+            msg = (
+                f"a syn-flagged record MUST sit at the stream origin isn + 1 "
+                f"({origin}), got seq_start {block.seq_start}. The SYN consumes a "
+                f"sequence number without delivering a byte, which is why the origin "
+                f"is isn + 1 and not isn"
+            )
+            raise SemanticError(msg)
+        if block.payload and seq_lt(block.seq_start, origin):
+            msg = (
+                f"record with seq_start {block.seq_start} is below the stream origin "
+                f"{origin} (isn + 1), so its {len(block.payload)} payload byte(s) "
+                f"would be in no offset at all — excluded from the extent and from "
+                f"every coverage answer the file supports. **This refusal is stricter "
+                f"than the format**, which permits the file and asks a reader only to "
+                f"report the record; it is refused here because a writer discarding "
+                f"its own bytes is a bug at the point it can still be fixed"
+            )
+            raise SemanticError(msg)
 
     def _flush_pending(self) -> None:
         """Emit buffered records in causal order.
@@ -1068,7 +1132,6 @@ def create(
     produced_by: str | None = None,
     produced_at: int | datetime | None = None,
     transform_params_digest: str | None = None,
-    single_clock: bool = False,
     comment: str | None = None,
     face: Literal["binary", "jsonl"] = "binary",
 ) -> FileWriter:
@@ -1093,8 +1156,6 @@ def create(
             that produced records **without decoding** them — a filter, a
             reordering stage, a merge. A decode stage records its
             configuration on its Decoder instead.
-        single_clock: Assert every record is stamped against one
-            trustworthy clock (the SINGLE_CLOCK file flag).
         comment: Free-text note.
         face: ``"binary"`` (the canonical container) or ``"jsonl"``.
 
@@ -1111,7 +1172,6 @@ def create(
         produced_by=produced_by,
         produced_at=produced_at,
         transform_params_digest=transform_params_digest,
-        single_clock=single_clock,
         comment=comment,
         face=face,
     )

@@ -8,7 +8,7 @@
 0004  40 00 00 00              length = 64
 0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
 000C  00 00                    version_major = 0
-000E  10 00                    version_minor = 16
+000E  13 00                    version_minor = 19
 0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
 0018  12 00 0E 00              option 0x0012 produced_by, len = 14
 001C  7A 70 66 2D 64 65 63 6F  "zpf-decode 0.4"
@@ -108,7 +108,7 @@
 
 0174  11 00                    type   = 0x0011  Participant Descriptor
 0176  00 00                    reserved
-0178  34 00 00 00              length = 52
+0178  24 00 00 00              length = 36
 017C  0B 00 00 00 00 00 00 00  session_id = 11  (u64)
 0184  00 00                    participant_id = 0
 0186  00 00                    _reserved
@@ -118,29 +118,31 @@
 0197  00                       value padding
 0198  61 00 04 00              option 0x0061 isn, len = 4  (4000)
 019C  A0 0F 00 00
-01A0  64 00 0C 00              option 0x0064 origin, len = 12  (source 1, pid 0, session 8)
-01A4  01 00 00 00 08 00 00 00
-01AC  00 00 00 00
 
-01B0  20 00                    type   = 0x0020  Record
-01B2  00 00                    reserved
-01B4  30 00 00 00              length = 48
-01B8  0B 00 00 00 00 00 00 00  session_id = 11  (u64)
-01C0  00 00                    sender_pid = 0
-01C2  01 00                    source_id  = 1
-01C4  4C 04 00 00 00 00 00 00  timestamp  = 1100
-01CC  00 00                    _reserved  (u16 = 0)
-01CE  00 00                    flags      = 0x0000
-01D0  0A 00 00 00              payload_len = 10
-01D4  45 48 4C 4F 20 72 65 6C  "EHLO relay"
-01DC  61 79
-01DE  00 00                    payload padding
-01E0  70 00 04 00              option 0x0070 seq_start, len = 4  (4001)
-01E4  A1 0F 00 00
+01A0  20 00                    type   = 0x0020  Record
+01A2  00 00                    reserved
+01A4  50 00 00 00              length = 80
+01A8  0B 00 00 00 00 00 00 00  session_id = 11  (u64)
+01B0  00 00                    sender_pid = 0
+01B2  01 00                    source_id  = 1
+01B4  4C 04 00 00 00 00 00 00  timestamp  = 1100
+01BC  00 00                    _reserved  (u16 = 0)
+01BE  00 00                    flags      = 0x0000
+01C0  0A 00 00 00              payload_len = 10
+01C4  45 48 4C 4F 20 72 65 6C  "EHLO relay"
+01CC  61 79
+01CE  00 00                    payload padding
+01D0  70 00 04 00              option 0x0070 seq_start, len = 4  (4001)
+01D4  A1 0F 00 00
+01D8  80 00 1C 00              option 0x0080 spans, len = 28  (1 entry/entries)
+01DC  01 00 08 00 00 00 00 00
+01E4  00 00 00 00 00 00 00 00
+01EC  00 00 00 00 0A 00 00 00
+01F4  00 00 00 00
 
-01E8  41 00                    type   = 0x0041  End of file
-01EA  00 00                    reserved
-01EC  04 00 00 00              length = 4
-01F0  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
+01F8  41 00                    type   = 0x0041  End of file
+01FA  00 00                    reserved
+01FC  04 00 00 00              length = 4
+0200  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
 
-01F4                           (end of file, 500 bytes)
+0204                           (end of file, 516 bytes)

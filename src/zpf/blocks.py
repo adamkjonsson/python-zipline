@@ -39,7 +39,7 @@ _SWAPPED_MAGIC = 0x4650495A
 #: ``(version_major, version_minor)``. A writer stamps the version it
 #: implements; there is no obligation to compute the lowest version whose
 #: features a file happens to use.
-SPEC_VERSION: tuple[int, int] = (0, 16)
+SPEC_VERSION: tuple[int, int] = (0, 19)
 
 
 #: The canonical :class:`Undecoded` ``reason`` values, mapped to their
@@ -51,25 +51,27 @@ SPEC_VERSION: tuple[int, int] = (0, 16)
 #: follow the reference to fetch them; ``hole`` means the range has no bytes
 #: anywhere. ``undecodable`` and ``skipped`` differ in *intent*, not
 #: recoverability: the decoder tried and failed, versus declined on purpose.
+#:
+#: ``dropped`` arrived in ``0.17`` and is the odd one out. It shares its class
+#: with ``skipped`` and is distinguished only by *what the stage did*: content
+#: of the stream was **removed**, where ``skipped`` withheld something that
+#: carried no content (a byte-order mark, framing). The pair are byte-shaped
+#: alike, which is exactly why the word had to exist — it is the single-file
+#: signal that the survivors either side may not join, and the conformance
+#: checker's unmarked-break predicate tests for it. Since
+#: ``0.18`` a stage that removed content **MUST** spell it ``dropped``, with any
+#: further specificity in ``comment``; that is a deliberate qualification of an
+#: otherwise open vocabulary, and it exists so the word stays decidable.
 UNDECODED_REASONS: dict[str, str] = {
     "undecodable": "bytes",
     "skipped": "bytes",
+    "dropped": "bytes",
     "gap": "hole",
     "truncated": "hole",
 }
 
 #: The two recoverability classes a ``reason_class`` may name.
 REASON_CLASSES: frozenset[str] = frozenset({"bytes", "hole"})
-
-#: The defined ``sequenced_basis`` values. The vocabulary is open and a reader
-#: MUST NOT reject a session for a value it does not recognise — an unknown
-#: value simply means an unknown basis.
-#:
-#: ``trivial`` covers a session with one participant, or only one that ever
-#: sends: there was never a cross-participant order to get wrong. Recording a
-#: basis is unconditional even then, because what a producer is *relying on*
-#: is the one thing it always knows when it sets the flag.
-SEQUENCED_BASES: frozenset[str] = frozenset({"clock", "protocol", "external", "trivial"})
 
 
 def unsupported_version(version_major: int, version_minor: int) -> str | None:
@@ -144,13 +146,6 @@ class TcpRole(IntEnum):
     UNKNOWN = 0
     INITIATOR = 1
     RESPONDER = 2
-
-
-class FileFlags(IntFlag):
-    """File Header ``flags`` bitfield (u16)."""
-
-    SINGLE_CLOCK = 0x0001
-    """Every record in the file was stamped against one trustworthy clock."""
 
 
 class SessionFlags(IntFlag):
@@ -281,34 +276,6 @@ class InputExtent:
         )
 
 
-@dataclass(frozen=True)
-class Origin:
-    """The input stream a pass-through participant re-emits.
-
-    Ids are in the referenced source's namespace, exactly as a
-    :class:`Span`'s are.
-
-    Attributes:
-        source_id: A ``zpf-input`` Source declared in the citing file.
-        session_id: Session inside that source.
-        participant_id: Participant inside that source.
-
-    """
-
-    source_id: int
-    session_id: int
-    participant_id: int
-
-    def __post_init__(self) -> None:
-        _check_uint(self.source_id, 16, "source_id")
-        _check_uint(self.session_id, 64, "session_id")
-        _check_uint(self.participant_id, 16, "participant_id")
-
-    def pack(self) -> bytes:
-        """Return the 12-byte packed form (u16s lead for alignment)."""
-        return _frame.ORIGIN.pack(self.source_id, self.participant_id, self.session_id)
-
-
 # --- Option value codecs -----------------------------------------------------
 # Decoders raise ValueError / struct.error / UnicodeDecodeError / EncodeError
 # on values they cannot interpret; the parser then preserves the occurrence
@@ -383,21 +350,8 @@ def _unpack_tcp_role(value: bytes) -> TcpRole | int:
         return raw
 
 
-def _unpack_file_flags(value: bytes) -> FileFlags:
-    return FileFlags(_unpack_u16(value))
-
-
 def _unpack_session_flags(value: bytes) -> SessionFlags:
     return SessionFlags(_unpack_u16(value))
-
-
-def _unpack_origin(value: bytes) -> Origin:
-    source_id, participant_id, session_id = _frame.ORIGIN.unpack(value)
-    return Origin(source_id=source_id, session_id=session_id, participant_id=participant_id)
-
-
-def _pack_origin(value: Origin) -> bytes:
-    return value.pack()
 
 
 def _unpack_spans_chunk(value: bytes) -> tuple[Span, ...]:
@@ -650,7 +604,6 @@ class FileHeader(Block):
             stage, a merge. A decode stage's configuration lives on its
             :class:`Decoder` as ``params_digest`` instead; the two are separate
             because a file can be the output of one, the other, or neither.
-        flags: File-level flags (:class:`FileFlags`).
         comment: Free-text note.
         extra_options: Preserved unrecognized/duplicate option occurrences.
 
@@ -666,7 +619,6 @@ class FileHeader(Block):
     produced_by: str | None = None
     produced_at: int | None = None
     transform_params_digest: str | None = None
-    flags: FileFlags = FileFlags(0)
     comment: str | None = None
     extra_options: tuple[RawOption, ...] = ()
 
@@ -676,7 +628,6 @@ class FileHeader(Block):
         _OptSpec(_frame.OPT_CREATOR, "creator", _unpack_str, _pack_str),
         _OptSpec(_frame.OPT_PRODUCED_BY, "produced_by", _unpack_str, _pack_str),
         _OptSpec(_frame.OPT_PRODUCED_AT, "produced_at", _unpack_i64, _pack_i64),
-        _OptSpec(_frame.OPT_FILE_FLAGS, "flags", _unpack_file_flags, _pack_u16, skip_zero=True),
         _OptSpec(
             _frame.OPT_TRANSFORM_PARAMS_DIGEST,
             "transform_params_digest",
@@ -696,14 +647,7 @@ class FileHeader(Block):
             raise EncodeError(unsupported)
         _check_i64_opt(self.time_epoch, "time_epoch")
         _check_i64_opt(self.produced_at, "produced_at")
-        _check_uint(int(self.flags), 16, "flags")
-        object.__setattr__(self, "flags", FileFlags(self.flags))
         object.__setattr__(self, "extra_options", tuple(self.extra_options))
-
-    @property
-    def single_clock(self) -> bool:
-        """Whether the SINGLE_CLOCK file flag is set."""
-        return bool(self.flags & FileFlags.SINGLE_CLOCK)
 
     def _encode(self) -> bytes:
         body = _FILE_HEADER_BODY.pack(
@@ -871,9 +815,6 @@ class Session(Block):
         proto: Session protocol (lowercase; e.g. ``"tcp"``, ``"http"``).
         flow_key: Human-readable flow key, e.g. ``"a:port <-> b:port"``.
         flags: Session-level flags (:class:`SessionFlags`).
-        sequenced_basis: What a SEQUENCED hint-less session's order rests on;
-            see :data:`SEQUENCED_BASES`. Required on such a session, and
-            meaningless without the SEQUENCED flag.
         external_session_id: An identity assigned by something *outside* this
             format — a trace id, a capture orchestrator's UUID, a case number.
             **Opaque bytes, not text.** Nothing here interprets it, and a
@@ -890,7 +831,6 @@ class Session(Block):
     proto: str | None = None
     flow_key: str | None = None
     flags: SessionFlags = SessionFlags(0)
-    sequenced_basis: str | None = None
     external_session_id: bytes | None = None
     comment: str | None = None
     extra_options: tuple[RawOption, ...] = ()
@@ -902,7 +842,6 @@ class Session(Block):
         _OptSpec(
             _frame.OPT_SESSION_FLAGS, "flags", _unpack_session_flags, _pack_u16, skip_zero=True
         ),
-        _OptSpec(_frame.OPT_SEQUENCED_BASIS, "sequenced_basis", _unpack_str, _pack_str),
         _OptSpec(
             _frame.OPT_EXTERNAL_SESSION_ID, "external_session_id", _unpack_bytes, _pack_bytes
         ),
@@ -948,7 +887,6 @@ class Participant(Block):
         tcp_role: Which side opened the connection, when known. Advisory, so
             a value the enum does not define is carried as a plain ``int``
             and means "unknown" rather than being an error.
-        origin: Input stream mapping (pass-through files only).
         comment: Free-text note.
         extra_options: Preserved unrecognized/duplicate option occurrences.
 
@@ -962,7 +900,6 @@ class Participant(Block):
     isn: int | None = None
     identity: str | None = None
     tcp_role: TcpRole | int | None = None
-    origin: Origin | None = None
     comment: str | None = None
     extra_options: tuple[RawOption, ...] = ()
 
@@ -972,7 +909,6 @@ class Participant(Block):
         _OptSpec(_frame.OPT_ISN, "isn", _unpack_u32, _pack_u32),
         _OptSpec(_frame.OPT_IDENTITY, "identity", _unpack_str, _pack_str),
         _OptSpec(_frame.OPT_TCP_ROLE, "tcp_role", _unpack_tcp_role, _pack_u8),
-        _OptSpec(_frame.OPT_ORIGIN, "origin", _unpack_origin, _pack_origin),
     )
 
     def __post_init__(self) -> None:
@@ -1089,7 +1025,27 @@ class Record(Block):
         ts_first: Optional packet time of the first contributing packet.
         spans: Source ranges these bytes were built from.
         decoder_id: The decoder that produced this record (decoded records only).
-        content_type: What the payload is: ``mime:``/``prim:``/``dec:`` label.
+        content_type: What the payload **is**: ``mime:``/``prim:``/``dec:``
+            label.
+        role: What this record **is**, in a vocabulary scoped to its decoder's
+            ``name`` — the option `0.17` added for
+            `#58 <https://github.com/adamkjonsson/python-zipline/issues/58>`_.
+
+            **Independent of** ``content_type``, and that independence is the
+            whole point. Before it a decoder emitting one record per protocol
+            field could carry the *type* or the *name* and not both:
+            ``prim:u32`` lets a generic reader read every value and says
+            nothing about which field is the checksum, while ``dec:checksum``
+            names it and throws the normative typing away. Position is not a
+            contract either — an optional field the decoder later emits
+            renumbers everything after it.
+
+            Opaque to the format: it names a record and asserts no tree. Like
+            a ``dec:`` token it is **name-scoped**, read against the decoder
+            that ``decoder_id`` resolves to, so another decoder's
+            ``"checksum"`` is a different name. Decoded layer only, and
+            advisory there — see
+            :class:`~zpf.ConformanceChecker`.
         comment: Free-text note.
         extra_options: Preserved unrecognized/duplicate option occurrences.
 
@@ -1109,6 +1065,7 @@ class Record(Block):
     spans: tuple[Span, ...] = ()
     decoder_id: int | None = None
     content_type: str | None = None
+    role: str | None = None
     comment: str | None = None
     extra_options: tuple[RawOption, ...] = ()
 
@@ -1127,6 +1084,7 @@ class Record(Block):
         ),
         _OptSpec(_frame.OPT_DECODER_ID, "decoder_id", _unpack_u16, _pack_u16),
         _OptSpec(_frame.OPT_CONTENT_TYPE, "content_type", _unpack_str, _pack_str),
+        _OptSpec(_frame.OPT_ROLE, "role", _unpack_str, _pack_str),
     )
 
     def __post_init__(self) -> None:

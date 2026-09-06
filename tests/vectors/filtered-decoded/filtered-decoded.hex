@@ -8,7 +8,7 @@
 0004  40 00 00 00              length = 64
 0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
 000C  00 00                    version_major = 0
-000E  10 00                    version_minor = 16
+000E  13 00                    version_minor = 19
 0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
 0018  12 00 0E 00              option 0x0012 produced_by, len = 14
 001C  7A 70 66 2D 66 69 6C 74  "zpf-filter 0.1"
@@ -105,7 +105,7 @@
 0180  3C 00 00 00 00 00 00 00  off_start = 60
 0188  64 00 00 00 00 00 00 00  off_end   = 100
 0190  A0 00 07 00              option 0x00A0 reason, len = 7
-0194  73 6B 69 70 70 65 64     "skipped"
+0194  64 72 6F 70 70 65 64     "dropped"
 019B  00                       value padding
 019C  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
 01A0  01 00

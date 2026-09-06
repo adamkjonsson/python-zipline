@@ -90,7 +90,7 @@ with zpf.decode_stage(
         for segment in stream.segments():
             for start, end, kind in split_messages(segment.data):
                 dec.record(
-                    stream, segment.data[start:end], ts=segment.ts,
+                    stream, segment.data[start:end],
                     content_type=f"dec:http-{kind}",
                     cites=(segment.off_start + start, segment.off_start + end),
                 )
@@ -98,10 +98,17 @@ with zpf.decode_stage(
 
 Two details carry weight:
 
-- **`ts=`** is the record's time. Per the timestamp rule a reassembled unit's
-  time is the *completion* time of the last input record it came from — the
-  run's {attr}`Segment.ts <zpf.Segment.ts>` — so it is passed explicitly rather
-  than guessed.
+- **`ts=` is absent, and that is the point.** Omitted, it is derived from
+  `cites`, which is what the timestamp rule asks for: a decoded record carries
+  the completion time of the last input record **in its span set** — per unit,
+  not per run. Three messages arriving in three packets get three different
+  times even though reassembly offered them as one segment. Reaching for
+  {attr}`Segment.ts <zpf.Segment.ts>` here is the mistake
+  [#62](https://github.com/adamkjonsson/python-zipline/issues/62) reports, and
+  this guide taught it until `0.3.0`: the run's time is right only for a unit
+  that spans the whole run. Pass `ts=` explicitly where a record cites no
+  single range, and {meth}`Segment.ts_for <zpf.Segment.ts_for>` where you want
+  the number without letting the stage derive it.
 - **`cites=(off_start, off_end)`** mints the {class}`~zpf.Span` for you, filling
   in the input's `session_id`/`participant_id` from `stream`. A record can only
   ever cite the stream it was decoded from, which is impossible to get wrong by
@@ -118,9 +125,12 @@ output stores all of the client's records and then all of the server's. That is
 an order the input never had — and the input records the real one.
 
 Pass `sequenced=True` to get it back. Records are buffered per session and
-interleaved when it ends, keyed on `ts`, which is *already* the completion time
-of the last input record each payload came from — so ordering by it reproduces
-the input's timeline rather than approximating it:
+interleaved when it ends, keyed on `ts` — which, now that each unit carries its
+own completion time rather than its run's, really is the time the input records
+put on it. So ordering by it reproduces the input's timeline rather than
+approximating it. (With `ts=segment.ts` on every record of a run it did not:
+the whole run shared one stamp and the interleaving was as coarse as the
+reassembly.)
 
 ```python
 with zpf.decode_stage(..., sequenced=True) as dec:
@@ -128,13 +138,11 @@ with zpf.decode_stage(..., sequenced=True) as dec:
 ```
 
 Decoded records are hint-less — decoding replaces `seq`/`ack` with positional
-offsets — so each session must declare what its order rests on. The stage
-derives that from the input rather than guessing: `trivial` for a
-single-participant session, `protocol` where the input's records carried TCP
-hints (those edges are where the order came from), the input's own
-`sequenced_basis` where it declared one, and `clock` where the input file
-declares `SINGLE_CLOCK`. An input supporting none of them raises, rather than
-naming a basis that is not true — the flag is something a reader may act on.
+offsets — so nothing in the output records what its order rests on. Through
+`0.18` the stage had to name a basis, derived from the input, and refused an
+input that supported none. `0.19` removed the option and the refusal with it:
+the flag is the producer's assertion, and what identifies the run that made it
+is the output's own `produced_by` / `produced_at`.
 
 Two costs. The session is held in memory until it ends, so this suits a stage
 working per completed session rather than an open-ended one. And
@@ -207,6 +215,55 @@ TLS record's plaintext length cannot be recovered from the ciphertext. An
 absent width contributes 0 to the offset arithmetic, so the records either side
 sit adjacent; what the block asserts is not a length but that they **do not
 join**.
+
+### Naming a record: `role`
+
+`content_type` says what a payload **is**; `role` says **which** one it is, and
+the two are independent. A decoder emitting one record per protocol field needs
+both:
+
+```python
+for name, raw in (("version", v), ("length", n), ("checksum", c)):
+    dec.record(stream, raw, content_type="prim:u32", role=name,
+               cites=(off, off + 4))
+```
+
+Before `role` you had to choose. `content_type="prim:u32"` lets any consumer
+read every value and says nothing about which field is the checksum;
+`content_type="dec:checksum"` names it and throws the typing away, so nothing
+left in the file says the four records share a type. Position is not a contract
+either — an optional field the decoder later emits renumbers everything after
+it.
+
+**The vocabulary is the decoder's, and the format does not parse it.** `role`
+is read in the namespace of the decoder `name` that `decoder_id` resolves to,
+exactly as a `dec:` token is, so another decoder's `"checksum"` is a different
+name. A dotted path (`header.flags.qr`) is a convention two producers can agree
+on; the format sees an opaque string.
+
+**What it does not carry**, and both are deliberate:
+
+- **A width.** A field narrower or wider than 8/16/32/64 bits widens to the
+  smallest `prim:` token that holds it, and the true width is not recoverable
+  from the file. That is the same call the format already makes for byte order
+  ([zipline#105](https://github.com/adamkjonsson/zipline/issues/105)).
+- **A nesting relation.** A dotted path is a convention, not a tree the file
+  guarantees. Whether a record naming bytes an earlier record already emitted
+  is even a well-formed decoded stream is
+  [still open](https://github.com/adamkjonsson/zipline/issues/106); `role` is
+  compatible with any answer, which is why it did not wait for one.
+
+**Not `comment`.** That is free text by definition, so a consumer parsing it
+relies on something the format says means nothing. `role` is opaque to the
+format too, but its scope is *declared* — and a declared scope is exactly what
+separates a name from a note.
+
+Both labels are **decoded layer only**. A transport record carrying either is
+reported and the label ignored: its boundaries are wherever the reassembler
+chunked the stream, so a label asserting a unit is asserting something about a
+slice. `role` is the more tempting mistake of the two, because its vocabulary
+is open and `"segment"` reads as helpful where `prim:bytes` at least looks
+wrong.
 
 ## Reading payload content
 
@@ -315,8 +372,8 @@ with zpf.decode_stage(raw, sink, decoder=("http/1.1", "1.0"),
     json = dec.writer.add_decoder("json/1.0")  # a second decoder
     for stream in dec.streams():
         for segment in stream.segments():
-            dec.record(stream, headers, ts=segment.ts, cites=...)               # → http
-            dec.record(stream, body, ts=segment.ts, cites=..., decoder=json)    # → json
+            dec.record(stream, headers, cites=...)               # → http
+            dec.record(stream, body, cites=..., decoder=json)    # → json
 ```
 
 The same `decoder=` override is available on {meth}`~zpf.DecodeStage.undecoded`,

@@ -39,10 +39,10 @@ with zpf.decode_stage(
         for segment in stream.segments():
             for start, end, kind in split_messages(segment.data):
                 dec.record(
-                    stream, segment.data[start:end], ts=segment.ts,
+                    stream, segment.data[start:end],
                     content_type=f"dec:http-{kind}",
                     cites=(segment.off_start + start, segment.off_start + end),
-                )
+                )   # ts is derived from cites: per unit, not per run
 ```
 
 See [the orchestrator](../guides/decoding.md#writing-the-decode-stage) for
@@ -139,20 +139,14 @@ record its payload came from — so ordering by it *is* ordering by the input's
 timeline.
 
 Decoded records are hint-less (decoding replaces `seq`/`ack` with positional
-offsets), so each session must declare what its order rests on. That is derived
-from the input rather than guessed:
+offsets), so nothing in the output records what its order rests on. Through
+`0.18` the stage derived a basis from the input and raised where the input
+supported none; `0.19` removed the option, so the flag is asserted and the
+output's `produced_by` / `produced_at` say who asserted it.
 
-| Input | Declared basis |
-|-------|----------------|
-| one participant | `trivial` — nothing to interleave |
-| records carried `seq`/`ack` | `protocol` — the order came from those edges |
-| itself sequenced, with a basis | that same basis |
-| file declares `SINGLE_CLOCK` | `clock` |
-
-An input matching none of them supports no causal order, and the stage raises
-rather than claiming one. Two costs to know about: the session is held in memory
-until it ends, and `discontinuity()` is refused while `sequenced=True`, since a
-break's meaning is positional and reordering is exactly what would move it.
+Two costs to know about: the session is held in memory until it ends, and
+`discontinuity()` is refused while `sequenced=True`, since a break's meaning is
+positional and reordering is exactly what would move it.
 
 ## Where to go next
 

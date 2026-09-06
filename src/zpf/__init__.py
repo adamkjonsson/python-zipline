@@ -22,7 +22,6 @@ from zpf._frame import RawOption
 from zpf.binary import BlockReader, BlockWriter
 from zpf.blocks import (
     REASON_CLASSES,
-    SEQUENCED_BASES,
     SPEC_VERSION,
     UNDECODED_REASONS,
     Block,
@@ -30,11 +29,9 @@ from zpf.blocks import (
     Decoder,
     Discontinuity,
     End,
-    FileFlags,
     FileHeader,
     InputExtent,
     NameResolution,
-    Origin,
     OutputLayer,
     Participant,
     Record,
@@ -52,7 +49,7 @@ from zpf.blocks import (
 )
 from zpf.conformance import ConformanceChecker
 from zpf.content import PRIM_WIDTHS, ContentRegistry, ContentType, decode_prim
-from zpf.decode import DecodeStage, DecodeStream, Hints, Seam, decode_stage
+from zpf.decode import DecodeStage, DecodeStream, Seam, decode_stage
 from zpf.errors import (
     AdvisoryError,
     ContentError,
@@ -75,6 +72,7 @@ from zpf.order import causal_merge, record_end, seq_geq, seq_leq, seq_lt, verify
 from zpf.reader import FileReader, SessionReader, as_datetime, detect_face, open
 from zpf.reassembly import (
     Break,
+    Contribution,
     Datagram,
     Gap,
     Segment,
@@ -93,9 +91,11 @@ from zpf.transform import (
     rewrite_decoded,
 )
 from zpf.writer import (
+    Decoded,
     DecoderHandle,
     DerivedInput,
     FileWriter,
+    Hints,
     ParticipantHandle,
     SessionWriter,
     SourceHandle,
@@ -126,13 +126,13 @@ __all__ = [
     "DecodeStage",
     "DecodeStream",
     "Decoder",
+    "Decoded",
     "DecoderHandle",
     "DerivedInput",
     "Diagnostic",
     "Discontinuity",
     "EncodeError",
     "End",
-    "FileFlags",
     "FileHeader",
     "FileReader",
     "FileWriter",
@@ -143,13 +143,13 @@ __all__ = [
     "JsonlReader",
     "JsonlWriter",
     "NameResolution",
-    "Origin",
     "PRIM_WIDTHS",
     "Participant",
     "ParticipantHandle",
     "RawOption",
     "Record",
     "RecordFlags",
+    "Contribution",
     "Segment",
     "Seam",
     "SemanticError",
@@ -161,7 +161,6 @@ __all__ = [
     "Source",
     "SourceHandle",
     "REASON_CLASSES",
-    "SEQUENCED_BASES",
     "SPEC_VERSION",
     "UNDECODED_REASONS",
     "OutputLayer",

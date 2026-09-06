@@ -79,11 +79,10 @@ origin, so wall time, when you need it, is
 Capture time keeps replay deterministic: live and offline runs of the same
 traffic order identically, regardless of when the file was written.
 
-One file-level flag qualifies the clock: `SINGLE_CLOCK` asserts that every
-record in the file was stamped against *one trustworthy clock*, so
-timestamps are comparable across sessions and sources. It matters for
-sequencing sessions that have no better ordering signal — see the next
-section.
+Nothing in the file says whether its timestamps are comparable across
+sessions and sources. A `SINGLE_CLOCK` header flag asserted that through
+`0.18`; `0.19` removed it, so a consumer comparing timestamps from two
+sources is relying on something the format does not state.
 
 ## Ordering: why timestamps are not enough
 
@@ -126,10 +125,12 @@ or `zpf validate --verify` on the command line).
 
 A session with no seq/ack hints (chat, one-way UDP) has no causal edges, so
 its sequenced order rests on something the file does not otherwise record.
-A producer must not mark such a session `SEQUENCED` without a sound basis,
-and must name that basis in **`sequenced_basis`** — `clock` (the
-`SINGLE_CLOCK` case), `protocol`, `external`, or `trivial` when there was
-never a cross-participant order to get wrong. See the
+Through `0.18` a producer had to name that basis in a `sequenced_basis`
+option; `0.19` removed it, and `SEQUENCED` became a bare assertion, taken on
+the same trust a reader already extends to the stored order itself — which it
+cannot check either. When an order looks wrong, what identifies it is the
+build provenance of the file that set the flag: `produced_by`, `produced_at`,
+and `transform_params_digest` where a merge's ordering key lives. See the
 [ordering guide](guides/ordering.md#what-a-hint-less-sequenced-session-rests-on).
 
 Setting the flag is a promise, so this library checks it as you make it:
@@ -208,19 +209,24 @@ sideB.zpf ─┘              (preserves)         ├─[ annotate ]──▶ an
   file it re-emits the decoded records unchanged, `decoder_id` values and
   Undecoded blocks included.
 
-**The discriminator is `spans` versus `origin`, not `decoder_id`.** A record
-carrying `spans` was built by this file's stage; a record without them, whose
-participant carries `origin`, was re-emitted from the input. `decoder_id`
-answers a different question — *which decoder's layer* a record belongs to —
-and a pass-through carries inherited ones forward, so it says nothing about
-which stage ran.
+**Every `zpf`-sourced record carries `spans`.** That is the whole provenance
+rule, and it holds for both kinds: a decode stage's spans name the input
+ranges its unit *corresponds to*, a pass-through's are an **identity span** —
+the same range in as out — naming what it re-emitted unchanged. A record that
+names a `zpf-input` source and carries no spans says nothing about which
+stream inside it the bytes came from, and a reader may isolate it.
 
-**It binds per participant, so one file may do both.** A participant must not
-both carry `origin` and hold records carrying `spans` — one stream is created
-or preserved, never half of each — but across streams there is no such rule. A
-transform that decodes one session while passing another through is ordinary:
-it is what a tool does when it has a decoder for one protocol and not the
-other.
+**Which kind a stream is, is read from the spans**, not from an option.
+Identity spans preserve a layer, anything else creates one. Through `0.18` a
+pass-through's participants carried an `origin` option and its records carried
+no spans at all; `0.19` removed it, and four rules that policed the pair
+collapsed into the one sentence above. `decoder_id` answers a different
+question — *which decoder's layer* a record belongs to — and a pass-through
+carries inherited ones forward, so it says nothing about which stage ran.
+
+**It binds per participant, so one file may do both.** A transform that
+decodes one session while passing another through is ordinary: it is what a
+tool does when it has a decoder for one protocol and not the other.
 
 Two shapes are easier to misplace than they look, and both *create*:
 
@@ -325,9 +331,11 @@ of an Undecoded block — that one is about the input, this one about what
 was produced — and it discharges no coverage obligation. See
 [provenance](guides/provenance.md#each-layer-has-its-own-offset-space).
 
-Pass-through files carry no spans; instead every participant maps back to
-its input stream with a single **origin** reference, and offset preservation
-does the rest.
+A pass-through carries spans too — identity ones, the same range in as out.
+Because it cites its inputs, it is answerable for their coverage exactly as a
+decode stage is: {func}`zpf.merge_files <zpf.transform.merge_files>` marks the
+holes in a hinted input's offset space `gap` and declares each input stream's
+extent.
 
 ## Two faces of one model
 

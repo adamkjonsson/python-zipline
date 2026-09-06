@@ -9,7 +9,7 @@ from test_golden import GOLDEN_BLOCKS
 from test_jsonl import DECODED_EXAMPLE, MERGED_EXAMPLE
 
 import zpf
-from zpf.blocks import Origin, Span
+from zpf.blocks import Span
 
 HEADER = zpf.FileHeader(tick_hz=1)
 DERIVED_HEADER = zpf.FileHeader(tick_hz=1, produced_by="tool 1.0", produced_at=1_719_500_000)
@@ -18,7 +18,8 @@ INP = zpf.Source(source_id=2, kind=zpf.SourceKind.ZPF_INPUT)
 DEC = zpf.Decoder(decoder_id=3, name="http/1.1")
 SESS = zpf.Session(session_id=5)
 PART = zpf.Participant(session_id=5, participant_id=0)
-ORIGIN = Origin(source_id=2, session_id=9, participant_id=0)
+IDENTITY = Span(source_id=2, session_id=9, participant_id=0, off_start=0, off_end=1)
+"""An identity span: the range a pass-through re-emitted unchanged."""
 
 
 def raw_record(**kwargs: object) -> zpf.Record:
@@ -314,33 +315,33 @@ def finished(*blocks: zpf.Block) -> zpf.ConformanceChecker:
     return checker
 
 
-def test_a_hintless_sequenced_session_must_record_its_basis():
-    # The rule cannot fire when the Session Descriptor is read: whether the
-    # session is hint-less is a property of its *records*, and
-    # declare-on-first-use puts the descriptor before them.
-    checker = accept(*hintless_session())  # nothing raised yet
-    with pytest.raises(zpf.SemanticError, match="sequenced_basis"):
-        checker.finish()
+def test_a_hintless_sequenced_session_owes_nothing_since_0_19():
+    """Package B: SEQUENCED is a bare assertion, taken on trust.
 
+    Through `0.18` a sequenced session whose records carried no ``seq``/``ack``
+    MUST have named what its order rested on, and the rule could only be ruled
+    on at Session End — hint-lessness being a property of the *records*, which
+    declare-on-first-use puts after the descriptor. `0.19` removed the option
+    and the rule with it, so the producer is trusted for the basis exactly as
+    it already was for the order itself, which a reader cannot check either.
 
-def test_the_basis_requirement_is_settled_at_session_end():
+    Both moments are asserted, because both used to raise.
+    """
     checker = accept(*hintless_session())
-    with pytest.raises(zpf.SemanticError, match="sequenced_basis"):
-        checker.observe(zpf.SessionEnd(session_id=5))
+    checker.finish()  # was: SemanticError naming sequenced_basis
+
+    checker = accept(*hintless_session())
+    checker.observe(zpf.SessionEnd(session_id=5))  # was: the same, one block earlier
 
 
-def test_any_hint_anywhere_means_the_session_is_not_hintless():
-    # One hint yields causal edges, so the order rests on something the file
-    # already records and no basis is owed. An ack alone counts.
+def test_a_hint_anywhere_is_still_not_a_conformance_question():
+    # Kept from the basis rule's tests because the shapes are worth holding:
+    # a session carrying seq or ack, and one carrying neither, are all
+    # accepted, and nothing about SEQUENCED changes that.
     finished(HEADER, CAP, zpf.Session(session_id=5, flags=zpf.SessionFlags.SEQUENCED),
              PART, raw_record(seq_start=1000))
     finished(HEADER, CAP, zpf.Session(session_id=5, flags=zpf.SessionFlags.SEQUENCED),
              PART, raw_record(ack=1000))
-
-
-def test_a_basis_satisfies_the_requirement():
-    for basis in sorted(zpf.SEQUENCED_BASES):
-        finished(*hintless_session(sequenced_basis=basis))
 
 
 def test_an_unsequenced_session_owes_no_basis():
@@ -391,28 +392,54 @@ def test_recoverability_is_unknown_without_a_class():
     assert undecoded(reason="rtp-seq-gap").recoverability is None
 
 
-def test_pass_through_records_carry_no_spans():
-    # spans versus origin *is* the discriminator, so a record carrying spans
-    # in a file whose participants carry origin is a kind conflict rather
-    # than a rule of its own.
-    span = Span(source_id=2, session_id=9, participant_id=0, off_start=0, off_end=1)
+def test_every_zpf_sourced_record_carries_spans():
+    """Package A: one per-record rule where `0.18` had four per-participant.
+
+    The four it replaces all keyed on the ``origin`` option `0.19` removed:
+    every pass-through participant carries exactly one; it MUST NOT appear on
+    a capture-sourced stream; a participant MUST NOT carry both origin and
+    records with spans; a ``zpf``-sourced participant MUST be one or the
+    other. What is left is that a record naming a ``zpf-input`` Source says
+    which stream inside it the bytes came from, and ``spans`` is how.
+
+    It also fires **earlier**. Those were properties of a participant's whole
+    record set, so the checker could only rule at Session End; this is
+    decidable at the record, which is the block a lenient reader isolates.
+    """
     reject(
-        DERIVED_HEADER, INP, SESS,
-        zpf.Participant(session_id=5, participant_id=0, origin=ORIGIN),
-        raw_record(source_id=2, spans=(span,)),
-        match="carries origin and holds records carrying spans",
+        DERIVED_HEADER, INP, SESS, PART,
+        raw_record(source_id=2),
+        match="carries no spans",
+    )
+    # It binds on zpf-sourced records alone: a capture-sourced record
+    # correctly carries none, its source_id being the whole of its provenance.
+    finished(HEADER, CAP, SESS, PART, raw_record())
+
+
+def test_a_pass_through_states_its_provenance_with_an_identity_span():
+    """The shape that replaced ``origin``, and the rule reads it the same way.
+
+    A preserved record's span names the range it re-emitted unchanged — the
+    same range in as out. Nothing here distinguishes it from a decode stage's
+    span, and that is the point: one rule covers both, and which kind of stage
+    wrote a stream is read from whether the spans are identity rather than
+    from which option is present.
+    """
+    finished(
+        DERIVED_HEADER, INP, SESS, PART,
+        raw_record(source_id=2, spans=(IDENTITY,)),
     )
 
 
 def test_decoder_id_decides_neither_axis():
     # A pass-through preserving a decoded layer: records keep decoder_id and
-    # content_type but carry no spans, provenance is the participants'
-    # origin, and inherited Undecoded blocks ride along. 0.9 could not
-    # express this, and a strict 0.9 reader refuses it.
+    # content_type, provenance is an identity span, and inherited Undecoded
+    # blocks ride along. 0.9 could not express this, and a strict 0.9 reader
+    # refuses it.
     finished(
-        DERIVED_HEADER, INP, DEC, SESS,
-        zpf.Participant(session_id=5, participant_id=0, origin=ORIGIN),
-        raw_record(source_id=2, decoder_id=3, content_type="dec:request"),
+        DERIVED_HEADER, INP, DEC, SESS, PART,
+        raw_record(source_id=2, decoder_id=3, content_type="dec:request",
+                   spans=(IDENTITY,)),
         zpf.Undecoded(source_id=2, session_id=9, participant_id=0, off_start=0, off_end=4),
     )
 
@@ -438,62 +465,16 @@ def test_a_records_spans_name_a_zpf_input_source():
     )
 
 
-# --- Pass-through origins ------------------------------------------------------------
-
-
-def test_origin_on_a_capture_sourced_stream_is_a_violation():
-    """Binds per stream, so the origin and the capture record must be one.
-
-    Under the file-wide rule these could sit on *different* participants
-    and still conflict. They cannot now, and should not: a file may hold a
-    preserved stream beside a captured one. What stays forbidden is one
-    stream claiming both — a capture-sourced stream's ``source_id`` is the
-    whole of its provenance.
-    """
-    reject(
-        DERIVED_HEADER, CAP, INP, SESS,
-        zpf.Participant(session_id=5, participant_id=0, origin=ORIGIN),
-        raw_record(source_id=1),
-        match="carries origin, but its records are capture-sourced",
-    )
-
-
-def test_a_zpf_sourced_stream_must_be_created_or_preserved():
-    """Neither is a violation of its own since 0.16, and it binds per stream.
-
-    A participant with no ``origin`` whose records carry no ``spans`` names
-    no provenance for its bytes at all: nothing resolves one level down and
-    no coverage obligation can be computed in either direction. It used to
-    be reachable only as a file-kind conflict, which meant a file with one
-    such stream and nothing else to conflict with passed.
-    """
-    reject(
-        DERIVED_HEADER, INP, SESS, PART,
-        raw_record(source_id=2),
-        match="neither origin nor records with spans",
-    )
-    # It binds on zpf-sourced streams alone: a capture-sourced participant
-    # correctly carries neither, and its source_id is the whole of its
-    # provenance.
-    finished(HEADER, CAP, SESS, PART, raw_record())
-
-
-def test_origin_must_reference_a_zpf_input_source():
-    bad_origin = Origin(source_id=1, session_id=9, participant_id=0)
-    reject(
-        DERIVED_HEADER, CAP, INP, SESS,
-        zpf.Participant(session_id=5, participant_id=0, origin=bad_origin),
-        match="zpf-input",
-    )
-
-
 # --- Derived header, reserved bits, prim widths ----------------------------------------
 
 
 def test_derived_files_must_declare_their_provenance():
+    # The record carries spans, so it clears the provenance rule and reaches
+    # the one this test is about. Without them the spans rule fires first and
+    # the assertion passes for the wrong reason.
     reject(
         HEADER, INP, DEC, SESS, PART,
-        raw_record(source_id=2, decoder_id=3),
+        raw_record(source_id=2, decoder_id=3, spans=(IDENTITY,)),
         match="produced_by and produced_at",
     )
 
@@ -503,7 +484,9 @@ def test_reserved_flag_bits_are_not_a_violation():
     # types and unknown option ids: part of the extension mechanism, "not a
     # violation ... the normal, conformant path". Every flags field is
     # therefore accepted in silence, and the bit survives uninterpreted.
-    accept(zpf.FileHeader(tick_hz=1, flags=zpf.FileFlags(0x0002)))
+    # The File Header lost its flags field with SINGLE_CLOCK in 0.19, so a
+    # reserved bit there is now an unknown *option* instead — the other arm
+    # of the same extension mechanism, covered by the escape tests.
     accept(HEADER, zpf.Session(session_id=5, flags=zpf.SessionFlags(0x0002)))
     accept(*RAW_PRELUDE, raw_record(flags=zpf.RecordFlags(0x2000)))
     accept(*RAW_PRELUDE, raw_record(flags=zpf.RecordFlags(0x2000) | zpf.RecordFlags.PSH))
@@ -513,10 +496,6 @@ def test_a_block_with_reserved_bits_is_still_absorbed():
     # The cascade this prevents: a dropped File Header would make every later
     # block "first block must be a File Header", emptying the whole file, and
     # a dropped Session Descriptor would take its participants and records.
-    checker = accept(zpf.FileHeader(tick_hz=1, flags=zpf.FileFlags(0x0002)))
-    checker.check([CAP, SESS, PART, raw_record()])  # the header counted; the file reads on
-    checker.finish()
-
     checker = accept(HEADER, CAP, zpf.Session(session_id=5, flags=zpf.SessionFlags(0x0002)))
     checker.check([PART, raw_record()])  # the session counted; its records belong to it
 
@@ -618,7 +597,12 @@ def test_writers_still_refuse_an_advisory_violation():
         session = writer.begin_session(session_id=5)
         sender = session.participant("a")
         with pytest.raises(zpf.AdvisoryError, match="not a legal prim: token"):
-            session.record(sender, ts=0, payload=b"abcd", content_type="prim:u128")
+            session.record(
+                sender,
+                ts=0,
+                payload=b"abcd",
+                decoded=zpf.Decoded(content_type="prim:u128"),
+            )
 
 
 # --- Blocks a raw file may not carry (0.13/0.14) ------------------------------
@@ -784,18 +768,22 @@ def test_span_on_span_overlap_is_legal():
 
 
 def test_a_pass_through_is_not_held_to_the_coverage_guarantee():
-    """It re-emits records rather than citing them, so it has no spans.
+    """A file answers for an input stream **some record of it cited**.
 
-    Holding it to a decode stage's obligation would read the space before its
-    inherited Undecoded blocks as an unaccounted hole — which is how three
-    conformant vectors would fail.
+    Through `0.18` this test held a pass-through, which cited nothing, and the
+    gate existed to keep a decode stage's obligation off it. Since `0.19` a
+    pass-through cites everything, so the shape that still needs the gate is
+    the other one the specification names: a ``zpf-input`` Source declared
+    only so that an *inherited* Undecoded block still resolves. No record's
+    spans name it, so this file is not answerable for it, and the region
+    below the block is not an unaccounted hole.
     """
-    origin = Origin(source_id=2, session_id=7, participant_id=0)
     checker = finished(
-        DERIVED_HEADER, INP, DEC, SESS,
-        zpf.Participant(session_id=5, participant_id=0, origin=origin),
+        DERIVED_HEADER, INP, DEC, SESS, PART,
         zpf.Record(session_id=5, sender_pid=0, source_id=2, timestamp=0,
-                   payload=b"x", decoder_id=3),
+                   payload=b"x", decoder_id=3,
+                   spans=(Span(source_id=2, session_id=9, participant_id=0,
+                               off_start=0, off_end=1),)),
         zpf.Undecoded(source_id=2, session_id=7, participant_id=0,
                       off_start=100, off_end=139, reason="undecodable"),
     )
@@ -812,13 +800,13 @@ def test_one_file_may_decode_one_stream_and_pass_another_through():
     other two dishonest options: pass everything through, or mark the second
     stream entirely Undecoded, which drops those bytes from the output.
     """
-    span = Span(source_id=2, session_id=9, participant_id=0, off_start=0, off_end=1)
+    created = Span(source_id=2, session_id=9, participant_id=0, off_start=0, off_end=40)
     finished(
         DERIVED_HEADER, INP, DEC, SESS,
         zpf.Participant(session_id=5, participant_id=0),  # created
-        zpf.Participant(session_id=5, participant_id=1, origin=ORIGIN),  # preserved
-        raw_record(source_id=2, sender_pid=0, decoder_id=3, spans=(span,)),
-        raw_record(source_id=2, sender_pid=1, decoder_id=3),
+        zpf.Participant(session_id=5, participant_id=1),  # preserved
+        raw_record(source_id=2, sender_pid=0, decoder_id=3, spans=(created,)),
+        raw_record(source_id=2, sender_pid=1, decoder_id=3, spans=(IDENTITY,)),
     )
 
 
@@ -879,8 +867,8 @@ def test_a_capture_only_file_may_not_carry_a_transform_params_digest():
     finished(
         zpf.FileHeader(tick_hz=1, produced_by="t", produced_at=1,
                        transform_params_digest="sha256:ab"),
-        INP, SESS, zpf.Participant(session_id=5, participant_id=0, origin=ORIGIN),
-        raw_record(source_id=2),
+        INP, SESS, PART,
+        raw_record(source_id=2, spans=(IDENTITY,)),
     )
 
 
@@ -988,4 +976,121 @@ def test_overlapping_spans_are_reduced_by_max_and_min():
         _unit(_range(0, 100), _range(80, 150)),  # A = max(100, 150) = 150
         _hole(100, 139),
         _unit(_range(120, 200), _range(150, 260), ts=1),  # B = min(120, 150) = 120
+    )
+
+
+# --- Placement: the report and the handshake shape (#63) -------------------------------
+
+
+def anchored(*records: zpf.Block, isn: int | None = 1000) -> zpf.ConformanceChecker:
+    """Feed a capture session whose participant declares ``isn``."""
+    checker = zpf.ConformanceChecker()
+    checker.check([
+        HEADER, CAP,
+        zpf.Session(session_id=5),
+        zpf.Participant(session_id=5, participant_id=0, isn=isn),
+    ])
+    for record in records:
+        checker.observe(record)
+    return checker
+
+
+def notes(*records: zpf.Block, isn: int | None = 1000) -> list[str]:
+    """Return the placement notes the last of ``records`` produced."""
+    checker = anchored(*records, isn=isn)
+    return list(checker.unplaceable_notes)
+
+
+def test_a_below_origin_record_is_noted_and_not_a_violation():
+    """`0.19` withdrew the MUST NOT and kept the effect, so this reports only.
+
+    Raising here — or reporting it as advisory — would make a checking writer
+    refuse a block the format permits, and would fail `unplaceable-below-origin`,
+    which declares zero violations on the accept tier.
+    """
+    reported = notes(raw_record(seq_start=1000, payload=b"LOSTBYTE"))
+    assert len(reported) == 1
+    assert "below the stream origin 1001" in reported[0]
+    assert "excluded from the extent" in reported[0]
+
+
+def test_a_record_at_the_origin_is_placeable():
+    assert notes(raw_record(seq_start=1001, payload=b"AAAA")) == []
+
+
+def test_a_hintless_record_on_an_anchored_stream_is_noted():
+    assert len(notes(raw_record(seq_start=None, payload=b"x"))) == 1
+    # ...and on a stream with no isn and no earlier hint, it is not: nothing
+    # says that stream is sequence-anchored at all.
+    assert notes(raw_record(seq_start=None, payload=b"x"), isn=None) == []
+
+
+def test_an_earlier_hint_anchors_the_stream_for_what_follows():
+    checker = anchored(raw_record(seq_start=1001, payload=b"AAAA"), isn=None)
+    checker.observe(raw_record(seq_start=None, payload=b"x"))
+    assert len(checker.unplaceable_notes) == 1
+
+
+def test_a_syn_away_from_the_origin_is_advisory():
+    """A MUST on the writer whose breach costs a reader the handshake's timing.
+
+    Advisory wherever the record sits, which `0.18` settled: `0.17` had left a
+    syn *above* the origin isolatable while the shape that wrecks the offset
+    space was accept-and-report, which inverted the strengths against the
+    damage.
+    """
+    for seq_start in (1000, 1007):
+        with pytest.raises(zpf.AdvisoryError, match="handshake record MUST sit"):
+            anchored(raw_record(
+                seq_start=seq_start, payload=b"", flags=zpf.RecordFlags.SYN,
+            ))
+    # At the origin it is the shape the format describes.
+    anchored(raw_record(seq_start=1001, payload=b"", flags=zpf.RecordFlags.SYN))
+
+
+def test_a_syn_below_the_origin_is_both_advisory_and_unplaceable():
+    """#63's actual file: one record, two true things said about it."""
+    checker = zpf.ConformanceChecker()
+    checker.check([
+        HEADER, CAP, zpf.Session(session_id=5),
+        zpf.Participant(session_id=5, participant_id=0, isn=1000),
+    ])
+    with pytest.raises(zpf.AdvisoryError, match="handshake record MUST sit"):
+        checker.observe(raw_record(seq_start=1000, payload=b"", flags=zpf.RecordFlags.SYN))
+    # The note is recorded even though the advisory finding raised: the block
+    # was fully absorbed before `observe` reported it, which is the same
+    # ordering that lets a lenient reader keep an advisory block.
+    assert len(checker.unplaceable_notes) == 1
+
+
+# --- role at the transport layer: one check, two labels (#58) --------------------------
+
+
+def test_either_label_at_the_transport_layer_is_advisory():
+    """One rule, one strength, one check — the format states it once.
+
+    A transport record's boundaries are wherever the reassembler chunked the
+    stream, so both labels assert a unit where there is a slice. Advisory
+    rather than isolating, because dropping a label loses nothing and the
+    record stays fully readable.
+    """
+    for label in ({"content_type": "prim:bytes"}, {"role": "segment"}):
+        with pytest.raises(zpf.AdvisoryError, match="MUST NOT carry"):
+            accept(*RAW_PRELUDE, raw_record(**label))
+
+
+def test_both_labels_at_once_are_one_finding():
+    """A block with several advisory findings reports them in one message."""
+    with pytest.raises(zpf.AdvisoryError) as caught:
+        accept(*RAW_PRELUDE, raw_record(content_type="prim:bytes", role="segment"))
+    assert "content_type" in str(caught.value)
+    assert "role" in str(caught.value)
+
+
+def test_role_at_the_decoded_layer_is_silent():
+    """Where it belongs, it is not a finding at all."""
+    finished(
+        DERIVED_HEADER, INP, DEC, SESS, PART,
+        raw_record(source_id=2, decoder_id=3, payload=b"\x00\x00\x00\x07",
+                   content_type="prim:u32", role="checksum", spans=(IDENTITY,)),
     )

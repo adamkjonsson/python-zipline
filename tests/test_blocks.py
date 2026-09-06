@@ -20,7 +20,6 @@ FULL_BLOCKS = [
         creator="test 1.0",
         produced_by="zpf-merge 1.2",
         produced_at=1_719_510_000,
-        flags=zpf.FileFlags.SINGLE_CLOCK,
         comment="a header",
     ),
     zpf.Source(
@@ -52,7 +51,6 @@ FULL_BLOCKS = [
         isn=0xFFFF_FFFF,
         identity="alice",
         tcp_role=zpf.TcpRole.INITIATOR,
-        origin=zpf.Origin(source_id=1, session_id=3, participant_id=0),
         comment="a participant",
     ),
     zpf.SessionEnd(session_id=7, reason="fin", comment="an end"),
@@ -110,28 +108,36 @@ def test_record_payload_padding(payload_len: int):
 
 
 def test_flag_conveniences():
-    assert zpf.FileHeader(tick_hz=1, flags=zpf.FileFlags.SINGLE_CLOCK).single_clock
-    assert not zpf.FileHeader(tick_hz=1).single_clock
     assert zpf.Session(session_id=1, flags=zpf.SessionFlags.SEQUENCED).sequenced
     assert not zpf.Session(session_id=1).sequenced
 
 
 def test_zero_flags_options_are_omitted():
-    assert _frame.OPT_FILE_FLAGS not in _option_ids(zpf.FileHeader(tick_hz=1))
     assert _frame.OPT_SESSION_FLAGS not in _option_ids(zpf.Session(session_id=1))
 
 
-def test_sequenced_basis_round_trips():
-    session = zpf.Session(
-        session_id=1, flags=zpf.SessionFlags.SEQUENCED, sequenced_basis="trivial"
+def test_the_options_0_19_removed_survive_as_raw_options():
+    """Package B leaves ``0x0014`` and ``0x0053`` unknown, not rejected.
+
+    Both were real options through `0.18`, and a file stamped `0.19` may not
+    carry them — but the block model must still round-trip an id it does not
+    know, which is the escape contract and the reason a removal costs a reader
+    nothing. So this asserts the mechanism rather than the options: neither id
+    is parsed into a field, and both survive in ``extra_options`` byte-exact.
+    """
+    header = zpf.FileHeader(
+        tick_hz=1, extra_options=(zpf.RawOption(option_id=0x0014, value=b"\x01\x00"),)
     )
-    assert _frame.OPT_SEQUENCED_BASIS in _option_ids(session)
-    assert zpf.Session.from_content(session.to_bytes()).sequenced_basis == "trivial"
-    # Open vocabulary: an unrecognised basis means an unknown one, not an
-    # invalid one, so it survives unchanged.
-    exotic = zpf.Session(session_id=1, sequenced_basis="ask-the-operator")
-    assert zpf.Session.from_content(exotic.to_bytes()).sequenced_basis == "ask-the-operator"
-    assert "trivial" in zpf.SEQUENCED_BASES
+    back = zpf.FileHeader.from_content(header.to_bytes())
+    assert [(o.option_id, o.value) for o in back.extra_options] == [(0x0014, b"\x01\x00")]
+    assert not hasattr(back, "flags")
+
+    session = zpf.Session(
+        session_id=1, extra_options=(zpf.RawOption(option_id=0x0053, value=b"clock"),)
+    )
+    back_session = zpf.Session.from_content(session.to_bytes())
+    assert [(o.option_id, o.value) for o in back_session.extra_options] == [(0x0053, b"clock")]
+    assert not hasattr(back_session, "sequenced_basis")
 
 
 def test_reason_class_round_trips():

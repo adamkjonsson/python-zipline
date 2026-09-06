@@ -100,8 +100,7 @@ def _cmd_info(args: argparse.Namespace) -> int:
         header = reader.header
         print(f"face:      {reader.face}")
         print(f"complete:  {reader.complete}" + ("  (truncated)" if reader.truncated else ""))
-        ticks = f"{header.tick_hz} ticks/s"
-        print(f"clock:     {ticks}" + ("  single-clock" if header.single_clock else ""))
+        print(f"clock:     {header.tick_hz} ticks/s")
         for label, value in (
             ("creator", header.creator),
             ("produced_by", header.produced_by),

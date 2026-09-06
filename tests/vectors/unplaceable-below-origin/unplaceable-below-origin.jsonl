@@ -1,0 +1,8 @@
+{"type":"file","format":"zipline-payload/0.19","tick_hz":1000000}
+{"type":"source","source_id":1,"kind":"capture","uri":"offbyone.pcap"}
+{"type":"session","session_id":7,"proto":"tcp"}
+{"type":"participant","session_id":7,"pid":0,"endpoint":["10.0.0.1:51000"],"isn":1000,"tcp_role":"initiator"}
+{"type":"record","session_id":7,"sender_pid":0,"source_id":1,"ts":1000,"flags":["psh"],"payload":"TE9TVEJZVEU=","seq_start":1000}
+{"type":"record","session_id":7,"sender_pid":0,"source_id":1,"ts":2000,"flags":["psh"],"payload":"QUFBQUJCQkI=","seq_start":1001}
+{"type":"record","session_id":7,"sender_pid":0,"source_id":1,"ts":3000,"flags":["psh"],"payload":"Q0NDQ0REREQ=","seq_start":1009}
+{"type":"end"}

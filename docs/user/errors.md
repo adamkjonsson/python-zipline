@@ -49,15 +49,22 @@ Pass `strict=True` to escalate the first such violation to a raised
 A few of the format's MUSTs bind the *writer* alone, because they leave a
 reader nothing it could act on. Two exist today:
 
-- **Reserved `flags` bits** (File Header, Session, Record). A writer must
-  leave them 0, but the format defines no meaning for them, so a reader can
-  only ignore the bits and use the block. Isolating it would throw away
-  well-framed data over flags nobody reads — and losing a File Header or
-  Session Descriptor would take everything that depends on it.
 - **A `prim:` content type the payload contradicts** — an illegal token, or a
   width that disagrees with `payload_len`. The reader "MUST NOT pad,
   truncate, or reinterpret", so it keeps the payload untouched and treats the
   label as unknown.
+- **A `content_type` at the transport layer.** A transport record's
+  boundaries are wherever the reassembler chunked the stream, so a label
+  asserting what the unit *is* asserts a unit where there is a slice. Dropping
+  the label loses nothing and the record stays readable, so there is no unit a
+  reader could soundly discard.
+
+**Reserved `flags` bits are not one of these**, though they look like it. A
+writer must leave them 0, but the format groups a nonzero reserved field with
+unknown block types and unknown option ids as part of its extension mechanism
+— the normal, conformant path — so a reader accepts them in silence and the
+bit survives uninterpreted. Reporting one would call conformant data
+suspect.
 
 {class}`~zpf.AdvisoryError` is a `SemanticError` subclass, which lets both
 duties hold at once:
@@ -165,6 +172,60 @@ Categories you will meet:
 | `extents-disagree` | reader, {func}`zpf.check_extents` | Two sessions declare different lengths for one input stream. |
 | `extent-mismatch` | {func}`zpf.check_coverage` | A declared extent the opened input disagrees with. |
 | `discontinuity-splice` | {func}`zpf.check_splice` | A unit whose spans cross a break its input declared. |
+| `unplaceable` | reader | A record the offset space could not place. **Not in `diagnostics`** — see below. |
+
+## Unplaceable records: reported, but not a violation
+
+Some records cannot be placed in their stream's offset space at all: one whose
+`seq_start` falls below the origin (`isn + 1`), and one carrying no `seq_start`
+on a stream whose other records do. Such a record **covers no byte and
+contributes nothing to the extent**, so its payload is excluded from every
+coverage answer the file supports.
+
+Since `0.19` this is not a violation. The origin floor stopped being a
+`MUST NOT` and what survives is the effect — but a reader still **SHOULD**
+report the record, so `zpf` does, in a list of its own:
+
+```python
+with zpf.open("offbyone.zpf") as reader:
+    for record in reader.session(7).records():
+        ...                                    # every record is still here
+    assert reader.diagnostics == []            # the file breaks no rule
+    for note in reader.unplaceable:            # ...and this says what it lost
+        print(note.offset, note.message)
+```
+
+**Two lists, because one cannot do it.** `diagnostics` says what is wrong with
+the file; `unplaceable` says what the file could not tell you. A conformant
+reader has to report the record *and* report the file clean, which is exactly
+what the format's own vectors require — both declare zero violations on the
+accept tier. (That the vector metadata cannot express the reporting obligation
+is filed upstream as
+[zipline#140](https://github.com/adamkjonsson/zipline/issues/140).)
+
+**Zero width is not deletion.** The record keeps its timestamp, flags and
+payload, and anything indexing by something other than offset still sees it.
+{func}`zpf.record_ranges` gives it a zero-width range at the highest offset any
+earlier record reached, so its result still matches the records one for one;
+{meth}`~zpf.StreamView.chunks` and {meth}`~zpf.StreamView.units` skip it,
+because a range is what they exist to report and it has none.
+
+### Writing one: refused, and that is stricter than the format
+
+{func}`zpf.create` refuses to *produce* either shape:
+
+- **A `syn`-flagged record away from `isn + 1`** breaks a MUST. The SYN
+  consumes a sequence number without delivering a byte, which is why the
+  origin is one past it.
+- **A payload-carrying record below the origin** is where this library goes
+  **beyond the standard**, and the error says so. `0.19` permits the file; the
+  bytes are simply in no offset. No producer wants to pay that silently, and
+  the only instance anyone has met was a bug — one that put a below-origin SYN
+  in every file a converter had ever written
+  ([#63](https://github.com/adamkjonsson/python-zipline/issues/63)).
+
+Reading such a file is unaffected: it is accepted, reported, and every other
+record places exactly as it would in a clean file.
 
 The four coverage and extent rows marked **reader** are reported by
 {func}`zpf.open` too, as `nonconformant` diagnostics: they are settled at

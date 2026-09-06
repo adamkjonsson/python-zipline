@@ -68,7 +68,9 @@ def test_open_the_merged_example_jsonl():
         session = f.session(1)
         assert session.sequenced
         assert session.key == "10.0.0.1:51000 <-> 93.184.216.34:80"
-        assert [p.origin.session_id for p in session.participants] == [7, 3]
+        # Provenance is per record since 0.19: an identity span naming the
+        # input stream, where the participant used to carry an origin.
+        assert [r.spans[0].session_id for r in session.records()] == [7, 3]
         # A sequenced session's timeline is its stored order.
         assert list(session.timeline()) == list(session.records())
         assert [r.sender_pid for r in session.timeline()] == [0, 1]
@@ -144,10 +146,18 @@ def skewed_two_sided_file() -> bytes:
             server = s.participant("93.184.216.34:80", isn=5000)
             # Server's clock is skewed: its response says ts 995, before the
             # request (ts 1000) it answers. Its ack proves the true order.
-            s.record(server, ts=995, payload=b"HTTP/1.1 200 OK\r\n...",
-                     seq_start=5001, ack=1019)
-            s.record(client, ts=1000, payload=b"GET / HTTP/1.1\r\n\r\n",
-                     seq_start=1001, ack=5001)
+            s.record(
+                server,
+                ts=995,
+                payload=b"HTTP/1.1 200 OK\r\n...",
+                hints=zpf.Hints(seq_start=5001, ack=1019),
+            )
+            s.record(
+                client,
+                ts=1000,
+                payload=b"GET / HTTP/1.1\r\n\r\n",
+                hints=zpf.Hints(seq_start=1001, ack=5001),
+            )
     return sink.getvalue()
 
 
@@ -329,10 +339,14 @@ def test_an_unusable_prim_label_costs_the_reader_nothing():
 
 
 def reserved_flag_bits_file() -> bytes:
-    """Build a readable file whose header, session, and a record set a reserved bit."""
+    """Build a readable file whose session and a record set a reserved bit.
+
+    The File Header lost its ``flags`` field with SINGLE_CLOCK in 0.19, so it
+    has no reserved bits left to set; the other two fields still have them.
+    """
     sink = io.BytesIO()
     with zpf.BlockWriter(sink) as w:  # permissive flat writer
-        w.write(zpf.FileHeader(tick_hz=1, flags=zpf.FileFlags(0x0002)))
+        w.write(zpf.FileHeader(tick_hz=1))
         w.write(zpf.Source(source_id=0, kind=zpf.SourceKind.CAPTURE))
         w.write(zpf.Session(session_id=0, proto="tcp", flags=zpf.SessionFlags(0x0002)))
         w.write(zpf.Participant(session_id=0, participant_id=0))
@@ -406,8 +420,13 @@ def labelled_file() -> bytes:
                     off_start=offset, off_end=offset + len(payload),
                 )
                 offset += len(payload)
-                s.record(sender, ts=0, payload=payload, source=source,
-                         decoder=decoder, content_type=label, spans=(span,))
+                s.record(
+                    sender,
+                    ts=0,
+                    payload=payload,
+                    source=source,
+                    decoded=zpf.Decoded(decoder=decoder, content_type=label, spans=(span,)),
+                )
     return sink.getvalue()
 
 
@@ -610,7 +629,10 @@ def test_ranges_are_cached_across_session_views():
         # holds them together at the easy case: both would still agree with
         # widths ignored. These two make it bite.
         "discontinuity-known-width/discontinuity-known-width.zpf",
-        "passthrough-discontinuity/passthrough-discontinuity.zpf",
+        # `passthrough-discontinuity` stood here until 0.19 removed it with the
+        # pass-through kind. `filtered-decoded` carries a declared width between
+        # two records the same way, which is the property this test needs.
+        "filtered-decoded/filtered-decoded.zpf",
     ],
 )
 def test_ranges_agree_with_a_naive_datagram_walk(vector: str):
@@ -725,7 +747,12 @@ def test_as_datetime_reads_a_record_timestamp_end_to_end():
         writer.add_source("capture", uri="c.pcap")
         with writer.begin_session(proto="tcp") as session:
             alice = session.participant("alice", isn=0)
-            session.record(alice, ts=1_786_646_192_538_796, payload=b"hi", seq_start=1)
+            session.record(
+                alice,
+                ts=1_786_646_192_538_796,
+                payload=b"hi",
+                hints=zpf.Hints(seq_start=1),
+            )
     with zpf.open(io.BytesIO(sink.getvalue())) as reader:
         (session,) = reader.sessions()
         (record,) = session.records()
