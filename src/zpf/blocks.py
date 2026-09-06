@@ -1025,7 +1025,27 @@ class Record(Block):
         ts_first: Optional packet time of the first contributing packet.
         spans: Source ranges these bytes were built from.
         decoder_id: The decoder that produced this record (decoded records only).
-        content_type: What the payload is: ``mime:``/``prim:``/``dec:`` label.
+        content_type: What the payload **is**: ``mime:``/``prim:``/``dec:``
+            label.
+        role: What this record **is**, in a vocabulary scoped to its decoder's
+            ``name`` — the option `0.17` added for
+            `#58 <https://github.com/adamkjonsson/python-zipline/issues/58>`_.
+
+            **Independent of** ``content_type``, and that independence is the
+            whole point. Before it a decoder emitting one record per protocol
+            field could carry the *type* or the *name* and not both:
+            ``prim:u32`` lets a generic reader read every value and says
+            nothing about which field is the checksum, while ``dec:checksum``
+            names it and throws the normative typing away. Position is not a
+            contract either — an optional field the decoder later emits
+            renumbers everything after it.
+
+            Opaque to the format: it names a record and asserts no tree. Like
+            a ``dec:`` token it is **name-scoped**, read against the decoder
+            that ``decoder_id`` resolves to, so another decoder's
+            ``"checksum"`` is a different name. Decoded layer only, and
+            advisory there — see
+            :class:`~zpf.ConformanceChecker`.
         comment: Free-text note.
         extra_options: Preserved unrecognized/duplicate option occurrences.
 
@@ -1045,6 +1065,7 @@ class Record(Block):
     spans: tuple[Span, ...] = ()
     decoder_id: int | None = None
     content_type: str | None = None
+    role: str | None = None
     comment: str | None = None
     extra_options: tuple[RawOption, ...] = ()
 
@@ -1063,6 +1084,7 @@ class Record(Block):
         ),
         _OptSpec(_frame.OPT_DECODER_ID, "decoder_id", _unpack_u16, _pack_u16),
         _OptSpec(_frame.OPT_CONTENT_TYPE, "content_type", _unpack_str, _pack_str),
+        _OptSpec(_frame.OPT_ROLE, "role", _unpack_str, _pack_str),
     )
 
     def __post_init__(self) -> None:

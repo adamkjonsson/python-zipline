@@ -1012,6 +1012,16 @@ def _rewrite_stream(
             decoded=Decoded(
                 decoder=None if record.decoder_id is None else decoders[record.decoder_id],
                 content_type=record.content_type,
+                # Carried forward with content_type, per
+                # https://github.com/adamkjonsson/zipline/issues/121. A lost
+                # content_type degrades to something the format defines —
+                # opaque payload, fall back to the decoder name. A lost `role`
+                # leaves records typed `prim:u32` with nothing saying which is
+                # the checksum, which is the state the option was added to end,
+                # reintroduced by a stage whose whole purpose is to change
+                # nothing. And because the option is advisory, no reader can
+                # detect that it happened.
+                role=record.role,
                 spans=(
                     Span(
                         source_id=derived.source.source_id,

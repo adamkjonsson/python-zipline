@@ -1044,3 +1044,36 @@ def test_check_coverage_refuses_an_open_reader(tmp_path: Path):
         pytest.raises(TypeError, match="FileReader"),
     ):
         zpf.check_coverage(reader, raw)
+
+
+def test_a_rewrite_carries_role_forward_with_content_type(tmp_path: Path):
+    """The carry-forward obligation, and why losing `role` is worse.
+
+    A lost `content_type` degrades to something the format defines: opaque
+    payload, fall back to the decoder `name`. A lost `role` leaves records
+    typed `prim:u32` with nothing saying which is the checksum — the state the
+    option was added to end, reintroduced by a stage whose whole purpose is to
+    change nothing. And because the option is advisory, no reader can detect
+    that it happened, which is why this needs a test rather than a checker.
+    """
+    src, out = tmp_path / "in.zpf", tmp_path / "out.zpf"
+    fields = ("version", "length", "checksum")
+    with zpf.create(src, tick_hz=1, produced_by="t", produced_at=1) as w:
+        cap, decoder = w.add_source("capture", uri="c.pcap"), w.add_decoder("proto/1")
+        with w.begin_session(proto="x", session_id=7) as s:
+            p = s.participant("a")
+            for i, name in enumerate(fields):
+                s.record(
+                    p, ts=i + 1, payload=b"\x00\x00\x00\x07", source=cap,
+                    decoded=zpf.Decoded(
+                        decoder=decoder, content_type="prim:u32", role=name
+                    ),
+                )
+
+    zpf.rewrite_decoded(src, out, produced_by="f 1", produced_at=2)
+
+    with zpf.open(out) as reader:
+        records = list(reader.session(7).records())
+        assert [r.role for r in records] == list(fields)
+        assert {r.content_type for r in records} == {"prim:u32"}
+        assert reader.diagnostics == []

@@ -1061,3 +1061,36 @@ def test_a_syn_below_the_origin_is_both_advisory_and_unplaceable():
     # was fully absorbed before `observe` reported it, which is the same
     # ordering that lets a lenient reader keep an advisory block.
     assert len(checker.unplaceable_notes) == 1
+
+
+# --- role at the transport layer: one check, two labels (#58) --------------------------
+
+
+def test_either_label_at_the_transport_layer_is_advisory():
+    """One rule, one strength, one check — the format states it once.
+
+    A transport record's boundaries are wherever the reassembler chunked the
+    stream, so both labels assert a unit where there is a slice. Advisory
+    rather than isolating, because dropping a label loses nothing and the
+    record stays fully readable.
+    """
+    for label in ({"content_type": "prim:bytes"}, {"role": "segment"}):
+        with pytest.raises(zpf.AdvisoryError, match="MUST NOT carry"):
+            accept(*RAW_PRELUDE, raw_record(**label))
+
+
+def test_both_labels_at_once_are_one_finding():
+    """A block with several advisory findings reports them in one message."""
+    with pytest.raises(zpf.AdvisoryError) as caught:
+        accept(*RAW_PRELUDE, raw_record(content_type="prim:bytes", role="segment"))
+    assert "content_type" in str(caught.value)
+    assert "role" in str(caught.value)
+
+
+def test_role_at_the_decoded_layer_is_silent():
+    """Where it belongs, it is not a finding at all."""
+    finished(
+        DERIVED_HEADER, INP, DEC, SESS, PART,
+        raw_record(source_id=2, decoder_id=3, payload=b"\x00\x00\x00\x07",
+                   content_type="prim:u32", role="checksum", spans=(IDENTITY,)),
+    )

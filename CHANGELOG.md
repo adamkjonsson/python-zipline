@@ -65,8 +65,21 @@ pairs and ready spans in any mix.
 
 ### Added
 
+- **`role` (`0x0092`) on Record**, the option `0.17` added for
+  [#58](https://github.com/adamkjonsson/python-zipline/issues/58): what a
+  decoded record **is**, in a vocabulary its decoder documents, independent of
+  the `content_type` that says what kind it is. A decoder emitting one record
+  per protocol field can now carry `prim:u32` *and* `"checksum"`; before, it
+  had to choose between the type and the name. Available as
+  `zpf.Decoded(role=…)` on `SessionWriter.record()` and as a flat `role=` on
+  `DecodeStage.record()`, and carried forward by `rewrite_decoded()`.
+
+  **`comment` goes back to being a note.** Using it to name a record was a
+  stopgap — it is free text by definition, so a consumer parsing it depends on
+  something the format says means nothing. `role` is opaque to the format too,
+  but its scope is *declared*, which is what separates a name from a note.
 - **`zpf.Decoded`**: a record's decoded-layer statement — its decoder, its
-  `content_type`, and the input ranges its bytes correspond to.
+  `content_type`, its `role`, and the input ranges its bytes correspond to.
 - **Per-unit timestamps** ([#62](https://github.com/adamkjonsson/python-zipline/issues/62)).
   `Segment.contributors`, `Segment.ts_for()`, `Segment.ts_first_for()`,
   `StreamView.contributions()` and `StreamView.ts_for()` make the specification's

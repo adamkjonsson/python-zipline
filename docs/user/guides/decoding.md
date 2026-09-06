@@ -216,6 +216,55 @@ absent width contributes 0 to the offset arithmetic, so the records either side
 sit adjacent; what the block asserts is not a length but that they **do not
 join**.
 
+### Naming a record: `role`
+
+`content_type` says what a payload **is**; `role` says **which** one it is, and
+the two are independent. A decoder emitting one record per protocol field needs
+both:
+
+```python
+for name, raw in (("version", v), ("length", n), ("checksum", c)):
+    dec.record(stream, raw, content_type="prim:u32", role=name,
+               cites=(off, off + 4))
+```
+
+Before `role` you had to choose. `content_type="prim:u32"` lets any consumer
+read every value and says nothing about which field is the checksum;
+`content_type="dec:checksum"` names it and throws the typing away, so nothing
+left in the file says the four records share a type. Position is not a contract
+either — an optional field the decoder later emits renumbers everything after
+it.
+
+**The vocabulary is the decoder's, and the format does not parse it.** `role`
+is read in the namespace of the decoder `name` that `decoder_id` resolves to,
+exactly as a `dec:` token is, so another decoder's `"checksum"` is a different
+name. A dotted path (`header.flags.qr`) is a convention two producers can agree
+on; the format sees an opaque string.
+
+**What it does not carry**, and both are deliberate:
+
+- **A width.** A field narrower or wider than 8/16/32/64 bits widens to the
+  smallest `prim:` token that holds it, and the true width is not recoverable
+  from the file. That is the same call the format already makes for byte order
+  ([zipline#105](https://github.com/adamkjonsson/zipline/issues/105)).
+- **A nesting relation.** A dotted path is a convention, not a tree the file
+  guarantees. Whether a record naming bytes an earlier record already emitted
+  is even a well-formed decoded stream is
+  [still open](https://github.com/adamkjonsson/zipline/issues/106); `role` is
+  compatible with any answer, which is why it did not wait for one.
+
+**Not `comment`.** That is free text by definition, so a consumer parsing it
+relies on something the format says means nothing. `role` is opaque to the
+format too, but its scope is *declared* — and a declared scope is exactly what
+separates a name from a note.
+
+Both labels are **decoded layer only**. A transport record carrying either is
+reported and the label ignored: its boundaries are wherever the reassembler
+chunked the stream, so a label asserting a unit is asserting something about a
+slice. `role` is the more tempting mistake of the two, because its vocabulary
+is open and `"segment"` reads as helpful where `prim:bytes` at least looks
+wrong.
+
 ## Reading payload content
 
 The write side above labelled each record with `content_type=` — a decoded

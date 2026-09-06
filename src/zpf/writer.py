@@ -217,7 +217,11 @@ class Decoded:
         decoder: The declared :class:`DecoderHandle` whose layer this record
             belongs to. Absent means the transport layer, by the format's
             layer rule.
-        content_type: ``mime:``/``prim:``/``dec:`` label for the payload.
+        content_type: ``mime:``/``prim:``/``dec:`` label for the payload —
+            what it **is**.
+        role: What the record **is**, in a vocabulary its decoder documents —
+            *which* field, where ``content_type`` says what kind. The two are
+            independent, and a record may carry either, both or neither.
         spans: The input ranges these bytes correspond to. Every
             ``zpf``-sourced record carries them, whether its stage created the
             layer or preserved it.
@@ -226,6 +230,7 @@ class Decoded:
 
     decoder: DecoderHandle | None = None
     content_type: str | None = None
+    role: str | None = None
     spans: tuple[Span, ...] = ()
 
 
@@ -877,9 +882,10 @@ class SessionWriter:
             comment: Free-text note. **Free text**: nothing parses it and no
                 consumer may depend on its shape, so it is for a human
                 reading the file, not a channel for semantics another tool
-                will read back. A producer that needs a *load-bearing* name
-                per record — a protocol field path, say — is asking for
-                something the format does not yet have.
+                will read back. A producer wanting a name per record — a
+                protocol field, say — wants :class:`Decoded`'s ``role``, which
+                the format added in `0.17`: also opaque to it, but *declared*
+                to the decoder's vocabulary rather than promising nothing.
 
         ``extra_options`` is the one Record option without a keyword here, and
         the only hatch by design: it is for ids this library does not know, not
@@ -911,6 +917,7 @@ class SessionWriter:
             spans=tuple(layer.spans),
             decoder_id=None if layer.decoder is None else layer.decoder.decoder_id,
             content_type=layer.content_type,
+            role=layer.role,
             comment=comment,
         )
         if self._pending is not None:

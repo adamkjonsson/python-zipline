@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 from typing import TYPE_CHECKING
 
 import pytest
@@ -1015,3 +1016,64 @@ def test_a_ts_that_cannot_be_derived_is_refused_rather_than_invented():
     ) as dec:
         for stream in dec.streams():
             dec.record(stream, b"x", cites=(99, 100))
+
+
+# --- role: a decoded record's name, beside its type (#58) -----------------------------
+
+
+def test_a_record_can_carry_its_type_and_its_name_at_once():
+    """#58's whole point, and the case the format was changed for.
+
+    A protocol with four `u32` fields, one of them a checksum. Before `role` a
+    producer had to choose: `content_type = prim:u32` lets a generic reader
+    read every value and says nothing about which field is which, while
+    `dec:checksum` names it and destroys the normative typing — leaving
+    nothing to say the four records share a type. Position is not a contract
+    either, since an optional field the decoder later emits renumbers
+    everything after it.
+
+    The two options are independent, and this asserts both survive together.
+    """
+    raw = io.BytesIO()
+    with zpf.create(raw, tick_hz=1, produced_by="t", produced_at=1) as w:
+        cap = w.add_source("capture", uri="c.pcap")
+        with w.begin_session(proto="x", session_id=7) as s:
+            p = s.participant("a")
+            s.record(p, ts=1, payload=b"\x00\x01\x02\x03" * 4, source=cap)
+
+    out = io.BytesIO()
+    fields = ("version", "length", "seq_no", "checksum")
+    with zpf.decode_stage(
+        io.BytesIO(raw.getvalue()), out, decoder="proto/1",
+        produced_by="d 1", produced_at=1,
+    ) as dec:
+        for stream in dec.streams():
+            for i, name in enumerate(fields):
+                dec.record(
+                    stream,
+                    b"\x00\x01\x02\x03",
+                    content_type="prim:u32",
+                    role=name,
+                    cites=(i * 4, i * 4 + 4),
+                )
+
+    with zpf.open(io.BytesIO(out.getvalue())) as reader:
+        records = list(reader.session(7).records())
+        assert [r.role for r in records] == list(fields)
+        assert {r.content_type for r in records} == {"prim:u32"}
+        assert reader.diagnostics == []
+        # The typing survives, so a generic reader still reads every value.
+        # `prim:` is little-endian, so these four bytes are 0x03020100.
+        assert [reader.content(r) for r in records] == [0x03020100] * 4
+
+
+def test_role_survives_the_jsonl_round_trip():
+    """Key `role`, no alias — the general naming rule covers it."""
+    record = zpf.Record(
+        session_id=1, sender_pid=0, source_id=0, timestamp=1,
+        payload=b"\x00\x00\x00\x07", decoder_id=1,
+        content_type="prim:u32", role="checksum",
+    )
+    obj = json.loads(zpf.dumps_block(record))
+    assert obj["role"] == "checksum"
+    assert zpf.loads_block(json.dumps(obj)) == record

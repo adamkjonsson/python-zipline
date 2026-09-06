@@ -45,9 +45,10 @@ report it and hand the block over. **Two** rules are advisory today:
   disagrees with ``payload_len``. The specification tells a reader to treat
   the label as unknown and keep the payload, so the breach costs it nothing.
   The label grammar and the vocabulary live in :mod:`zpf.content`.
-* a ``content_type`` at the **transport** layer. Dropping the label loses
-  nothing and the record stays fully readable, so there is no unit a reader
-  could soundly discard.
+* a ``content_type`` **or a** ``role`` at the **transport** layer. Dropping
+  the label loses nothing and the record stays fully readable, so there is no
+  unit a reader could soundly discard. One check covers both, the format
+  stating the bar for the pair in one sentence.
 
 A block with several such findings reports them all in one message.
 
@@ -57,10 +58,9 @@ option ids as part of the extension mechanism, so diagnosing one would report
 conformant data as suspect. The comment above ``_ParticipantState`` says so at
 the point where a reader of this module would look for the check.
 
-``role`` (``0x0092``) joins the second rule when it is implemented — the
-transport-layer bar names both labels in one sentence and gives them one
-strength, so the two checks should share this implementation rather than
-duplicate it.
+Both labels go through one function for that reason: the bar is stated once
+and a check per label would be two places to update when the format adds a
+third.
 
 Memory stays bounded on unbounded streams: per-session state is freed at
 the session's Session End; only the set of ended session ids is retained
@@ -770,7 +770,7 @@ class ConformanceChecker:
                 msg = f"{described} names undeclared decoder {block.decoder_id}"
                 raise SemanticError(msg)
             layer = declared
-        self._note(_transport_content_type(block, layer, described))
+        self._note(_transport_label(block, layer, described))
         self._check_spans(block.spans, described=described)
         if source_kind == SourceKind.ZPF_INPUT:
             # **Every `zpf`-sourced record carries `spans`.** One sentence,
@@ -1027,19 +1027,32 @@ class ConformanceChecker:
             raise SemanticError(msg)
 
 
-def _transport_content_type(
+def _transport_label(
     block: Record, layer: OutputLayer | int, described: str
 ) -> str | None:
-    """Return the advisory finding for a `content_type` at the transport layer.
+    """Return the advisory finding for a decoded-layer label at the transport layer.
 
-    ``content_type`` types a *value* — what this unit **is** — and a
-    transport record's boundaries are wherever the reassembler happened to
-    chunk the stream. Two conformant reassemblers chunk one stream
-    differently and both are right, which is the property the logical offset
-    space exists to neutralise; labelling an arbitrary window ``prim:bytes``
-    asserts it is a unit when it is a slice. It would also type identical
-    bytes differently by provenance, a capture-sourced reassembler declaring
-    itself being only a SHOULD.
+    **One check for both labels**, because the format states the bar for both
+    in one sentence and gives them one strength: a transport-layer record MUST
+    NOT carry a ``content_type``, and MUST NOT carry a ``role``. `0.17` added
+    the second and `0.18` finished updating the sites that restate the rule
+    ([zipline#120](https://github.com/adamkjonsson/zipline/issues/120)), one of
+    which had counted its members and gone stale.
+
+    Both label a **unit** — one saying what it is, one saying which it is — and
+    a transport record's boundaries are wherever the reassembler happened to
+    chunk the stream. Two conformant reassemblers chunk one stream differently
+    and both are right, which is the property the logical offset space exists
+    to neutralise; labelling an arbitrary window asserts it is a unit when it
+    is a slice. It would also type identical bytes differently by provenance, a
+    capture-sourced reassembler declaring itself being only a SHOULD.
+
+    **``role`` is the more tempting of the two**, and worth naming as such. A
+    ``prim:bytes`` at least *looks* wrong — it says "opaque" about a slice —
+    while ``role``'s vocabulary is open, so a plausible word always exists and
+    ``"segment"`` reads as helpful. The suite says the same: it added
+    ``advisory-transport-role`` precisely because every argument for the
+    ``content_type`` vector applied to this one.
 
     **Advisory rather than isolating.** Dropping the label loses nothing and
     the record stays fully readable, so there is no unit a reader could
@@ -1065,11 +1078,20 @@ def _transport_content_type(
         The finding, or ``None`` where there is nothing to report.
 
     """
-    if block.content_type is None or layer is OutputLayer.DECODED:
+    if layer is OutputLayer.DECODED:
         return None
+    carried = [
+        (name, value)
+        for name, value in (("content_type", block.content_type), ("role", block.role))
+        if value is not None
+    ]
+    if not carried:
+        return None
+    named = " and ".join(f"{name} ({value!r})" for name, value in carried)
+    plural = "labels are" if len(carried) > 1 else "label is"
     return (
-        f"{described} is at the transport layer and MUST NOT carry a content_type "
-        f"({block.content_type!r}); the label is ignored and the record kept"
+        f"{described} is at the transport layer and MUST NOT carry a {named}; "
+        f"the {plural} ignored and the record kept"
     )
 
 

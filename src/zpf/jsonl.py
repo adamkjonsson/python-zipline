@@ -463,6 +463,9 @@ def _enc_record(block: Record, on_issue: Callable[[str], None]) -> dict[str, Any
     if block.spans:
         obj["spans"] = [_span_to_json(span) for span in block.spans]
     _put(obj, "content_type", block.content_type)
+    # Key `role`, no alias: the general naming rule covers it, an option's
+    # JSON key being its canonical name unless the brevity table says otherwise.
+    _put(obj, "role", block.role)
     if block.flags:
         obj["flags"] = _record_flag_tokens(block.flags, on_issue)
     obj["payload"] = _b64e(block.payload)
@@ -737,6 +740,7 @@ def _dec_record(reader: _ObjReader, on_issue: Callable[[str], None]) -> Record:
         spans=() if raw_spans is None else tuple(_span_from_json(entry) for entry in raw_spans),
         decoder_id=reader.take_int("decoder_id"),
         content_type=reader.take_str("content_type"),
+        role=reader.take_str("role"),
         comment=reader.take_str("comment"),
         extra_options=reader.options(),
     )

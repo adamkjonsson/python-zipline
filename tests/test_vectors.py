@@ -71,14 +71,19 @@ VECTORS = Path(__file__).parent / "vectors"
 #:
 #: What is **not** here yet, and what puts it here:
 #:
-#: * ``advisory-transport-role`` and ``decoded-field-roles`` — Phase 6, which
-#:   implements ``role``. Held in :data:`UNIMPLEMENTED`.
 #: * ``handshake-at-origin``, ``unplaceable-below-origin``,
 #:   ``mixed-derivation`` — held in :data:`DEFECTIVE` until upstream fixes the
 #:   fixtures, and not ours to earn.
 #:
-#: So the set reaches 55 when Phase 6 lands, and 58 if `zipline#141
-#: <https://github.com/adamkjonsson/zipline/issues/141>`_ is fixed.
+#: **Phase 6 took it to 55**, adding ``advisory-transport-role`` and
+#: ``decoded-field-roles`` with ``role`` itself — so every case this library
+#: is answerable for now passes, and the only three left are upstream's to
+#: fix. 58 when `zipline#141
+#: <https://github.com/adamkjonsson/zipline/issues/141>`_ lands, which is every
+#: case the suite ships.
+#:
+#: (58 case names against 53 manifest entries: ``chain`` expands to three
+#: files, ``tunnel`` to four, and ``splice`` is one name for two.)
 #:
 #: ``splice`` is one name for two files, because its violation belongs to
 #: neither of them, which is why 53 names cover 59 files. :data:`PAIRWISE`
@@ -87,12 +92,14 @@ VECTORS = Path(__file__).parent / "vectors"
 KNOWN_PASSING: frozenset[str] = frozenset(
     {
         "advisory-transport-content-type",
+        "advisory-transport-role",
         "broken-chain",
         "chain/annotated",
         "chain/decoded",
         "chain/raw",
         "custom-block",
         "decoded-basic",
+        "decoded-field-roles",
         "descriptive-metadata",
         "discontinuity-known-width",
         "discontinuity-unknown-width",
@@ -188,10 +195,10 @@ DEFECTIVE: dict[str, str] = {
 #: does, the option survives the round trip inside ``extra_options`` — the
 #: escape contract working — so these files *read* cleanly all along and only
 #: their projection differs.
-UNIMPLEMENTED: dict[str, str] = {
-    "advisory-transport-role": "role (0x0092) lands in Phase 6",
-    "decoded-field-roles": "role (0x0092) lands in Phase 6",
-}
+#: **Empty since Phase 6**, which implemented ``role`` — the last feature this
+#: port was behind on. What still xfails is :data:`DEFECTIVE`, which is
+#: upstream's to fix and not a phase to wait for.
+UNIMPLEMENTED: dict[str, str] = {}
 
 #: The extent each accept vector's lesson names, per ``(session_id, pid)``.
 #:

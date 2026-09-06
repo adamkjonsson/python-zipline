@@ -49,24 +49,32 @@ either speaks to a layer or it does not, and the signature says which.
 
 ## What stays flat, and why that is not inconsistency
 
-`cites=` on {meth}`~zpf.DecodeStage.record` is the clearest case. It is
-decoded-layer surface by the table above, and it stays a flat keyword anyway:
-it is the hot argument of the hot path, named on nearly every call a decoder
-makes. Burying it inside a bundle would trade a lint count for real ergonomics,
-which is the opposite of the point.
+The rule is a default, not a law: **group by the format's lines unless doing so
+would make the common call worse.** Two things sit on the exception, and both
+are on {meth}`~zpf.DecodeStage.record`.
 
-The rule is therefore a default, not a law: **group by the format's lines
-unless doing so would make the common call worse.** One exception, stated, is
-better than a policy nobody follows.
+**`cites=` is the hot argument of the hot path**, named on nearly every call a
+decoder makes. It is decoded-layer surface by the table above and stays flat
+anyway; burying it in a bundle would trade a lint count for real ergonomics.
 
-## The builder is different
+**And that method's decoded-layer options stay flat too** — `content_type`,
+`role`, `decoder`. On {meth}`~zpf.SessionWriter.record` the `Decoded` bundle
+marks a line: a record either speaks to the decoded layer or does not, and the
+signature says which. On a decode stage there is no line to mark, because
+**every** record it writes is decoded-layer. A `decoded=` wrapper would appear
+on every call and distinguish nothing, which is ceremony rather than structure.
 
-{func}`zpf.decode_stage` carries the only `# noqa: PLR0913` left in `src/zpf/`,
-and the argument for it is in the comment rather than deferred to a future
-release. It is a *builder*: called once per stage with every argument named,
-configuring a pipeline rather than filling in a block's fields. The two
-`record()` signatures were the issue's real subject and both pass the limit on
-their own now.
+That is why `src/zpf/` carries two `# noqa: PLR0913` rather than one. Both
+comments argue rather than defer, which is the standard the restructure set for
+itself.
+
+## The builder is different again
+
+{func}`zpf.decode_stage` carries the other suppression, for a different reason
+from the one above. It is a *builder*: called once per stage with every
+argument named, configuring a pipeline rather than filling in a block's fields.
+`SessionWriter.record()` — the issue's real subject — passes the limit on its
+own.
 
 The one bundle available there is `produced_by` + `produced_at`, which the
 format does name as a pair — a derived file MUST carry both. They are spelled

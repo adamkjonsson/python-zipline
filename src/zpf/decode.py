@@ -264,13 +264,24 @@ class DecodeStage:
             self._streams = tuple(paired)
         return self._streams
 
-    def record(
+    def record(  # noqa: PLR0913
+        # Eleven parameters, one over — and the second suppression in
+        # `src/zpf/`, where Phase 5 of #59 left one. `role` is what pushed it
+        # back over, and the policy in `docs/dev/option-exposure.md` says
+        # decoded-layer options join `Decoded`. Here they do not, for the
+        # reason that policy states as its one exception: **a decode stage's
+        # every record is decoded-layer**, so a `decoded=` wrapper would appear
+        # on every call and distinguish nothing. A bundle that is always
+        # present is ceremony, not structure — the opposite of what `Decoded`
+        # buys on `SessionWriter.record()`, where it marks the line between a
+        # record that speaks to the decoded layer and one that does not.
         self,
         stream: DecodeStream,
         payload: bytes = b"",
         *,
         ts: int | None = None,
         content_type: str | None = None,
+        role: str | None = None,
         cites: _Cites = None,
         decoder: DecoderHandle | None = None,
         flags: RecordFlags | int = 0,
@@ -313,7 +324,16 @@ class DecodeStage:
 
                 Pass it explicitly for a record citing no single range of one
                 input stream, where there is nothing to derive from.
-            content_type: ``dec:``/``mime:``/``prim:`` payload label.
+            content_type: ``dec:``/``mime:``/``prim:`` payload label — what
+                the payload **is**.
+            role: What this record **is**, in a vocabulary this decoder
+                documents — *which* field, where ``content_type`` says what
+                kind. Independent of it: a decoder emitting one record per
+                protocol field carries ``prim:u32`` and ``"checksum"``
+                together, which is the pair
+                `#58 <https://github.com/adamkjonsson/python-zipline/issues/58>`_
+                was filed to make expressible. Use ``comment`` for a note to a
+                human, never for this.
             cites: The input ranges this record was built from — an
                 ``(off_start, off_end)`` pair, a ready
                 :class:`~zpf.blocks.Span`, or a sequence of either, mixed
@@ -337,11 +357,13 @@ class DecodeStage:
                 exactly as a capture's reassembled stream does. A decoded
                 record has no use for them — its offsets are positional.
             comment: Free-text note on the record. **Free text**: nothing
-                parses it and no consumer may depend on its shape. A stage
-                emitting one record per protocol field may use it to say
-                which field a record is, but that is a stopgap — the name is
-                load-bearing semantics carried in a field that promises
-                none.
+                parses it and no consumer may depend on its shape — it is for
+                a human reading the file. A stage naming the protocol field a
+                record represents wants ``role``, which is opaque to the
+                format but *declared* to the decoder's vocabulary; ``comment``
+                promises nothing, so a consumer parsing it depends on
+                something the format says means nothing. That use was a
+                stopgap until `0.17` added the option.
 
         Raises:
             SemanticError: If the record cites no input range.
@@ -379,6 +401,7 @@ class DecodeStage:
             decoded=Decoded(
                 decoder=decoder if decoder is not None else self._decoder,
                 content_type=content_type,
+                role=role,
                 spans=all_spans,
             ),
             comment=comment,
@@ -610,12 +633,13 @@ class DecodeStage:
 
 
 def decode_stage(  # noqa: PLR0913
-    # Eleven parameters, one over the limit, and the only suppression left in
-    # src/zpf/ after #59. It is a **builder**, which is the difference: called
-    # once per stage with every argument named, configuring a pipeline rather
-    # than filling in a block's fields. The two `record()` signatures were the
-    # issue's real subject, and both now pass the limit on their own — grouped
-    # by the format's transport/decoded line rather than by arithmetic.
+    # Eleven parameters, one over the limit, and one of the two suppressions
+    # in `src/zpf/`. It is a **builder**, which is the difference: called once
+    # per stage with every argument named, configuring a pipeline rather than
+    # filling in a block's fields. `SessionWriter.record()` — #59's real
+    # subject — passes the limit on its own, grouped by the format's
+    # transport/decoded line rather than by arithmetic; `DecodeStage.record()`
+    # carries the other suppression, for the reason its own comment gives.
     #
     # The one bundle available here is `produced_by` + `produced_at`, which the
     # format does name as a pair: a derived file MUST carry both. But they are
