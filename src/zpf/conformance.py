@@ -96,6 +96,7 @@ from zpf.blocks import (
     OutputLayer,
     Participant,
     Record,
+    RecordFlags,
     Session,
     SessionEnd,
     Source,
@@ -104,7 +105,7 @@ from zpf.blocks import (
 )
 from zpf.content import ContentType, prim_fault
 from zpf.errors import AdvisoryError, SemanticError
-from zpf.order import seq_leq
+from zpf.order import SEQ_SPACE, seq_leq, seq_lt
 from zpf.reassembly import layer_name
 
 if TYPE_CHECKING:
@@ -130,6 +131,10 @@ class _ParticipantState:
 
     Attributes:
         described: The Participant block, for diagnostics.
+        isn: Its declared ``isn``, which fixes the stream's origin at
+            ``isn + 1``. Kept because two questions need it and neither can
+            be answered from a record alone: whether a handshake record sits
+            where the format says, and whether a record is placeable at all.
         provenances: The Source kinds its records reference.
         layers: The layers its records resolve to. More than one is a
             violation — the stream's offset space would have two
@@ -150,6 +155,7 @@ class _ParticipantState:
     """
 
     described: str
+    isn: int | None = None
     provenances: set[SourceKind | int] = field(default_factory=set)
     layers: set[OutputLayer | int] = field(default_factory=set)
     has_discontinuity: str | None = None
@@ -369,6 +375,9 @@ class ConformanceChecker:
         self._saw_zpf_sourced = False
         self._file_ended = False
         self._advisory: list[str] = []  # findings for the block being observed
+        # Notes for the block being observed that are **not** findings: a
+        # record the offset space cannot place. See `unplaceable_notes`.
+        self._unplaceable: list[str] = []
         self._coverage = CoverageLedger()
         self._dispatch: dict[type[Block], Callable[[Any], None]] = {
             FileHeader: self._on_file_header,
@@ -405,6 +414,7 @@ class ConformanceChecker:
             msg = f"first block must be a File Header, got {_describe(block)}"
             raise SemanticError(msg)
         self._advisory.clear()
+        self._unplaceable.clear()
         handler = self._dispatch.get(type(block))
         if handler is not None:
             handler(block)
@@ -418,6 +428,41 @@ class ConformanceChecker:
         # handler skips this, and its notes go with the dropped block.
         if self._advisory:
             raise AdvisoryError("; ".join(self._advisory))
+
+    @property
+    def unplaceable_notes(self) -> tuple[str, ...]:
+        """Records the offset space could not place, from the block just observed.
+
+        **Not findings, and deliberately not raised.** Since `0.19` an
+        unplaceable record breaks no rule: the origin floor stopped being a
+        MUST NOT and what survives is the effect, which is that such a record
+        covers no byte of the stream and contributes nothing to its extent. A
+        reader accepts the file and SHOULD *report* the record — so this is a
+        third channel beside isolating violations and advisory ones, and it has
+        to be, because both of those would make a checking writer refuse a
+        block the format permits.
+
+        Read it after :meth:`observe` returns; it is cleared on the next call.
+        :class:`~zpf.FileReader` drains it into
+        :attr:`~zpf.FileReader.unplaceable`, attaching the file offset it knows
+        and the checker does not.
+
+        **One shape is not reported, because a single pass cannot see it.** A
+        record with no ``seq_start`` arriving *before* the first record that has
+        one, on a participant with no ``isn``, is unplaceable once the later
+        hint arrives and anchors the stream — but at the moment it is observed
+        nothing says the stream will be anchored at all.
+        :func:`zpf.record_ranges` sees the whole participant and does place it
+        at zero width; this reports only what is decidable when the block is
+        read. Under-reporting is the safe direction: the alternative is calling
+        a conformant record unplaceable.
+
+        Returns:
+            One note per unplaceable record in the block just observed —
+            at most one, a record being a single record.
+
+        """
+        return tuple(self._unplaceable)
 
     def check(self, blocks: Iterable[Block]) -> None:
         """Check a whole block sequence (convenience for standalone use).
@@ -538,7 +583,9 @@ class ConformanceChecker:
             raise SemanticError(msg)
         # Registration last: a raised violation leaves the checker
         # consistent, so a lenient reader can isolate the block and go on.
-        state.participants[block.participant_id] = _ParticipantState(described=described)
+        state.participants[block.participant_id] = _ParticipantState(
+            described=described, isn=block.isn
+        )
 
     def _on_session_end(self, block: SessionEnd) -> None:
         described = _describe(block)
@@ -560,6 +607,8 @@ class ConformanceChecker:
         # Isolating checks before any state mutation, so a raised violation
         # leaves the checker consistent (block isolation).
         self._note(_prim_finding(block, described))
+        self._note(_handshake_placement(block, stream, described))
+        self._check_placement(block, stream, described)
         self._check_record_order(block, stream, described)
         self._classify_record(block, stream, described)
         if block.seq_start is not None:
@@ -807,6 +856,34 @@ class ConformanceChecker:
                 msg = f"{described} span must reference a ZPF_INPUT source"
                 raise SemanticError(msg)
 
+    def _check_placement(
+        self, block: Record, stream: _ParticipantState, described: str
+    ) -> None:
+        """Note a record the offset space cannot place. Never a violation.
+
+        See :attr:`unplaceable_notes` for why this is a channel of its own and
+        which shape it cannot decide.
+        """
+        anchored = stream.isn is not None or stream.last_seq is not None
+        if block.seq_start is None:
+            if anchored:
+                self._unplaceable.append(
+                    f"{described} carries no seq_start on a sequence-anchored stream, "
+                    f"so the offset space cannot place it: it covers no byte and "
+                    f"contributes nothing to the extent"
+                )
+            return
+        if stream.isn is None:
+            return  # no floor to be below; the first hint fixes the origin
+        origin = (stream.isn + 1) % SEQ_SPACE
+        if seq_lt(block.seq_start, origin):
+            self._unplaceable.append(
+                f"{described} has seq_start {block.seq_start}, below the stream origin "
+                f"{origin} (isn + 1), so the offset space cannot place it: its "
+                f"{len(block.payload)} payload byte(s) are excluded from the extent and "
+                f"from every coverage answer this file supports"
+            )
+
     def _check_record_order(
         self, block: Record, stream: _ParticipantState, described: str
     ) -> None:
@@ -993,6 +1070,54 @@ def _transport_content_type(
     return (
         f"{described} is at the transport layer and MUST NOT carry a content_type "
         f"({block.content_type!r}); the label is ignored and the record kept"
+    )
+
+
+def _handshake_placement(
+    block: Record, stream: _ParticipantState, described: str
+) -> str | None:
+    """Return the advisory finding for a handshake record in the wrong place.
+
+    A writer MAY record an observed TCP handshake as a zero-length record
+    carrying the ``syn`` flag, and where it does, the format fixes the shape:
+    ``seq_start`` **MUST** be ``isn + 1``. The SYN consumes a sequence number
+    without delivering a byte, so the stream origin is one past it, and a
+    handshake record written at ``isn`` sits below its own stream — which is
+    exactly the file
+    `#63 <https://github.com/adamkjonsson/python-zipline/issues/63>`_ was
+    filed about.
+
+    **Advisory wherever the record sits**, which `0.18` settled after `0.17`
+    left the strengths inverted: a reader accepts the file and SHOULD report.
+    What a violation costs is the handshake's timing and nothing else — the
+    origin it might otherwise re-derive is fixed by ``isn``, not by this
+    record. Reporting it is worth more than isolating it, because a producer
+    reading its own output is how the bug gets fixed at the source.
+
+    A ``syn`` record with no ``seq_start`` is not this finding: it is
+    unplaceable like any other, which :meth:`ConformanceChecker._check_placement`
+    reports.
+
+    Args:
+        block: The record to check.
+        stream: Its participant's state, for the declared ``isn``.
+        described: The block, for the message.
+
+    Returns:
+        The finding, or ``None`` where there is nothing to report.
+
+    """
+    if not block.flags & RecordFlags.SYN or stream.isn is None:
+        return None
+    if block.seq_start is None:
+        return None
+    origin = (stream.isn + 1) % SEQ_SPACE
+    if block.seq_start == origin:
+        return None
+    return (
+        f"{described} carries the syn flag with seq_start {block.seq_start}, but a "
+        f"handshake record MUST sit at the stream origin isn + 1 ({origin}); the "
+        f"record is kept and what is lost is the handshake's timing"
     )
 
 

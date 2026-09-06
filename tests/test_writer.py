@@ -296,8 +296,8 @@ def _sequenced_session(
     """Build a two-participant TCP session for the causal-order cases."""
     writer.add_source("capture", uri="sideA.pcap")
     session = writer.begin_session(proto="tcp", sequenced=True, **kwargs)
-    alice = session.participant("10.0.0.1:51000", isn=1000)
-    bob = session.participant("10.0.0.2:80", isn=5000)
+    alice = session.participant("10.0.0.1:51000", isn=999)  # origin 1000, where its records start
+    bob = session.participant("10.0.0.2:80", isn=4999)  # origin 5000, likewise
     return session, alice, bob
 
 
@@ -363,8 +363,8 @@ def test_an_unsequenced_session_is_not_guarded():
     with zpf.create(io.BytesIO(), tick_hz=1) as writer:
         writer.add_source("capture", uri="sideA.pcap")
         session = writer.begin_session(proto="tcp")
-        alice = session.participant("10.0.0.1:51000", isn=1000)
-        bob = session.participant("10.0.0.2:80", isn=5000)
+        alice = session.participant("10.0.0.1:51000", isn=999)  # origin 1000
+        bob = session.participant("10.0.0.2:80", isn=4999)  # origin 5000, likewise
         session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
         session.record(bob, ts=2, payload=b"ok", seq_start=5000, ack=1020)
         session.record(alice, ts=3, payload=b"a" * 10, seq_start=1010)
@@ -374,7 +374,7 @@ def test_the_guard_drops_ack_checks_beyond_two_participants():
     """The specification defines ack semantics pairwise only."""
     with zpf.create(io.BytesIO(), tick_hz=1) as writer:
         session, alice, bob = _sequenced_session(writer)
-        carol = session.participant("10.0.0.3:80", isn=9000)
+        carol = session.participant("10.0.0.3:80", isn=8999)  # origin 9000
         session.record(alice, ts=1, payload=b"a" * 10, seq_start=1000)
         session.record(bob, ts=2, payload=b"ok", seq_start=5000, ack=1020)
         session.record(carol, ts=3, payload=b"hi", seq_start=9000)
@@ -604,3 +604,60 @@ def test_record_carries_a_comment_through_the_keyword_api():
         if isinstance(block, zpf.Record)
     ]
     assert [record.comment for record in records] == ["dns.header.id", None]
+
+
+# --- Placement guards on the write side (#63) -----------------------------------------
+
+
+def one_record(**kwargs: object) -> None:
+    """Write a single TCP record against a participant with isn=1000."""
+    with zpf.create(io.BytesIO(), tick_hz=1) as writer:
+        writer.add_source("capture")
+        with writer.begin_session(proto="tcp") as session:
+            alice = session.participant("10.0.0.1:51000", isn=1000)
+            session.record(alice, ts=1, **kwargs)
+
+
+def test_a_handshake_record_must_sit_at_the_origin():
+    """The MUST, refused where the producer can still fix it.
+
+    This is the one-character bug behind #63: zpfwire wrote the SYN at `isn`,
+    and every file it produced carried it. A reader accepts and reports such a
+    file; a writer has no reason to make one.
+    """
+    with pytest.raises(zpf.SemanticError, match="MUST sit at the stream origin"):
+        one_record(payload=b"", seq_start=1000, flags=zpf.RecordFlags.SYN)
+    # Above the origin is the same MUST and the same refusal.
+    with pytest.raises(zpf.SemanticError, match="MUST sit at the stream origin"):
+        one_record(payload=b"", seq_start=1007, flags=zpf.RecordFlags.SYN)
+    one_record(payload=b"", seq_start=1001, flags=zpf.RecordFlags.SYN)  # the shape
+
+
+def test_a_payload_below_the_origin_is_refused_beyond_the_standard():
+    """Stricter than `0.19`, deliberately, and the error says so.
+
+    The format permits this file: the record is unplaceable, and its bytes are
+    simply in no offset. That is the cost, and no producer wants to pay it
+    without being told — a writer emitting one is discarding its own bytes.
+    """
+    with pytest.raises(zpf.SemanticError, match="stricter than the format"):
+        one_record(payload=b"LOST", seq_start=1000)
+
+
+def test_an_empty_record_below_the_origin_is_left_to_the_syn_rule():
+    """No payload, no bytes to lose, so the strict guard has nothing to say.
+
+    A zero-length record below the origin without the `syn` flag is a shape
+    the format neither describes nor forbids, and refusing it would be going
+    beyond the standard for no gain.
+    """
+    one_record(payload=b"", seq_start=1000)
+
+
+def test_a_stream_with_no_isn_has_no_floor_to_violate():
+    """Without an isn the origin *is* the first record's seq_start."""
+    with zpf.create(io.BytesIO(), tick_hz=1) as writer:
+        writer.add_source("capture")
+        with writer.begin_session(proto="tcp") as session:
+            alice = session.participant("10.0.0.1:51000")
+            session.record(alice, ts=1, payload=b"AAAA", seq_start=1000)

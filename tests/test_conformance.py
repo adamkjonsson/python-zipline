@@ -972,3 +972,87 @@ def test_overlapping_spans_are_reduced_by_max_and_min():
         _hole(100, 139),
         _unit(_range(120, 200), _range(150, 260), ts=1),  # B = min(120, 150) = 120
     )
+
+
+# --- Placement: the report and the handshake shape (#63) -------------------------------
+
+
+def anchored(*records: zpf.Block, isn: int | None = 1000) -> zpf.ConformanceChecker:
+    """Feed a capture session whose participant declares ``isn``."""
+    checker = zpf.ConformanceChecker()
+    checker.check([
+        HEADER, CAP,
+        zpf.Session(session_id=5),
+        zpf.Participant(session_id=5, participant_id=0, isn=isn),
+    ])
+    for record in records:
+        checker.observe(record)
+    return checker
+
+
+def notes(*records: zpf.Block, isn: int | None = 1000) -> list[str]:
+    """Return the placement notes the last of ``records`` produced."""
+    checker = anchored(*records, isn=isn)
+    return list(checker.unplaceable_notes)
+
+
+def test_a_below_origin_record_is_noted_and_not_a_violation():
+    """`0.19` withdrew the MUST NOT and kept the effect, so this reports only.
+
+    Raising here — or reporting it as advisory — would make a checking writer
+    refuse a block the format permits, and would fail `unplaceable-below-origin`,
+    which declares zero violations on the accept tier.
+    """
+    reported = notes(raw_record(seq_start=1000, payload=b"LOSTBYTE"))
+    assert len(reported) == 1
+    assert "below the stream origin 1001" in reported[0]
+    assert "excluded from the extent" in reported[0]
+
+
+def test_a_record_at_the_origin_is_placeable():
+    assert notes(raw_record(seq_start=1001, payload=b"AAAA")) == []
+
+
+def test_a_hintless_record_on_an_anchored_stream_is_noted():
+    assert len(notes(raw_record(seq_start=None, payload=b"x"))) == 1
+    # ...and on a stream with no isn and no earlier hint, it is not: nothing
+    # says that stream is sequence-anchored at all.
+    assert notes(raw_record(seq_start=None, payload=b"x"), isn=None) == []
+
+
+def test_an_earlier_hint_anchors_the_stream_for_what_follows():
+    checker = anchored(raw_record(seq_start=1001, payload=b"AAAA"), isn=None)
+    checker.observe(raw_record(seq_start=None, payload=b"x"))
+    assert len(checker.unplaceable_notes) == 1
+
+
+def test_a_syn_away_from_the_origin_is_advisory():
+    """A MUST on the writer whose breach costs a reader the handshake's timing.
+
+    Advisory wherever the record sits, which `0.18` settled: `0.17` had left a
+    syn *above* the origin isolatable while the shape that wrecks the offset
+    space was accept-and-report, which inverted the strengths against the
+    damage.
+    """
+    for seq_start in (1000, 1007):
+        with pytest.raises(zpf.AdvisoryError, match="handshake record MUST sit"):
+            anchored(raw_record(
+                seq_start=seq_start, payload=b"", flags=zpf.RecordFlags.SYN,
+            ))
+    # At the origin it is the shape the format describes.
+    anchored(raw_record(seq_start=1001, payload=b"", flags=zpf.RecordFlags.SYN))
+
+
+def test_a_syn_below_the_origin_is_both_advisory_and_unplaceable():
+    """#63's actual file: one record, two true things said about it."""
+    checker = zpf.ConformanceChecker()
+    checker.check([
+        HEADER, CAP, zpf.Session(session_id=5),
+        zpf.Participant(session_id=5, participant_id=0, isn=1000),
+    ])
+    with pytest.raises(zpf.AdvisoryError, match="handshake record MUST sit"):
+        checker.observe(raw_record(seq_start=1000, payload=b"", flags=zpf.RecordFlags.SYN))
+    # The note is recorded even though the advisory finding raised: the block
+    # was fully absorbed before `observe` reported it, which is the same
+    # ordering that lets a lenient reader keep an advisory block.
+    assert len(checker.unplaceable_notes) == 1

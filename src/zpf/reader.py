@@ -443,6 +443,20 @@ class FileReader:
             ``"nonconformant"`` entries from the semantic checker in lenient
             mode — for blocks it isolated, and for advisory findings
             (:class:`~zpf.errors.AdvisoryError`) on blocks that were kept.
+        unplaceable: Records the offset space could not place, as
+            ``"unplaceable"`` :class:`~zpf.Diagnostic` entries.
+
+            **Kept apart from** ``diagnostics`` **on purpose.** Since `0.19` an
+            unplaceable record breaks no rule — the origin floor stopped being
+            a MUST NOT and what survives is that such a record covers no byte
+            and moves no extent — while a reader still SHOULD report it. Both
+            vectors for the shape sit on the accept tier declaring *zero*
+            violations, so a conformant reader has to report the record and
+            report the file clean, which one list cannot do. Two lists can:
+            ``diagnostics`` says what is wrong with the file, this says what
+            the file could not tell you. Filed upstream as
+            `zipline#140 <https://github.com/adamkjonsson/zipline/issues/140>`_,
+            because the manifest cannot express the obligation either.
         strict: Whether semantic violations and truncation raised instead.
         path: The filesystem path this file was opened from, or None when
             it came from an already-open stream.
@@ -470,6 +484,7 @@ class FileReader:
         self.complete = False
         self.truncated = False
         self.diagnostics: list[Diagnostic] = []
+        self.unplaceable: list[Diagnostic] = []
         self.header: FileHeader | None = None
         self._closed = False
         self._checker = ConformanceChecker()
@@ -796,6 +811,7 @@ class FileReader:
         try:
             self._checker.observe(block)
         except AdvisoryError as exc:
+            self._note_unplaceable(offset)
             if self.strict:
                 raise
             self.diagnostics.append(Diagnostic(offset, "nonconformant", str(exc)))
@@ -805,7 +821,19 @@ class FileReader:
                 raise
             self.diagnostics.append(Diagnostic(offset, "nonconformant", str(exc)))
             return False
+        self._note_unplaceable(offset)
         return True
+
+    def _note_unplaceable(self, offset: int) -> None:
+        """Drain the checker's placement notes for the block just observed.
+
+        The checker sees what it takes to decide and this knows where the
+        block sits, so the offset is attached here. An isolated block
+        contributes nothing: a reader that dropped it has no record to report
+        as unplaceable.
+        """
+        for note in self._checker.unplaceable_notes:
+            self.unplaceable.append(Diagnostic(offset, "unplaceable", note))
 
     def _file_into_index(self, block: Block, offset: int) -> None:
         if isinstance(block, Source):

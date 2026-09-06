@@ -52,9 +52,9 @@ from zpf.blocks import (
     Undecoded,
 )
 from zpf.conformance import ConformanceChecker
-from zpf.errors import ZpfError
+from zpf.errors import SemanticError, ZpfError
 from zpf.jsonl import JsonlWriter
-from zpf.order import _StoredOrder, causal_merge
+from zpf.order import SEQ_SPACE, _StoredOrder, causal_merge, seq_lt
 
 if TYPE_CHECKING:
     import os
@@ -695,6 +695,7 @@ class SessionWriter:
         self._default_source = default_source
         self.session_id = session_id
         self._pids: set[int] = set()
+        self._isn: dict[int, int] = {}  # per pid, for the placement guards
         self._next_pid = 0
         self._ended = False
         # Only a sequenced session has an order to keep, so only a sequenced
@@ -757,6 +758,8 @@ class SessionWriter:
             )
         )
         self._pids.add(chosen)
+        if isn is not None:
+            self._isn[chosen] = isn
         return ParticipantHandle(session_id=self.session_id, pid=chosen)
 
     def record(  # noqa: PLR0913
@@ -844,13 +847,71 @@ class SessionWriter:
         self._emit_record(block)
 
     def _emit_record(self, block: Record) -> None:
-        """Guard the stored order, then write."""
+        """Guard the record's placement and the stored order, then write."""
         # Before the emit, so a refused record is not written and the guard's
         # state stays consistent — the same block-isolation discipline the
         # ConformanceChecker follows.
+        self._guard_placement(block)
         if self._order is not None:
             self._order.observe(block)
         self._emit(block)
+
+    def _guard_placement(self, block: Record) -> None:
+        """Refuse a record this stream's offset space could not place.
+
+        Two shapes, and they do not have the same standing.
+
+        A **handshake record away from the origin** breaks a MUST: the format
+        fixes a ``syn``-flagged record at ``isn + 1``, the SYN consuming a
+        sequence number without delivering a byte. A reader meeting one accepts
+        and reports, but a *writer* is being told about its own output at the
+        moment it can still fix it, which is where the ordering guard above
+        draws the same line.
+
+        A **payload-carrying record below the origin** is where this goes
+        **beyond the standard**, and says so. `0.19` permits the file: the
+        record is unplaceable, its bytes are in no offset, and they are simply
+        excluded from the extent and from every coverage answer — "the price of
+        not trusting the wrapped offset", in the specification's words. No
+        producer wants to pay that price silently. The only instance anyone has
+        seen was a bug
+        (`#63 <https://github.com/adamkjonsson/python-zipline/issues/63>`_,
+        where every file zpfwire had ever written carried it), and a writer
+        that emits one is throwing its own bytes away. So this refuses, and the
+        error says it is stricter than the format requires.
+
+        Neither check lives in :class:`~zpf.ConformanceChecker`: the first is
+        advisory there rather than isolating, and the second is not the
+        specification's rule at all, which is the line ``CLAUDE.md`` draws
+        around that class.
+
+        Raises:
+            SemanticError: On either shape.
+
+        """
+        isn = self._isn.get(block.sender_pid)
+        if isn is None or block.seq_start is None:
+            return
+        origin = (isn + 1) % SEQ_SPACE
+        if block.flags & RecordFlags.SYN and block.seq_start != origin:
+            msg = (
+                f"a syn-flagged record MUST sit at the stream origin isn + 1 "
+                f"({origin}), got seq_start {block.seq_start}. The SYN consumes a "
+                f"sequence number without delivering a byte, which is why the origin "
+                f"is isn + 1 and not isn"
+            )
+            raise SemanticError(msg)
+        if block.payload and seq_lt(block.seq_start, origin):
+            msg = (
+                f"record with seq_start {block.seq_start} is below the stream origin "
+                f"{origin} (isn + 1), so its {len(block.payload)} payload byte(s) "
+                f"would be in no offset at all — excluded from the extent and from "
+                f"every coverage answer the file supports. **This refusal is stricter "
+                f"than the format**, which permits the file and asks a reader only to "
+                f"report the record; it is refused here because a writer discarding "
+                f"its own bytes is a bug at the point it can still be fixed"
+            )
+            raise SemanticError(msg)
 
     def _flush_pending(self) -> None:
         """Emit buffered records in causal order.

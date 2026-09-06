@@ -153,6 +153,24 @@ checks (sequenced order, coverage) are spec requirements enforced elsewhere,
 not extensions. A new rule that isn't in v0.19 does not belong in the
 `ConformanceChecker`.
 
+**One thing does exceed the standard, and it is on the write side only.**
+{meth}`~zpf.SessionWriter.record` refuses a payload-carrying record whose
+`seq_start` is below the stream origin. `0.19` permits that file — the record
+is unplaceable, its bytes are in no offset, and a reader accepts and reports —
+so this is a producer-side rule the format does not state. It is deliberate:
+such a writer is discarding its own bytes, the cost is silent, and the only
+instance anyone has met was the bug behind
+[#63](https://github.com/adamkjonsson/python-zipline/issues/63). The refusal
+names itself as stricter than the format in the error text, the docstring and
+the [errors page](../user/errors.md#writing-one-refused-and-that-is-stricter-than-the-format),
+which is what the callout rule asks for.
+
+The reading side is not affected, and deliberately so: `zpf.open` accepts such
+a file, places the record at zero width, and reports it under `unplaceable`.
+Being stricter than the format about what we *write* costs a producer nothing
+it wants; being stricter about what we *read* would refuse files the format
+says are fine.
+
 ### What the standard asks for and no reader can check
 
 Two rules are **writer-only**, and their absence from the checker is a
