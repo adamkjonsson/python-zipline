@@ -459,58 +459,132 @@ def resolve_spans(
     index: int,
     *,
     open_input: Callable[[Source], str | os.PathLike[str] | IO[bytes] | IO[str]] | None = None,
+    hops: int | None = 1,
 ) -> tuple[Span, ...]:
     """Resolve which upstream ranges a record's bytes came from.
 
-    **One hop, always, since `0.19`.** Every ``zpf``-sourced record carries
-    ``spans``, so the answer is in the file holding the record and this reads
-    it. Which kind of stage produced the record does not change the lookup: a
-    decode stage's spans name the input ranges its unit *corresponds to*, a
-    pass-through's are an **identity span** naming the range it re-emitted
-    unchanged, and both are read the same way.
+    **One hop answers for the immediate input, and since `0.19` every
+    ``zpf``-sourced record can.** Its ``spans`` name the ranges it corresponds
+    to in the file it was derived from — a decode stage's naming what its unit
+    was built from, a pass-through's an **identity span**, the same range in as
+    out. Which kind of stage wrote the record does not change the lookup, which
+    is what package A bought: through `0.18` a pass-through's records carried no
+    spans at all, and answering for one meant opening its input.
 
-    Through `0.18` this was one hop or two. A pass-through's records carried
-    no spans at all — ``origin`` plus offset preservation was its provenance —
-    so the walk had to open the input, find the record occupying the same
-    offsets, and read *its* spans. That file alone could not answer the
-    question, which is the asymmetry `0.19` removed by giving every derived
-    record spans of its own.
-
-    **Walking further up the chain is a different question.** The spans
-    returned here name this file's immediate input, whatever kind of stage
-    wrote it; following them back to a capture means resolving again in that
-    input, and is tracked separately.
+    **More hops follow the chain toward the capture.** Each level resolves the
+    ranges from the level before, so ``hops=2`` over ``chain/annotated.zpf``
+    returns spans naming ``raw.zpf`` rather than ``decoded.zpf``, and
+    ``hops=None`` walks until the records answering are capture-sourced and
+    have no spans of their own. A span that cannot go further is returned as it
+    stands, that being as deep as the chain records.
 
     Args:
         derived: The file holding the record.
         session_id: Its session id, in *this* file's namespace.
         pid: Its participant id, in this file's namespace.
         index: The record's position in that participant's stored order.
-        open_input: How to open a ``zpf-input`` Source this file names.
-            Unused for a record that answers for itself, which since `0.19`
-            is every ``zpf``-sourced record; kept because the signature is
-            public and a multi-hop walk needs it. Defaults to resolving the
-            Source's ``uri`` beside ``derived``, which requires ``derived``
-            to be a path — so a stream input still raises here rather than
-            silently accepting a call it could not complete.
+        open_input: How to open a ``zpf-input`` Source. Needed only when
+            ``hops`` asks for more than one, since one hop opens nothing.
+            Defaults to resolving the Source's ``uri`` beside ``derived``,
+            which requires ``derived`` to be a path.
+        hops: How far to follow the chain. ``1`` (the default) is the record's
+            own spans, which is what the function's name promises; ``None``
+            walks to the capture. Must be at least 1.
 
     Returns:
         The spans naming the upstream ranges, empty when the file records no
         provenance for the record — a capture-sourced one, whose ``source_id``
         is the whole of its provenance. Each span's ids are read in the
-        namespace of *the source it names*, as spans always are.
+        namespace of *the source it names*, as spans always are, so a
+        multi-hop result is read against a file further up the chain than
+        ``derived``.
 
     Raises:
         IndexError: If the participant has no record at ``index``.
-        ZpfError: If ``derived`` is not a path and no ``open_input`` was
-            given.
+        ZpfError: If ``hops`` is less than 1, or if a hop must open an input
+            and ``derived`` is not a path with no ``open_input`` given.
+
+    Example:
+        >>> zpf.resolve_spans("annotated.zpf", 7, 0, 0)             # its input
+        >>> zpf.resolve_spans("annotated.zpf", 7, 0, 0, hops=None)  # the capture
 
     """
-    _ = open_input or _sibling_opener(derived)
+    if hops is not None and hops < 1:
+        msg = f"hops must be at least 1 (the record's own spans), got {hops}"
+        raise ZpfError(msg)
     with FileReader(derived) as reader:
         session = reader.session(session_id)
         records = list(session.stream(pid))
-        return records[index].spans
+        spans = records[index].spans
+        sources = dict(reader.sources)
+    if hops is not None and hops == 1:
+        # Nothing is opened, so nothing is needed to open it with. Asking for
+        # an opener here is what made `open_input` look load-bearing when it
+        # was not.
+        return spans
+    opener = open_input or _sibling_opener(derived)
+    remaining = None if hops is None else hops - 1
+    found: list[Span] = []
+    for span in spans:
+        found.extend(_follow(span, sources, opener, remaining))
+    return tuple(found)
+
+
+def _follow(
+    span: Span,
+    sources: dict[int, Source],
+    opener: Callable[[Source], str | os.PathLike[str] | IO[bytes] | IO[str]],
+    remaining: int | None,
+) -> tuple[Span, ...]:
+    """Resolve one span in the file it names, recursing while hops remain.
+
+    Args:
+        span: The range to resolve, in the namespace of the source it names.
+        sources: The declared Sources of the file the span was read from.
+        opener: How to open a ``zpf-input`` Source.
+        remaining: Hops left, or ``None`` for as far as the chain goes.
+
+    Returns:
+        What the span resolves to, or the span itself where it can go no
+        further — a capture-sourced source, or records that carry no spans.
+
+    """
+    source = sources.get(span.source_id)
+    if source is None or source.kind != SourceKind.ZPF_INPUT:
+        return (span,)
+    return _resolve_at(opener(source), span, opener, remaining)
+
+
+def _resolve_at(
+    target: str | os.PathLike[str] | IO[bytes] | IO[str],
+    span: Span,
+    opener: Callable[[Source], str | os.PathLike[str] | IO[bytes] | IO[str]],
+    remaining: int | None,
+) -> tuple[Span, ...]:
+    """Collect what ``span`` corresponds to inside the file it names."""
+    with FileReader(target) as reader:
+        session = reader.session(span.session_id)
+        pid = span.participant_id
+        found: list[Span] = []
+        for record, (start, end) in zip(
+            session.stream(pid), session.ranges(pid), strict=True
+        ):
+            if end <= span.off_start or start >= span.off_end:
+                continue
+            found.extend(record.spans)
+        sources = dict(reader.sources)
+    if not found:
+        # The records answering here carry no spans of their own, so this is
+        # the deepest the chain records and the span we came with is the answer.
+        return (span,)
+    if remaining is not None and remaining <= 1:
+        return tuple(found)
+    deeper: list[Span] = []
+    for inner in found:
+        deeper.extend(
+            _follow(inner, sources, opener, None if remaining is None else remaining - 1)
+        )
+    return tuple(deeper)
 
 
 def _sibling_opener(
@@ -745,15 +819,16 @@ def rewrite_decoded(
     """Filter and/or reorder a decoded file's records into a new stage.
 
     Dropping or reordering a decoded record changes that participant's
-    offset space, because stored order is what *defines* it. So this is
-    **not** a pass-through, however byte-preserving it looks: the output
-    cannot claim to have preserved what it just moved. It is a decode stage,
-    and it carries a decode stage's obligations —
+    offset space, because stored order is what *defines* it, so an output that
+    did either cannot claim to have preserved what it just moved. It is then a
+    decode stage, and carries a decode stage's obligations —
 
     * every emitted record cites the input range it came from in ``spans``;
-    * every dropped range is marked :class:`~zpf.Undecoded` with
-      ``reason="skipped"``, a deliberate decision not to carry data forward,
-      so the coverage guarantee holds over the whole input;
+    * every removed range is marked :class:`~zpf.Undecoded` with
+      ``reason="dropped"`` — content of the stream that was taken out, which
+      since `0.17` is a different statement from ``skipped`` and is what makes
+      the seam duty checkable — so the coverage guarantee holds over the whole
+      input;
     * ``decoder_id`` names a **layer**, not a stage, so the input's are
       inherited and their Decoder Descriptors re-declared. This stage
       declares no decoder of its own — a filtered HTTP message is still an
@@ -762,6 +837,18 @@ def rewrite_decoded(
     A reordering stage's spans will *not* ascend with stored order. That is
     expected: coverage depends on which ranges are covered, not on the order
     they appear in.
+
+    **Which kind of stage this is, is decided per run, and `0.19` is what made
+    that sayable.** This docstring used to open by declaring the output "not a
+    pass-through, however byte-preserving it looks", which was true while the
+    discriminator was which *option* was present — a pass-through carried
+    ``origin`` and this function never wrote one. Since `0.19` the
+    discriminator is whether a record's spans are **identity**, the same range
+    in as out, and with ``keep=None, reorder=None`` every span this writes is
+    exactly that. So an unfiltered, unreordered run *is* a pass-through by the
+    specification's own test, and a filtering or reordering one is not. Nothing
+    about the output changed; what changed is that the file now says which,
+    and says it per record rather than per file.
 
     **The gap this used to fill is now the standard's.** Through ``0.14``
     nothing required a block at a drop point: the MUST NOT was written about

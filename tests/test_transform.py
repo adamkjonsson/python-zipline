@@ -359,12 +359,56 @@ def test_a_raw_file_records_no_provenance_to_resolve():
     assert zpf.resolve_spans(CHAIN / "raw.zpf", 7, 0, 0) == ()
 
 
-def test_resolving_a_stream_needs_an_explicit_opener():
+def test_only_a_multi_hop_walk_needs_an_explicit_opener():
+    """One hop opens nothing, so it asks for nothing.
+
+    Through Phase 0 this raised for *every* call on a stream, because
+    `resolve_spans` built the opener before deciding whether it needed one —
+    a leftover from the two-hop walk, which always did. Requiring an argument
+    a call cannot use is how a parameter comes to look load-bearing when it is
+    not.
+    """
+    with (CHAIN / "annotated.zpf").open("rb") as handle:
+        # One hop reads the record's own spans: no input, no opener, no raise.
+        assert zpf.resolve_spans(handle, 7, 0, 0) != ()
+
     with (
         (CHAIN / "annotated.zpf").open("rb") as handle,
         pytest.raises(zpf.ZpfError, match="open_input"),
     ):
-        zpf.resolve_spans(handle, 7, 0, 0)
+        zpf.resolve_spans(handle, 7, 0, 0, hops=None)
+
+
+def test_a_walk_follows_the_chain_toward_the_capture():
+    """`hops` is the part of the old two-hop walk worth keeping.
+
+    The chain is annotated -> decoded -> raw, and raw is a capture. One hop
+    names `decoded.zpf`; two name `raw.zpf`; walking to the end stops there,
+    because raw's records are capture-sourced and carry no spans, so that span
+    is as deep as the chain records.
+    """
+    one = zpf.resolve_spans(CHAIN / "annotated.zpf", 7, 0, 0)
+    assert [(s.source_id, s.off_start, s.off_end) for s in one] == [(2, 0, 9)]
+
+    two = zpf.resolve_spans(CHAIN / "annotated.zpf", 7, 0, 0, hops=2)
+    assert [(s.source_id, s.off_start, s.off_end) for s in two] == [(1, 0, 9)]
+
+    # The ids are read in the namespace of the source each span names, so
+    # source 1 here is `decoded.zpf`'s raw.zpf, not `annotated.zpf`'s.
+    assert zpf.resolve_spans(CHAIN / "annotated.zpf", 7, 0, 0, hops=None) == two
+
+
+def test_a_walk_past_the_capture_stops_rather_than_emptying():
+    """A record that answers for itself ends the walk holding the answer."""
+    # decoded.zpf's input is the capture, so one hop is already the end.
+    deep = zpf.resolve_spans(CHAIN / "decoded.zpf", 7, 0, 0, hops=None)
+    assert [(s.source_id, s.off_start, s.off_end) for s in deep] == [(1, 0, 9)]
+    assert deep == zpf.resolve_spans(CHAIN / "decoded.zpf", 7, 0, 0)
+
+
+def test_hops_below_one_is_refused():
+    with pytest.raises(zpf.ZpfError, match="at least 1"):
+        zpf.resolve_spans(CHAIN / "annotated.zpf", 7, 0, 0, hops=0)
 
 
 def test_an_opener_is_not_needed_for_a_record_that_answers_for_itself():
@@ -389,6 +433,10 @@ def test_an_opener_is_not_needed_for_a_record_that_answers_for_itself():
     (span,) = zpf.resolve_spans(CHAIN / "annotated.zpf", 7, 0, 0, open_input=opener)
     assert seen == [], "one hop reads the record's own spans and opens nothing"
     assert (span.off_start, span.off_end) == (0, 9)
+
+    # Two hops open exactly the file the span names, and no further.
+    zpf.resolve_spans(CHAIN / "annotated.zpf", 7, 0, 0, hops=2, open_input=opener)
+    assert seen == ["decoded.zpf"]
 
 
 # --- Filter / reorder stages (rewrite_decoded) -------------------------------

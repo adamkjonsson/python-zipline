@@ -99,6 +99,29 @@ lists the `coverage-gap` / `coverage-overlap` / `coverage-excess` categories and
 their fixes; a decode stage written with {func}`zpf.decode_stage` satisfies the
 guarantee by construction (see [decoding](decoding.md#coverage-is-handled-for-you)).
 
+### A pass-through owes coverage too, and it is easy to miss
+
+Since `0.19` a pass-through cites its input — an identity span per record — so
+it is answerable for that input exactly as a decode stage is. Anything the
+input's offset space carries that no identity span covers has to be marked, and
+there are two such shapes:
+
+- **A hinted transport input's holes.** Its offsets are hole-inclusive, so a
+  range no record covers is a real part of the space. Mark it `gap`, the *hole*
+  class: no bytes exist there to go and fetch.
+- **A decoded input's declared widths.** A {class}`~zpf.Discontinuity` carrying
+  a `width` occupies that many offsets that no payload covers, by the same
+  reasoning.
+
+Neither is `skipped` or `dropped`. Both of those say bytes exist upstream, and
+sending a consumer up the chain after data that was never captured is worse
+than saying nothing.
+
+{func}`zpf.merge_files` does this for you, and {func}`zpf.rewrite_decoded`
+marks the widths it carries forward. **If you write a pass-through by hand, it
+is yours to do** — and no conformance vector covers it, so nothing but
+{func}`zpf.check_extents` on your own output will tell you.
+
 ## Following the chain
 
 Because a derived file cites its input in the input's own coordinate system,
