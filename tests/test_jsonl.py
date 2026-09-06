@@ -59,14 +59,16 @@ MERGED_EXAMPLE = "\n".join(
         '{"type":"source","source_id":2,"kind":"zpf-input","uri":"sideB.zpf","digest":"sha256:22bb…"}',
         '{"type":"session","session_id":1,"proto":"tcp",'
         '"key":"10.0.0.1:51000 <-> 93.184.216.34:80","sequenced":true}',
-        '{"type":"participant","session_id":1,"pid":0,"endpoint":["10.0.0.1:51000"],"isn":1000,'
-        '"origin":{"source_id":1,"session_id":7,"pid":0}}',
-        '{"type":"participant","session_id":1,"pid":1,"endpoint":["93.184.216.34:80"],"isn":5000,'
-        '"origin":{"source_id":2,"session_id":3,"pid":0}}',
+        '{"type":"participant","session_id":1,"pid":0,"endpoint":["10.0.0.1:51000"],"isn":1000}',
+        '{"type":"participant","session_id":1,"pid":1,"endpoint":["93.184.216.34:80"],"isn":5000}',
+        # Identity spans: the same range in as out, which is how a
+        # pass-through states its provenance since 0.19.
         '{"type":"record","session_id":1,"sender_pid":0,"source_id":1,"ts":1000,'
-        '"seq_start":1001,"ack":5001,"payload":"R0VUIC8gSFRUUC8xLjENCg0K"}',
+        '"seq_start":1001,"ack":5001,"payload":"R0VUIC8gSFRUUC8xLjENCg0K",'
+        '"spans":[{"source_id":1,"session_id":7,"pid":0,"off_start":0,"off_end":18}]}',
         '{"type":"record","session_id":1,"sender_pid":1,"source_id":2,"ts":995,'
-        '"seq_start":5001,"ack":1019,"payload":"SFRUUC8xLjEgMjAwIE9LDQouLi4="}',
+        '"seq_start":5001,"ack":1019,"payload":"SFRUUC8xLjEgMjAwIE9LDQouLi4=",'
+        '"spans":[{"source_id":2,"session_id":3,"pid":0,"off_start":0,"off_end":20}]}',
         "",
     ]
 )
@@ -141,8 +143,14 @@ def test_merged_example_parses_provenance():
     assert (header.produced_by, header.produced_at) == ("zpf-merge 1.2", 1_719_510_000)
     assert blocks[1].kind is zpf.SourceKind.ZPF_INPUT
     assert blocks[3].sequenced
-    assert blocks[4].origin == zpf.Origin(source_id=1, session_id=7, participant_id=0)
-    assert blocks[5].origin == zpf.Origin(source_id=2, session_id=3, participant_id=0)
+    # Provenance is an identity span per record since 0.19, not a participant
+    # origin: the same range in as out, naming the input stream directly.
+    assert blocks[6].spans == (
+        zpf.Span(source_id=1, session_id=7, participant_id=0, off_start=0, off_end=18),
+    )
+    assert blocks[7].spans == (
+        zpf.Span(source_id=2, session_id=3, participant_id=0, off_start=0, off_end=20),
+    )
 
 
 def test_decoded_example_parses_decode_stage():
@@ -206,7 +214,6 @@ FULL_BLOCKS = [
         isn=0xFFFF_FFFF,
         identity="alice",
         tcp_role=zpf.TcpRole.RESPONDER,
-        origin=zpf.Origin(source_id=1, session_id=3, participant_id=0),
     ),
     zpf.SessionEnd(session_id=7, reason="fin", comment="bye"),
     zpf.Record(

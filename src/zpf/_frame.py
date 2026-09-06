@@ -62,7 +62,6 @@ OPT_ENDPOINT = 0x0060
 OPT_ISN = 0x0061
 OPT_IDENTITY = 0x0062
 OPT_TCP_ROLE = 0x0063
-OPT_ORIGIN = 0x0064
 OPT_SEQ_START = 0x0070
 OPT_ACK = 0x0072
 OPT_TS_FIRST = 0x0073
@@ -84,7 +83,6 @@ OPTION_HEADER = struct.Struct("<HH")  # id, len
 SPAN_ENTRY = struct.Struct("<HHQQQ")  # source_id, pid, session_id, off_start, off_end
 INPUT_EXTENT_ENTRY = struct.Struct("<HHQQ")  # source_id, pid, session_id, extent
 DISCONTINUITY_BODY = struct.Struct("<QHH")  # session_id, participant_id, _reserved
-ORIGIN = struct.Struct("<HHQ")  # source_id, pid, session_id
 
 U8 = struct.Struct("<B")
 U16 = struct.Struct("<H")

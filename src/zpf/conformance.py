@@ -14,17 +14,24 @@ over any block iterable.
 independent axes and both are per participant, so one file may hold a
 created stream beside a preserved one and a captured stream beside a
 derived one. There is no file kind to infer, and asking for one was how
-this checker used to reject ``mixed-derivation``. Four rules bind per
+this checker used to reject ``mixed-derivation``. Two rules bind per
 participant and are ruled on when its records are all in — at Session End,
 or at end-of-stream for a session that never got one:
 
 * its records MUST resolve to **one layer**, or the stream's offset space
   has two incompatible definitions;
-* a layer this version does not define MUST NOT be guessed past;
-* it is **created or preserved** — carrying ``origin``, or holding records
-  with ``spans`` — and never half of each;
-* a ``zpf``-sourced participant MUST be one or the other, never neither,
-  or nothing says which input stream its bytes came from.
+* a layer this version does not define MUST NOT be guessed past.
+
+**Provenance is now a per-record rule, and there is one of it:** every
+``zpf``-sourced record carries ``spans``. Through ``0.18`` a derived stream
+was *created* (records with ``spans``) or *preserved* (a participant with
+``origin``), and four rules policed the pair — carry exactly one origin,
+never on a capture-sourced stream, never both origin and spans, never
+neither. ``0.19`` deleted the option, so a pass-through writes an **identity
+span** per record instead, which kind a stream is, is read from whether its
+spans are identity, and the four rules collapse into that one sentence. It
+binds at the record rather than at Session End, which is both simpler and
+earlier: the block a lenient reader isolates is the one that broke it.
 
 Findings come in two strengths. Most are *isolating*: the block cannot be
 made sense of, so a lenient reader drops it. A few bind the writer only —
@@ -111,8 +118,6 @@ class _ParticipantState:
 
     Attributes:
         described: The Participant block, for diagnostics.
-        origin_source: The ``source_id`` its ``origin`` names, if any.
-        has_spans: Whether any of its records carries ``spans``.
         provenances: The Source kinds its records reference.
         layers: The layers its records resolve to. More than one is a
             violation — the stream's offset space would have two
@@ -133,8 +138,6 @@ class _ParticipantState:
     """
 
     described: str
-    origin_source: int | None = None
-    has_spans: bool = False
     provenances: set[SourceKind | int] = field(default_factory=set)
     layers: set[OutputLayer | int] = field(default_factory=set)
     has_discontinuity: str | None = None
@@ -252,10 +255,13 @@ class CoverageLedger:
         a file that decodes one session while passing another through
         (``mixed-derivation``), which the file-wide gate could not express.
 
-        A pass-through cites nothing — it re-emits records rather than
-        spanning them, and its only entries here are the Undecoded blocks it
-        inherited. Applying a decode stage's obligation to those would
-        report every unspanned byte as a hole, failing conformant files.
+        Since ``0.19`` a pass-through cites **everything**: it writes an
+        identity span per record, so it is answerable for its input exactly as
+        a decode stage is. Through ``0.18`` it cited nothing and this gate
+        existed to keep a decode stage's obligation off it. The gate stays,
+        because the question it asks — did any record cite this stream? — is
+        still the right one, and a file that declares a ``zpf-input`` Source
+        only to resolve an inherited reference cites nothing through it.
 
         Returns:
             ``(offset, category, message)`` per finding, in stream order.
@@ -518,22 +524,9 @@ class ConformanceChecker:
                 "declared twice"
             )
             raise SemanticError(msg)
-        origin_source: int | None = None
-        if block.origin is not None:
-            origin_kind = self._require_source(block.origin.source_id, described)
-            if origin_kind != SourceKind.ZPF_INPUT:
-                msg = f"{described} origin must reference a zpf-input source"
-                raise SemanticError(msg)
-            # An origin names an input `.zpf`, so this file holds a
-            # zpf-sourced stream and owes the header's build provenance.
-            self._require_derived_header(f"{described} (carries origin)")
-            self._saw_zpf_sourced = True
-            origin_source = block.origin.source_id
         # Registration last: a raised violation leaves the checker
         # consistent, so a lenient reader can isolate the block and go on.
-        state.participants[block.participant_id] = _ParticipantState(
-            described=described, origin_source=origin_source
-        )
+        state.participants[block.participant_id] = _ParticipantState(described=described)
 
     def _on_session_end(self, block: SessionEnd) -> None:
         described = _describe(block)
@@ -684,18 +677,20 @@ class ConformanceChecker:
     ) -> None:
         """Record what this block says about its stream's two axes.
 
-        Nothing is ruled on here. Both axes are properties of the *stream*,
-        so they are only decidable once all of a participant's records are
-        in — which is Session End. What this does is gather: the Source kind
-        the record references (provenance), the layer its decoder declares,
-        and whether it carries ``spans`` (created versus preserved).
+        Both axes are properties of the *stream*, so they are gathered here
+        and decided once all of a participant's records are in, at Session
+        End. One thing **is** ruled on here, because it is decidable per
+        record: a ``zpf``-sourced record carries ``spans``.
 
-        The discriminator between created and preserved is **spans versus
-        origin**, not ``decoder_id``. A record carrying ``spans`` was built
-        by this file's stage; one without them was re-emitted from the input
-        unchanged. ``decoder_id`` answers a different question — which
-        decoder's *layer* the record belongs to — and a pass-through carries
-        inherited ones forward, so it says nothing about which stage ran.
+        Created versus preserved is no longer a rule at all, and since
+        ``0.19`` it is not a question about which option is present either —
+        it is read from **whether the spans are identity**, the same range in
+        as out. Nothing here needs to ask: both kinds owe spans, and that is
+        the whole of the provenance rule.
+
+        ``decoder_id`` answers a different question — which decoder's *layer*
+        a record belongs to — and a pass-through carries inherited ones
+        forward, so it says nothing about which stage ran.
         """
         source_kind = self._require_source(block.source_id, described)
         if source_kind not in (SourceKind.CAPTURE, SourceKind.ZPF_INPUT):
@@ -717,11 +712,30 @@ class ConformanceChecker:
         self._note(_transport_content_type(block, layer, described))
         self._check_spans(block.spans, described=described)
         if source_kind == SourceKind.ZPF_INPUT:
+            # **Every `zpf`-sourced record carries `spans`.** One sentence,
+            # binding per record, in place of the four participant-level rules
+            # `0.19` retired with the `origin` option: every pass-through
+            # participant carries exactly one origin; origin MUST NOT appear on
+            # a capture-sourced stream; a participant MUST NOT carry both
+            # origin and records with spans; a zpf-sourced participant MUST be
+            # one or the other. All four keyed on which option was present.
+            #
+            # It also fires earlier than they could. Those were properties of
+            # a participant's whole record set, so they waited for Session End;
+            # this is decidable at the record, which is the block a lenient
+            # reader isolates.
+            if not block.spans:
+                msg = (
+                    f"{described} references a zpf-input source but carries no spans, "
+                    f"so nothing says which stream inside that input its bytes came "
+                    f"from; nothing resolves one level down and no coverage obligation "
+                    f"can be computed either way"
+                )
+                raise SemanticError(msg)
             self._require_derived_header(described)
             self._saw_zpf_sourced = True
         stream.provenances.add(source_kind)
         stream.layers.add(layer)
-        stream.has_spans = stream.has_spans or bool(block.spans)
         self._track_break_candidates(block, stream, described)
 
     def _track_break_candidates(
@@ -913,28 +927,6 @@ class ConformanceChecker:
         # sessionization stage.
         if OutputLayer.DECODED in stream.layers:
             self._breaks.extend(stream.candidates)
-        # Created or preserved, never half of each, and never neither.
-        if stream.origin_source is not None and stream.has_spans:
-            msg = (
-                f"{stream.described} carries origin and holds records carrying spans; "
-                f"one stream is created or preserved, never half of each"
-            )
-            raise SemanticError(msg)
-        if SourceKind.ZPF_INPUT in stream.provenances:
-            if stream.origin_source is None and not stream.has_spans:
-                msg = (
-                    f"{stream.described} is zpf-sourced but carries neither origin nor "
-                    f"records with spans, so nothing says which input stream its bytes "
-                    f"came from"
-                )
-                raise SemanticError(msg)
-        elif stream.origin_source is not None and stream.provenances:
-            msg = (
-                f"{stream.described} carries origin, but its records are "
-                f"capture-sourced; a capture-sourced stream's source_id is the whole "
-                f"of its provenance"
-            )
-            raise SemanticError(msg)
 
     def _require_derived_header(self, reason: str) -> None:
         header = self._header

@@ -99,16 +99,30 @@ Three design points worth preserving when editing it:
   | Reserved bits set in any flags field (File Header, Session, Record) | The format defines no meaning for them, so there is nothing to act on. Isolating would discard well-framed data — and dropping a File Header or Session Descriptor takes every block that depends on it. |
   | An illegal `prim:` token, or a width that disagrees with `payload_len` | The spec says to treat the label as unknown and keep the payload: "MUST NOT pad, truncate, or reinterpret". |
 
-### File-kind purity
+### The unit is the stream, not the file
 
-A file is exactly one kind — raw, decode-stage, or pass-through — and the
-checker infers it from the first distinguishing block, then locks it: a
-capture-sourced byte run means raw, a `decoder_id` means decode-stage, a
-`zpf-input` byte run or a participant `origin` means pass-through. A later
-block implying a different kind is the error, and the message names both the
-block that locked the kind and the one that conflicts. Derived kinds
-(decode-stage, pass-through) additionally require `produced_by`/`produced_at`
-on the File Header.
+**There is no file kind, and inferring one was a bug.** Through `0.14` the
+checker locked a file to exactly one of raw, decode-stage or pass-through at
+the first distinguishing block — which rejected `mixed-derivation`, a
+conformant file that decodes one session and passes another through. `0.16`
+made provenance and layer independent per-stream axes, and the checker rules
+per participant instead.
+
+Two rules bind per participant and settle at Session End, because both are
+properties of its *records* and declare-on-first-use puts the Participant
+block first: its records must resolve to **one layer**, and a layer this
+version does not define must not be guessed past.
+
+**Provenance is a per-record rule, and there is one of it:** every
+`zpf`-sourced record carries `spans`. Through `0.18` a derived stream was
+*created* (records with `spans`) or *preserved* (a participant with `origin`),
+policed by four rules; `0.19` removed the option, a pass-through writes an
+identity span instead, and the four collapsed into that sentence. It binds at
+the record rather than at Session End, which is earlier and simpler — the
+block a lenient reader isolates is the one that broke it.
+
+Any file holding a `zpf`-sourced stream still requires
+`produced_by`/`produced_at` on the File Header.
 
 ## Reader side: structural versus semantic
 

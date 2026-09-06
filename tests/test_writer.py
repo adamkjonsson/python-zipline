@@ -76,21 +76,22 @@ def test_handle_api_reproduces_the_merged_example():
     session = writer.begin_session(
         proto="tcp", key="10.0.0.1:51000 <-> 93.184.216.34:80", sequenced=True, session_id=1
     )
-    client = session.participant(
-        "10.0.0.1:51000", isn=1000,
-        origin=zpf.Origin(source_id=1, session_id=7, participant_id=0),
-    )
-    server = session.participant(
-        "93.184.216.34:80", isn=5000,
-        origin=zpf.Origin(source_id=2, session_id=3, participant_id=0),
-    )
+    client = session.participant("10.0.0.1:51000", isn=1000)
+    server = session.participant("93.184.216.34:80", isn=5000)
+    # Identity spans: the same range in as out. Since 0.19 this is how a
+    # pass-through states its provenance, and it is what the checker requires
+    # of every zpf-sourced record.
     session.record(
         client, ts=1000, payload=b"GET / HTTP/1.1\r\n\r\n",
         source=side_a, seq_start=1001, ack=5001,
+        spans=(zpf.Span(source_id=1, session_id=7, participant_id=0,
+                        off_start=0, off_end=18),),
     )
     session.record(
         server, ts=995, payload=b"HTTP/1.1 200 OK\r\n...", source=side_b,
         seq_start=5001, ack=1019,
+        spans=(zpf.Span(source_id=2, session_id=3, participant_id=0,
+                        off_start=0, off_end=20),),
     )
     writer.close(end=False)
     written = [block_to_obj(b) for b in zpf.BlockReader(io.BytesIO(sink.getvalue()))]

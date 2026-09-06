@@ -87,7 +87,6 @@ sessions = st.builds(
     extra_options=extra_options,
 )
 
-origins = st.builds(zpf.Origin, source_id=u16, session_id=u64, participant_id=u16)
 
 participants = st.builds(
     zpf.Participant,
@@ -97,7 +96,6 @@ participants = st.builds(
     isn=st.none() | u32,
     identity=opt_text,
     tcp_role=st.none() | st.sampled_from(list(zpf.TcpRole)),
-    origin=st.none() | origins,
     comment=opt_text,
     extra_options=extra_options,
 )

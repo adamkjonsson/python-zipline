@@ -68,7 +68,9 @@ def test_open_the_merged_example_jsonl():
         session = f.session(1)
         assert session.sequenced
         assert session.key == "10.0.0.1:51000 <-> 93.184.216.34:80"
-        assert [p.origin.session_id for p in session.participants] == [7, 3]
+        # Provenance is per record since 0.19: an identity span naming the
+        # input stream, where the participant used to carry an origin.
+        assert [r.spans[0].session_id for r in session.records()] == [7, 3]
         # A sequenced session's timeline is its stored order.
         assert list(session.timeline()) == list(session.records())
         assert [r.sender_pid for r in session.timeline()] == [0, 1]

@@ -56,17 +56,69 @@ def test_merge_produces_the_specs_pass_through_file(sides: tuple[Path, Path], tm
         assert session.sequenced
         assert (session.proto, session.key) == ("tcp", KEY)
         client, server = session.participants
-        assert client.origin == zpf.Origin(source_id=0, session_id=7, participant_id=0)
-        assert server.origin == zpf.Origin(source_id=1, session_id=3, participant_id=0)
         assert (client.isn, server.isn) == (1000, 5000)
+        # Provenance is an identity span per record since 0.19 — the same
+        # range in as out — where the participant used to carry an origin.
+        by_pid = {r.sender_pid: r.spans for r in session.records()}
+        assert by_pid[0] == (
+            zpf.Span(source_id=0, session_id=7, participant_id=0,
+                     off_start=0, off_end=18),
+        )
+        assert by_pid[1] == (
+            zpf.Span(source_id=1, session_id=3, participant_id=0,
+                     off_start=0, off_end=20),
+        )
         records = list(session.records())
         # Causal order despite the timestamp inversion.
         assert [r.payload[:3] for r in records] == [b"GET", b"HTT"]
         assert [(r.seq_start, r.ack) for r in records] == [(1001, 5001), (5001, 1019)]
-        assert all(r.spans == () for r in records)  # pass-through: no spans
         assert all(r.decoder_id is None for r in records)
         session.verify()  # the baked-in order really is a causal linearization
         assert session.end is not None
+
+
+def test_a_merge_over_a_holed_input_closes_coverage(tmp_path: Path):
+    """Package A gave the merge a coverage obligation, and nothing upstream shows it.
+
+    Since `0.19` a pass-through writes an identity span per record, so a merge
+    **cites** its input streams — and a file citing a stream is answerable for
+    every offset of it. A transport input's holes are real ranges its offset
+    space carries and no payload covers, so without marking them the merge
+    emits a file its own reader reports as having an unaccounted gap.
+
+    The upstream suite has no merge vector with a holed input
+    (`zipline#133 <https://github.com/adamkjonsson/zipline/issues/133>`_ is
+    open for exactly that), so this test is the only thing holding the
+    behaviour. It asserts all three ways the guarantee can be checked: the
+    reader's own diagnostics, the file-alone check, and the check against the
+    input.
+
+    The hole is marked ``gap``, the ``hole`` class. ``skipped`` or ``dropped``
+    would claim the merge withheld bytes it had, sending a consumer up the
+    chain after data that was never captured.
+    """
+    side_a, side_b = tmp_path / "a.zpf", tmp_path / "b.zpf"
+    with zpf.create(side_a, tick_hz=1_000_000) as w:
+        w.add_source("capture", uri="a.pcap")
+        s = w.begin_session(proto="tcp", key=KEY, session_id=7)
+        p = s.participant("10.0.0.1:51000", isn=1000)
+        s.record(p, ts=1, payload=b"AAAA", seq_start=1001)
+        s.record(p, ts=2, payload=b"CCCC", seq_start=1009)  # [4, 8) never arrived
+    write_side_b(side_b)
+
+    output = tmp_path / "merged.zpf"
+    zpf.merge_files(side_a, side_b, output, produced_by="t 1", produced_at=1)
+
+    with zpf.open(output) as merged:
+        assert merged.diagnostics == []
+        assert [(u.off_start, u.off_end, u.reason) for u in merged.undecoded] == [(4, 8, "gap")]
+        assert zpf.UNDECODED_REASONS["gap"] == "hole"
+        # Declared, so the coverage answer needs no second file.
+        (end,) = [s.end for s in merged.sessions() if s.end is not None]
+        assert sorted((e.session_id, e.extent) for e in end.input_extents) == [(3, 20), (7, 12)]
+    assert zpf.check_extents(output) == []
+    assert zpf.check_coverage(output, side_a) == []
+    assert zpf.check_coverage(output, side_b) == []
 
 
 def test_merge_records_input_digests(sides: tuple[Path, Path], tmp_path: Path):

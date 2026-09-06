@@ -23,9 +23,15 @@ Two traps worth naming, because both look like bugs and are not:
 - `decoder_id` decides **neither** axis. It does not say a record is decoded —
   reassembly is a decoder too, so the layer comes from that decoder's declared
   `output_layer` — and it does not say which stage ran, since a pass-through
-  carries inherited ones forward. Created versus preserved is `spans` versus
-  `origin`, and both axes are per **stream**, never per file. There is no file
-  kind; `FileReader.stream_kind(session_id, pid)` is the accessor.
+  carries inherited ones forward. Both axes are per **stream**, never per file.
+  There is no file kind; `FileReader.stream_kind(session_id, pid)` is the
+  accessor.
+- **Every `zpf`-sourced record carries `spans`**, and created versus preserved
+  is read from whether they are *identity* spans — the same range in as out.
+  Not from an option: `origin` was removed in `0.19`, and with it the four
+  rules that policed which of the two a stream was. A pass-through therefore
+  cites its inputs, which makes it answerable for their coverage the way a
+  decode stage is.
 
 The conformance vectors in `tests/vectors/` are vendored verbatim from the spec
 repository and are the acceptance criteria — do not edit them to make a test

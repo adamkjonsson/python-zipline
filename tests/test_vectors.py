@@ -268,7 +268,7 @@ _ISOLATE_REASONS: dict[str, str] = {
     "isolate-hole-against-capture": "only the bytes-exist class is available",
     "isolate-mixed-layer-participant": "resolves to two layers",
     "isolate-self-derived": "which is this file",
-    "isolate-unbound-zpf-stream": "neither origin nor records with spans",
+    "isolate-unbound-zpf-stream": "carries no spans",
     "isolate-unknown-output-layer": "does not define",
     "isolate-undeclared-session": "undeclared session",
     "isolate-unmarked-break": "a Discontinuity between them is required",

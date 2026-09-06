@@ -62,7 +62,7 @@ if TYPE_CHECKING:
     from types import TracebackType
     from typing import Self
 
-    from zpf.blocks import Origin, Span
+    from zpf.blocks import Span
     from zpf.reader import FileReader
 
 _KIND_NAMES = {"capture": SourceKind.CAPTURE, "zpf-input": SourceKind.ZPF_INPUT}
@@ -314,7 +314,7 @@ class FileWriter:
                 allocated automatically when omitted.
 
         Returns:
-            The handle records, spans, and origins reference.
+            The handle records and spans reference.
 
         """
         if isinstance(kind, str):
@@ -723,7 +723,6 @@ class SessionWriter:
         isn: int | None = None,
         tcp_role: TcpRole | None = None,
         identity: str | None = None,
-        origin: Origin | None = None,
         comment: str | None = None,
         pid: int | None = None,
     ) -> ParticipantHandle:
@@ -736,7 +735,6 @@ class SessionWriter:
                 handshake was observed.
             tcp_role: Which side opened the connection, when known.
             identity: Stable identity distinct from a transient endpoint.
-            origin: Input-stream mapping (pass-through files only).
             comment: Free-text note.
             pid: Explicit participant id; allocated automatically when
                 omitted.
@@ -755,7 +753,6 @@ class SessionWriter:
                 isn=isn,
                 tcp_role=tcp_role,
                 identity=identity,
-                origin=origin,
                 comment=comment,
             )
         )

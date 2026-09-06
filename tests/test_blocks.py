@@ -51,7 +51,6 @@ FULL_BLOCKS = [
         isn=0xFFFF_FFFF,
         identity="alice",
         tcp_role=zpf.TcpRole.INITIATOR,
-        origin=zpf.Origin(source_id=1, session_id=3, participant_id=0),
         comment="a participant",
     ),
     zpf.SessionEnd(session_id=7, reason="fin", comment="an end"),

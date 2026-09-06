@@ -276,34 +276,6 @@ class InputExtent:
         )
 
 
-@dataclass(frozen=True)
-class Origin:
-    """The input stream a pass-through participant re-emits.
-
-    Ids are in the referenced source's namespace, exactly as a
-    :class:`Span`'s are.
-
-    Attributes:
-        source_id: A ``zpf-input`` Source declared in the citing file.
-        session_id: Session inside that source.
-        participant_id: Participant inside that source.
-
-    """
-
-    source_id: int
-    session_id: int
-    participant_id: int
-
-    def __post_init__(self) -> None:
-        _check_uint(self.source_id, 16, "source_id")
-        _check_uint(self.session_id, 64, "session_id")
-        _check_uint(self.participant_id, 16, "participant_id")
-
-    def pack(self) -> bytes:
-        """Return the 12-byte packed form (u16s lead for alignment)."""
-        return _frame.ORIGIN.pack(self.source_id, self.participant_id, self.session_id)
-
-
 # --- Option value codecs -----------------------------------------------------
 # Decoders raise ValueError / struct.error / UnicodeDecodeError / EncodeError
 # on values they cannot interpret; the parser then preserves the occurrence
@@ -380,15 +352,6 @@ def _unpack_tcp_role(value: bytes) -> TcpRole | int:
 
 def _unpack_session_flags(value: bytes) -> SessionFlags:
     return SessionFlags(_unpack_u16(value))
-
-
-def _unpack_origin(value: bytes) -> Origin:
-    source_id, participant_id, session_id = _frame.ORIGIN.unpack(value)
-    return Origin(source_id=source_id, session_id=session_id, participant_id=participant_id)
-
-
-def _pack_origin(value: Origin) -> bytes:
-    return value.pack()
 
 
 def _unpack_spans_chunk(value: bytes) -> tuple[Span, ...]:
@@ -924,7 +887,6 @@ class Participant(Block):
         tcp_role: Which side opened the connection, when known. Advisory, so
             a value the enum does not define is carried as a plain ``int``
             and means "unknown" rather than being an error.
-        origin: Input stream mapping (pass-through files only).
         comment: Free-text note.
         extra_options: Preserved unrecognized/duplicate option occurrences.
 
@@ -938,7 +900,6 @@ class Participant(Block):
     isn: int | None = None
     identity: str | None = None
     tcp_role: TcpRole | int | None = None
-    origin: Origin | None = None
     comment: str | None = None
     extra_options: tuple[RawOption, ...] = ()
 
@@ -948,7 +909,6 @@ class Participant(Block):
         _OptSpec(_frame.OPT_ISN, "isn", _unpack_u32, _pack_u32),
         _OptSpec(_frame.OPT_IDENTITY, "identity", _unpack_str, _pack_str),
         _OptSpec(_frame.OPT_TCP_ROLE, "tcp_role", _unpack_tcp_role, _pack_u8),
-        _OptSpec(_frame.OPT_ORIGIN, "origin", _unpack_origin, _pack_origin),
     )
 
     def __post_init__(self) -> None:

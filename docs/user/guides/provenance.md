@@ -28,20 +28,25 @@ with zpf.open("rest_decoded.zpf") as decoded:
     assert source.digest == expected        # the input is the one it was built from
 ```
 
-## Two ways bytes are traced
+## One way bytes are traced
 
-How a derived record points back at its input depends on the kind of transform:
+**Every `zpf`-sourced record carries `spans`** — one or more {class}`~zpf.Span`s
+of the form `{source_id, session_id, pid, off_start, off_end}`. What differs
+between the two kinds of transform is what the range *means*, not whether it is
+there:
 
 - A **decode stage** re-cuts the byte stream into application messages, so each
-  record cites the input range it was built from as a **span set** — one or more
-  {class}`~zpf.Span`s of the form `{source_id, session_id, pid, off_start,
-  off_end}`. A message reassembled from several input records still carries a
-  single covering span.
-- A **pass-through** merge preserves each stream's bytes and boundaries, so
-  there is nothing per-record to cite. Instead every participant carries a single
-  {class}`~zpf.Origin` naming the input stream it re-emits, and offset
-  preservation does the rest — the whole stream's provenance in one reference.
-  ({func}`zpf.merge_files <zpf.transform.merge_files>` writes these.)
+  record cites the input range it was built from. A message reassembled from
+  several input records still carries a single covering span.
+- A **pass-through** preserves each stream's bytes and boundaries, so each
+  record cites the range it re-emitted unchanged — an **identity span**, the
+  same range in as out. ({func}`zpf.merge_files <zpf.transform.merge_files>`
+  writes these.)
+
+So which kind a stream is, is read from whether its spans are identity. Through
+`0.18` a pass-through's records carried no spans at all and its participants
+carried an `origin` option instead; `0.19` removed it, and one rule replaced the
+four that policed the pair.
 
 Both use the same coordinate system: **logical stream offsets** into the input's
 participant streams, read in the *input's* id namespace (not the derived file's).
@@ -120,23 +125,25 @@ bytes are not in the decoded file, but the chain says exactly where they are. A
 missing intermediate file is the only thing that stops recovery, and the digest
 mismatch tells you which one.
 
-{func}`zpf.resolve_spans` walks it for you. The walk is one hop or two,
-depending on whether the file's own stage built the record:
+{func}`zpf.resolve_spans` reads it for you, and since `0.19` it is **one hop
+either way** — every derived record answers for itself:
 
 ```python
-# A decode stage's record carries spans of its own: one hop.
+# A decode stage's record: the spans name the input ranges it was built from.
 spans = zpf.resolve_spans("decoded.zpf", session_id=7, pid=0, index=0)
 
-# A pass-through's record carries none, so the walk goes through the
-# participant's origin into the input and reads the spans it finds there.
+# A pass-through's record: an identity span, naming what it re-emitted.
 spans = zpf.resolve_spans("annotated.zpf", session_id=7, pid=0, index=0)
 ```
 
-The second case is the asymmetry worth knowing about: **an annotated file alone
-cannot say which raw bytes a record came from.** Its records carry no `spans` —
-that is exactly what marks them as re-emitted rather than built — so the answer
-lives one file further down. Chained pass-throughs recurse. Inputs are resolved
-beside the file by default; pass `open_input` when they live elsewhere.
+Through `0.18` the second case was the asymmetry worth knowing about: an
+annotated file alone could not say which input range a record came from,
+because its records carried no spans and the walk had to open the input to find
+out. That is gone.
+
+What has not gone is that the spans name this file's **immediate** input.
+Following them back to the capture means resolving again in that file, one hop
+at a time, which is what the *recovery walk* above does.
 
 ## Each layer has its own offset space
 
@@ -207,5 +214,5 @@ do not join.
 - API reference: [`zpf.transform`](../../api/transform.md)
   ({func}`~zpf.check_coverage`, {func}`~zpf.resolve_spans`,
   {func}`~zpf.merge_files`, {func}`~zpf.check_splice`) and the
-  {class}`~zpf.Span` / {class}`~zpf.Undecoded` / {class}`~zpf.Origin` /
+  {class}`~zpf.Span` / {class}`~zpf.Undecoded` /
   {class}`~zpf.Discontinuity` blocks.

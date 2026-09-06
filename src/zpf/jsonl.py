@@ -48,7 +48,6 @@ from zpf.blocks import (
     FileHeader,
     InputExtent,
     NameResolution,
-    Origin,
     OutputLayer,
     Participant,
     Record,
@@ -266,7 +265,7 @@ class _ObjReader:
             on_issue(f"unknown key {key!r} has no binary encoding and was dropped")
 
 
-# --- spans / origin ----------------------------------------------------------
+# --- spans ----------------------------------------------------------
 
 
 def _span_to_json(span: Span) -> dict[str, Any]:
@@ -317,28 +316,6 @@ def _input_extent_from_json(value: Any) -> InputExtent:
     )
     reader.finish(_raise_issue)
     return extent
-
-
-def _origin_to_json(origin: Origin) -> dict[str, Any]:
-    return {
-        "source_id": origin.source_id,
-        "session_id": _num64(origin.session_id),
-        "pid": origin.participant_id,
-    }
-
-
-def _origin_from_json(value: Any) -> Origin:
-    if not isinstance(value, dict):
-        msg = f"origin must be an object, got {value!r}"
-        raise ValueError(msg)
-    reader = _ObjReader(value)
-    origin = Origin(
-        source_id=reader.require_int("source_id"),
-        session_id=reader.require_int("session_id"),
-        participant_id=reader.require_int("pid"),
-    )
-    reader.finish(_raise_issue)
-    return origin
 
 
 def _raise_issue(message: str) -> None:
@@ -430,8 +407,6 @@ def _enc_participant(block: Participant, on_issue: Callable[[str], None]) -> dic
         # No defined label: the escape is the raw number. UNKNOWN and absent
         # both project as an omitted key, per the enum table.
         obj["tcp_role"] = int(block.tcp_role)
-    if block.origin is not None:
-        obj["origin"] = _origin_to_json(block.origin)
     _put(obj, "comment", block.comment)
     return obj
 
@@ -697,7 +672,6 @@ def _dec_participant(reader: _ObjReader) -> Participant:
     else:
         # The escape for an enum value with no label is the raw number.
         tcp_role = _dec_int(raw_role, "tcp_role")
-    raw_origin = reader.take("origin")
     return Participant(
         session_id=reader.require_int("session_id"),
         participant_id=reader.require_int("pid"),
@@ -705,7 +679,6 @@ def _dec_participant(reader: _ObjReader) -> Participant:
         isn=reader.take_int("isn"),
         identity=reader.take_str("identity"),
         tcp_role=tcp_role,
-        origin=None if raw_origin is None else _origin_from_json(raw_origin),
         comment=reader.take_str("comment"),
         extra_options=reader.options(),
     )
