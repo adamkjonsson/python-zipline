@@ -10,7 +10,7 @@ python3 -m venv .venv
 .venv/bin/pip install -e . -r requirements.txt
 ```
 
-Python ≥ 3.11. The package has zero runtime dependencies; everything in the
+Python ≥ 3.10. The package has zero runtime dependencies; everything in the
 venv is a dev tool (pytest, ruff, sphinx, build, hypothesis).
 
 ## The quality gate

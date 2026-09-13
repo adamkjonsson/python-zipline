@@ -10,7 +10,7 @@ package also puts a `zpf` command on your `PATH` — see the
 
 ## Requirements
 
-- **Python ≥ 3.11.**
+- **Python ≥ 3.10.**
 - **Zero runtime dependencies.** `zpf` is pure Python and pulls in nothing
   else; the only third-party packages involved are development tools, and
   only if you work on the library itself.

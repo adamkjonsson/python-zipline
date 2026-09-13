@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import io
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 import zpf
 
 # 2023-11-14 22:13:20 UTC
-AWARE = datetime(2023, 11, 14, 22, 13, 20, tzinfo=UTC)
+AWARE = datetime(2023, 11, 14, 22, 13, 20, tzinfo=timezone.utc)
 EPOCH_SECONDS = 1_700_000_000
 
 

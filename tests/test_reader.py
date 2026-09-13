@@ -6,7 +6,7 @@ import dataclasses
 import io
 import json
 import pathlib
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
@@ -757,15 +757,15 @@ def test_as_datetime_reads_a_record_timestamp_end_to_end():
         (session,) = reader.sessions()
         (record,) = session.records()
         when = zpf.as_datetime(record.timestamp, reader.header)
-    assert when == datetime(2026, 8, 13, 18, 36, 32, 538796, tzinfo=UTC)
-    assert when.tzinfo is UTC
+    assert when == datetime(2026, 8, 13, 18, 36, 32, 538796, tzinfo=timezone.utc)
+    assert when.tzinfo is timezone.utc
 
 
 def test_as_datetime_counts_from_the_declared_epoch():
     """`time_epoch` is the origin the ticks are counted from, also in ticks."""
     header = zpf.FileHeader(tick_hz=1_000_000, time_epoch=1_700_000_000_000_000)
     assert zpf.as_datetime(5_000_000, header) == datetime(
-        2023, 11, 14, 22, 13, 25, tzinfo=UTC
+        2023, 11, 14, 22, 13, 25, tzinfo=timezone.utc
     )
 
 
@@ -773,7 +773,7 @@ def test_as_datetime_treats_an_absent_epoch_as_zero():
     """`time_epoch=None` means the default origin, not a missing value."""
     header = zpf.FileHeader(tick_hz=1_000_000)
     assert header.time_epoch is None
-    assert zpf.as_datetime(0, header) == datetime(1970, 1, 1, tzinfo=UTC)
+    assert zpf.as_datetime(0, header) == datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
 def test_as_datetime_passes_none_through_for_an_absent_optional():
@@ -786,7 +786,7 @@ def test_as_datetime_handles_a_timestamp_before_the_epoch():
     """Timestamps are signed; a negative one is not an error."""
     header = zpf.FileHeader(tick_hz=1_000_000)
     assert zpf.as_datetime(-1_500_000, header) == datetime(
-        1969, 12, 31, 23, 59, 58, 500000, tzinfo=UTC
+        1969, 12, 31, 23, 59, 58, 500000, tzinfo=timezone.utc
     )
 
 
@@ -799,9 +799,9 @@ def test_as_datetime_is_exact_at_a_nanosecond_tick_hz():
     """
     header = zpf.FileHeader(tick_hz=1_000_000_000)
     value = 1_734_683_192_655_088_527
-    naive_float = datetime.fromtimestamp(value / header.tick_hz, tz=UTC)
+    naive_float = datetime.fromtimestamp(value / header.tick_hz, tz=timezone.utc)
     exact = round(Fraction(value, header.tick_hz) * 1_000_000)
-    assert zpf.as_datetime(value, header) == datetime(1970, 1, 1, tzinfo=UTC) + timedelta(
+    assert zpf.as_datetime(value, header) == datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(
         microseconds=exact
     )
     assert zpf.as_datetime(value, header) != naive_float  # the bug this avoids

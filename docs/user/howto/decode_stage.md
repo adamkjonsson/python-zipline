@@ -24,7 +24,7 @@ Three things, all enforced by the
 per-stream decode context:
 
 ```python
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 import zpf
 
@@ -32,7 +32,7 @@ with zpf.decode_stage(
     "rest_transport.zpf", "rest_decoded.zpf",
     decoder=("http/1.1", "tutorial"),   # name, version
     produced_by="http-decode 1.0",
-    produced_at=datetime.now(tz=UTC),   # or int Unix seconds
+    produced_at=datetime.now(tz=timezone.utc),   # or int Unix seconds
     proto="http",
 ) as dec:
     for stream in dec.streams():        # one DecodeStream per input stream

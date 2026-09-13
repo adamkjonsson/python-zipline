@@ -45,6 +45,7 @@ nitpick_ignore = [
     ("py:class", "os.PathLike"),
     ("py:func", "dataclasses.replace"),
     ("py:mod", "hashlib"),
+    ("py:class", "Self"),
     ("py:class", "_Cites"),
     ("py:class", "_SessionIndex"),
 ]
