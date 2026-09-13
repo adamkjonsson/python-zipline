@@ -10,7 +10,7 @@ guarantee holds -- then shows the ``coverage-gap`` that check reports when
 auto-fill is turned off and the tail is left unmarked.
 """
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 import zpf
 
@@ -37,7 +37,7 @@ def decode(path: str, raw: str, *, fill_undecoded: bool) -> None:
         path,
         decoder="http/1.1",
         produced_by="http-decode 1.0",
-        produced_at=datetime(2023, 11, 14, 22, 13, 20, tzinfo=UTC),
+        produced_at=datetime(2023, 11, 14, 22, 13, 20, tzinfo=timezone.utc),
         proto="http",
         fill_undecoded=fill_undecoded,
     ) as dec:

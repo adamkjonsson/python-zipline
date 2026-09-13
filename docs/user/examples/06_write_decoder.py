@@ -8,7 +8,7 @@ the exact input bytes it came from, and the coverage check at the end
 confirms nothing was dropped.
 """
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 import zpf
 
@@ -61,7 +61,7 @@ with zpf.decode_stage(
     "rest_decoded.zpf",
     decoder=("http/1.1", "tutorial"),  # name, version
     produced_by="http-decode 1.0",
-    produced_at=datetime(2023, 11, 14, 22, 13, 20, tzinfo=UTC),
+    produced_at=datetime(2023, 11, 14, 22, 13, 20, tzinfo=timezone.utc),
     proto="http",
 ) as dec:
     for stream in dec.streams():

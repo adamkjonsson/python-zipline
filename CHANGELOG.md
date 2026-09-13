@@ -22,6 +22,16 @@ it back from the installed distribution metadata.
 
 ## [Unreleased]
 
+### Changed
+
+**Python 3.10 is now supported** — `requires-python` is `>=3.10`, down from
+`>=3.11` ([#67](https://github.com/adamkjonsson/python-zipline/issues/67)).
+Nothing structural pinned the floor: the library used `typing.Self` at runtime
+in one module, `datetime.UTC` in a few places, and `tomllib` in one test. Those
+are now `TYPE_CHECKING`-only, `timezone.utc`, and a `tomli` fallback for the
+test on 3.10 (a dev-only dependency; the package still has zero runtime
+dependencies). CI runs the suite on 3.10 as well.
+
 ## [0.3.0] - 2026-09-06
 
 Implements spec **v0.19** (`SPEC_VERSION == (0, 19)`), up from `0.16`. Files

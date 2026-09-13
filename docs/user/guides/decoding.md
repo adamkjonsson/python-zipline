@@ -77,13 +77,13 @@ re-declares each input participant under the *same* id — then hands back one
 participant that stands for it.
 
 ```python
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 with zpf.decode_stage(
     "rest_transport.zpf", "rest_decoded.zpf",
     decoder=("http/1.1", "1.0"),        # name, version
     produced_by="http-decode 1.0",
-    produced_at=datetime.now(tz=UTC),   # or int Unix seconds
+    produced_at=datetime.now(tz=timezone.utc),   # or int Unix seconds
     proto="http",
 ) as dec:
     for stream in dec.streams():
@@ -367,7 +367,7 @@ decoder up front and select it per record:
 
 ```python
 with zpf.decode_stage(raw, sink, decoder=("http/1.1", "1.0"),
-                      produced_by="d 1.0", produced_at=datetime.now(tz=UTC)) as dec:
+                      produced_by="d 1.0", produced_at=datetime.now(tz=timezone.utc)) as dec:
     http = dec.decoder                        # the stage default
     json = dec.writer.add_decoder("json/1.0")  # a second decoder
     for stream in dec.streams():
@@ -402,7 +402,7 @@ decode stages, and {func}`zpf.rewrite_decoded` writes either:
 zpf.rewrite_decoded(
     "decoded.zpf", "requests.zpf",
     keep=lambda record: record.content_type == "dec:request",
-    produced_by="zpf-filter 1.0", produced_at=datetime.now(tz=UTC),
+    produced_by="zpf-filter 1.0", produced_at=datetime.now(tz=timezone.utc),
     transform_params_digest="sha256:…",     # what this stage was configured with
 )
 ```

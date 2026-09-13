@@ -35,7 +35,7 @@ import hashlib
 import io
 import os
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Literal, overload
 
@@ -129,7 +129,7 @@ def as_datetime(value: int | None, header: FileHeader) -> datetime | None:
     # mantissa. divmod floors, so a negative total still yields a remainder
     # in [0, tick_hz) and the seconds part carries the sign.
     seconds, remainder = divmod(_epoch_ticks(header) + value, header.tick_hz)
-    return datetime.fromtimestamp(seconds, tz=UTC) + timedelta(
+    return datetime.fromtimestamp(seconds, tz=timezone.utc) + timedelta(
         microseconds=remainder * 1_000_000 / header.tick_hz
     )
 

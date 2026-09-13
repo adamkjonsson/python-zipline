@@ -94,7 +94,7 @@ def unix_seconds(value: int | datetime) -> int:
         if value.tzinfo is None:
             msg = (
                 "a produced_at datetime must be timezone-aware, e.g. "
-                "datetime.now(tz=UTC) or datetime(..., tzinfo=UTC); a naive "
+                "datetime.now(tz=timezone.utc) or datetime(..., tzinfo=timezone.utc); a naive "
                 "datetime would be read as the local machine's time"
             )
             raise ZpfError(msg)

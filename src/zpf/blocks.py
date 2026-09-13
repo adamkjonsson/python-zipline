@@ -25,12 +25,15 @@ import struct
 from dataclasses import dataclass, field
 from enum import IntEnum, IntFlag
 from itertools import chain
-from typing import Any, Callable, ClassVar, NamedTuple, Self
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, NamedTuple
 
 from zpf import _frame
 from zpf._frame import RawOption
 from zpf.content import ContentType, decode_prim, prim_fault
 from zpf.errors import ContentError, EncodeError, SemanticError, StructuralError
+
+if TYPE_CHECKING:
+    from typing import Self
 
 # A byte-swapped (big-endian, invalid) file's magic reads as this value.
 _SWAPPED_MAGIC = 0x4650495A
