@@ -147,10 +147,10 @@ subject, from the reader's side.
 ## Going beyond the standard
 
 Per `CLAUDE.md`, support must stay complete *and* must not silently exceed the
-v0.19 spec: any behavior beyond the standard has to be flagged to the user with
+v0.20 spec: any behavior beyond the standard has to be flagged to the user with
 an explicit callout. The checker's rules are the spec's, and the two out-of-band
 checks (sequenced order, coverage) are spec requirements enforced elsewhere,
-not extensions. A new rule that isn't in v0.19 does not belong in the
+not extensions. A new rule that isn't in v0.20 does not belong in the
 `ConformanceChecker`.
 
 **One thing does exceed the standard, and it is on the write side only.**
@@ -246,8 +246,8 @@ that wrong reason during the 0.12 port, and two did again at the start of the
 moved. And
 a vector is never edited to make a test pass: they are subordinate to the
 normative text, so a vector that looks wrong is a question for the spec
-repository. Four have been found so far; `VECTOR-DEFECTS.md` records them, and
-two are open against `v0.19`.
+repository. Six have been found so far, every one fixed upstream;
+`VECTOR-DEFECTS.md` records them.
 
 One vector is judged as a **pair**. `splice` ships two files that are each
 individually conformant — stage 1 declares a break, stage 2 spans across it —

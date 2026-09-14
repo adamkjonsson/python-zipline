@@ -1,10 +1,9 @@
 # Defects in the conformance vectors
 
-**Two open, four closed.** Defects 5 and 6 are live against the vectors
-currently vendored in [`tests/vectors/`](tests/vectors/), which are `v0.19`;
-together they hold three cases out of the suite via `DEFECTIVE` in
-[`tests/test_vectors.py`](tests/test_vectors.py). The other four were reported
-upstream and fixed.
+**Six found, six closed.** None is live against the vectors currently vendored
+in [`tests/vectors/`](tests/vectors/), which are `v0.20`, so `DEFECTIVE` in
+[`tests/test_vectors.py`](tests/test_vectors.py) is empty. Every one was
+reported upstream and fixed in the release that followed.
 
 | | Defect | Found against | Status |
 |---|---|---|---|
@@ -12,18 +11,23 @@ upstream and fixed.
 | 2 | `vectors/README.md` contradicts the spec on the `isolate` tier | `v0.12` | Fixed in `0.14` — the README now reads "Rejecting an `isolate` vector, with a diagnostic, **is conformant**" |
 | 3 | `undecoded-in-capture` writes ids no reading of the text allows | `v0.15` | Fixed in `0.16` — CHANGELOG *Changed* ([#87](https://github.com/adamkjonsson/zipline/issues/87)); the vector's `session_id` `7` → `0` |
 | 4 | `tunnel/{inner,outer}.jsonl` spell the flow key `flow_key`, not `key` | `v0.16` | Fixed in `0.17` ([#104](https://github.com/adamkjonsson/zipline/issues/104)), with a `check.py` guard building the key vocabulary from the spec's own tables |
-| 5 | `mixed-derivation`'s identity span writes `pid` and `session_id` transposed | `v0.19` | **Open** — reported as [#141](https://github.com/adamkjonsson/zipline/issues/141) |
-| 6 | `handshake-at-origin` and `unplaceable-below-origin` write `tcp_role` one below the value their `.jsonl` states | `v0.18`, `v0.19` | **Open** — reported as [#141](https://github.com/adamkjonsson/zipline/issues/141) |
+| 5 | `mixed-derivation`'s identity span writes `pid` and `session_id` transposed | `v0.19` | Fixed in `0.20` ([#141](https://github.com/adamkjonsson/zipline/issues/141)) — bytes and `.hex` regenerated; `o_spans` now takes logical order |
+| 6 | `handshake-at-origin` and `unplaceable-below-origin` write `tcp_role` one below the value their `.jsonl` states | `v0.18`, `v0.19` | Fixed in `0.20` ([#141](https://github.com/adamkjonsson/zipline/issues/141)) — bytes and `.hex` regenerated; `build.py` now refuses a vector whose projection is not its `.jsonl` |
 
 **Defects 5 and 6 share a root**, which is why they were reported as one issue:
-`build.py` authors the `.zpf` and the `.jsonl` faces of each vector
-independently, so the two can disagree and nothing upstream notices. The `.hex`
-is generated from the same description as the bytes, so it reproduces the wrong
-value rather than contradicting it; `check.py` is barred from parsing block
-bodies by the suite's own ground rule 2, which is exactly what comparing the
-faces would need. So the agreement of a vector's two faces is unguarded by
-construction, and an implementation reading the binary is the only thing that
-tests it. That is now how three of the six defects here surfaced.
+`build.py` authored the `.zpf` and the `.jsonl` faces of each vector
+independently, so the two could disagree and nothing upstream noticed. The
+`.hex` is generated from the same description as the bytes, so it reproduced the
+wrong value rather than contradicting it; `check.py` is barred from parsing
+block bodies by the suite's own ground rule 2, which is exactly what comparing
+the faces would need. So the agreement of a vector's two faces was unguarded by
+construction, and an implementation reading the binary was the only thing that
+tested it. That is how three of the six defects here surfaced. `0.20` closed
+the class rather than the instances: `build.py` now carries the logical value
+of every option it writes, projects each vector by the mapping at
+registration, and refuses one whose projection is not its hand-written
+`.jsonl` — validated upstream by reverting each of the three defects on a
+scratch copy and seeing the build refuse each.
 
 Defect 1 also generalised upstream. The principle this file drew out of it — **a
 negative vector must carry exactly one violation** — is now stated in the vectors
@@ -39,6 +43,13 @@ of Phase 1 of the 0.14 → 0.16 port, and defects 5 and 6 out of Phase 0 of the
 ---
 
 ## Defects 5 and 6 — three vectors whose `.zpf` contradicts their own `.jsonl`
+
+**Fixed in `0.20`** ([#141](https://github.com/adamkjonsson/zipline/issues/141)):
+the bytes and `.hex` of all three were regenerated and no `.jsonl` changed,
+which is the direction this report asked for. At the `0.20` re-vendor all three
+showed up as `XPASS` and were promoted into `KNOWN_PASSING`; the projection
+sweep that found them was repeated over the 43 files carrying both faces and
+found nothing. The section below is the report as filed.
 
 **Open at `v0.19`.** Found at Phase 0 of the 0.16 → 0.19 port, by projecting
 every vendored `.zpf` through our JSONL face and diffing against the shipped
@@ -109,9 +120,9 @@ So the agreement of a vector's two faces is unguarded by construction, and the
 only thing that tests it is an implementation reading the binary and projecting
 it. Three of the six defects in this register surfaced that way.
 
-### What we do about it
+### What we did about it
 
-All three go into `DEFECTIVE` and are held out of the ratchet. Two of them carry
+All three went into `DEFECTIVE` and were held out of the ratchet. Two of them carry
 a lesson the defect does not touch, and neither is bent to fit:
 
 - **`handshake-at-origin`** exists for the non-descending ordering MUST
@@ -119,9 +130,10 @@ a lesson the defect does not touch, and neither is bent to fit:
   lesson is intact — the `seq_start` tie is in the bytes and correct. Only the
   projection is wrong.
 - **`unplaceable-below-origin`**'s extent lesson is intact too, `tcp_role` having
-  nothing to do with placement. We assert its extent through `_ACCEPT_EXTENTS`,
-  which reads the `.zpf` and not the projection, so the defect does not cost us
-  the guard that vector was added for.
+  nothing to do with placement. We asserted its extent through a table that
+  read the `.zpf` and not the projection, so the defect did not cost us the
+  guard that vector was added for. `0.20` moved those numbers into the
+  manifest as `extents`, and the harness now reads them from there.
 
 ---
 

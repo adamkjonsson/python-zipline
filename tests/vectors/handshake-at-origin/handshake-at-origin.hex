@@ -8,7 +8,7 @@
 0004  10 00 00 00              length = 16
 0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
 000C  00 00                    version_major = 0
-000E  13 00                    version_minor = 19
+000E  14 00                    version_minor = 20
 0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
 
 0018  02 00                    type   = 0x0002  Source Descriptor
@@ -40,8 +40,8 @@
 006E  00 00                    value padding
 0070  61 00 04 00              option 0x0061 isn, len = 4  (1000)
 0074  E8 03 00 00
-0078  63 00 01 00              option 0x0063 tcp_role, len = 1  (0)
-007C  00
+0078  63 00 01 00              option 0x0063 tcp_role, len = 1  (1)
+007C  01
 007D  00 00 00                 value padding
 
 0080  11 00                    type   = 0x0011  Participant Descriptor
@@ -55,8 +55,8 @@
 00A0  31 36 2E 33 34 3A 38 30
 00A8  61 00 04 00              option 0x0061 isn, len = 4  (5000)
 00AC  88 13 00 00
-00B0  63 00 01 00              option 0x0063 tcp_role, len = 1  (1)
-00B4  01
+00B0  63 00 01 00              option 0x0063 tcp_role, len = 1  (2)
+00B4  02
 00B5  00 00 00                 value padding
 
 00B8  20 00                    type   = 0x0020  Record

@@ -200,8 +200,11 @@ the file; `unplaceable` says what the file could not tell you. A conformant
 reader has to report the record *and* report the file clean, which is exactly
 what the format's own vectors require — both declare zero violations on the
 accept tier. (That the vector metadata cannot express the reporting obligation
-is filed upstream as
-[zipline#140](https://github.com/adamkjonsson/zipline/issues/140).)
+was raised upstream as
+[zipline#140](https://github.com/adamkjonsson/zipline/issues/140); `0.20`
+settled it the other way — a manifest key asserting a SHOULD would promote it
+to a MUST through the suite, so the vectors now state that silence is
+conformant and the report is not tested.)
 
 **Zero width is not deletion.** The record keeps its timestamp, flags and
 payload, and anything indexing by something other than offset still sees it.

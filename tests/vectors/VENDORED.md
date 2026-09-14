@@ -7,15 +7,15 @@ specification repository. They are not ours to edit.
 |---|---|
 | Source | <https://github.com/adamkjonsson/zipline> |
 | Path | `vectors/` |
-| Tag | `v0.19` |
-| Commit | `f0b1464b0c26d28a91f7d0e537bf3647bf6b302a` |
-| Vendored | 2026-09-06 |
+| Tag | `v0.20` |
+| Commit | `55d49936fd6c90142cdca380c8a5205d2a3d82e6` |
+| Vendored | 2026-09-14 |
 
 ## What was and was not copied
 
-Copied: `manifest.json`, `README.md`, and all 53 vector directories — verified
-byte-identical to the tag with `diff -r`. 53 entries expand to 59 files, because
-`chain` ships three, `splice` two and `tunnel` four.
+Copied: `manifest.json`, `README.md`, and all 55 vector directories — verified
+byte-identical to the tag with `diff -r`. 55 entries expand to 63 files, because
+`chain` and `merge` ship three each, `splice` two and `tunnel` four.
 
 **Not** copied: `build.py` and `check.py`. Those are the upstream *generator* and
 self-consistency checker — tooling for maintaining the vectors, not fixtures for
@@ -36,20 +36,24 @@ to run.
 declares **1** violation rather than 0. It is a key rather than a fourth tier
 because a tier names what a *reader does*, and a reader accepts these files
 completely. Our harness needs a path for it that neither `accept` nor `isolate`
-provides. There are two at `0.19`: `advisory-transport-content-type` and
+provides. There are two at `0.20`: `advisory-transport-content-type` and
 `advisory-transport-role`, one per label the transport-layer bar names.
 
-**And one shape the manifest still cannot express**, which our harness works
-around rather than inherits. `unplaceable-below-origin` declares `violations: 0`
-and is not `advisory` — correct, since `0.19` withdrew the origin floor and the
-file breaks no rule — while §Referencing says a reader SHOULD report the record
-and the entry's own `expect` opens "ACCEPT, and REPORT". No field carries *breaks
-no rule and is still reported*. Filed upstream as
-[zipline#140](https://github.com/adamkjonsson/zipline/issues/140), together with
-the reason `_ACCEPT_EXTENTS` exists in
-[`../test_vectors.py`](../test_vectors.py): the tier asserts a projection and a
-violation count, and neither catches a reader that computes the wrong offset in
-silence.
+`0.20` adds **`extents`** on every single-file `accept` entry: a list of
+`{session_id, pid, extent}` per participant stream, in the `input_extents`
+entry shape, stating what a reader must *compute*. It exists because the tier
+asserts a projection and a violation count, and neither catches a reader that
+computes the wrong offset in silence — which is what this library did to
+`unplaceable-below-origin` at the `0.19` re-vendor, and reported as
+[zipline#140](https://github.com/adamkjonsson/zipline/issues/140). The harness
+reads the key directly (`test_an_accept_vector_puts_its_bytes_where_it_says`),
+so the hand-transcribed table it replaced is gone. 31 entries, 37 streams.
+
+The same issue's other half — a SHOULD-report on a `violations: 0` vector — got
+a README sentence rather than a key: a manifest key asserting the report would
+promote the SHOULD to a MUST through the suite, which the vectors' ground rule
+2 forbids. So `unplaceable-below-origin` is asserted as a clean accept, and its
+`expect` now says so.
 
 ## Why they are checked in rather than fetched
 
@@ -65,19 +69,20 @@ vector that seems wrong is a question for the spec repository, not a local patch
 
 ## Known defects
 
-**None open at `v0.19`**, for the first time since the register was started.
-Defect 4 — `tunnel/inner.jsonl` and `tunnel/outer.jsonl` spelling the Session
-flow key `"flow_key"` where the normative JSONL mapping lists it among the
-brevity aliases as `"key"` — was fixed upstream in `0.17`
-([zipline#104](https://github.com/adamkjonsson/zipline/issues/104)), which also
-added a `check.py` guard building the projection's key vocabulary from the
-specification's own tables. That guard is the part that outlives the fix. So
-`DEFECTIVE` in [`../test_vectors.py`](../test_vectors.py) is empty, and there is
-no fixture the implementation must be kept away from.
+**None open at `v0.20`.** Defects 5 and 6 — three vectors whose `.zpf`
+disagreed with their own `.jsonl`, found at the `0.19` re-vendor by projecting
+every file and diffing — were fixed upstream in `0.20`
+([zipline#141](https://github.com/adamkjonsson/zipline/issues/141)), which also
+made `build.py` compare a vector's two faces at registration, so the class
+cannot recur. That guard is the part that outlives the fix. So `DEFECTIVE` in
+[`../test_vectors.py`](../test_vectors.py) is empty, and there is no fixture the
+implementation must be kept away from.
 
-Four have been found in all — two against `v0.12`, one against `v0.15` and one
-against `v0.16` — and every one was fixed upstream;
+Six have been found in all — two against `v0.12`, one against `v0.15`, one
+against `v0.16` and two against `v0.19` — and every one was fixed upstream;
 [`VECTOR-DEFECTS.md`](../../VECTOR-DEFECTS.md) is the closed record of them.
+The projection sweep was repeated at this re-vendor: 43 files carry both faces,
+and none disagree.
 
 The third is worth knowing about while reading these files, because it is the one
 whose fix changed a vector's **bytes**: `undecoded-in-capture` shipped at `v0.15`
