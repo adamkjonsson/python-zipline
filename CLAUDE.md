@@ -2,13 +2,15 @@
 
 ## The product
 
-This code is a Python implementation of v0.16 of the Zipline Payload Format,
+This code is a Python implementation of v0.20 of the Zipline Payload Format,
 which is defined in
-`https://github.com/adamkjonsson/zipline/blob/v0.16/docs/zipline-payload-format.md`.
+`https://github.com/adamkjonsson/zipline/blob/v0.20/docs/zipline-payload-format.md`.
+A checkout of the spec repository lives at `~/projs/zipline`; a new spec release
+is a new tag there, and `v1.0` is the *old* one (see the first trap below).
 It is a module that readers and writers of zpf-files use to access and create
 files.
 
-"The standard" in this file always means **0.16**, and `zpf.SPEC_VERSION` is the
+"The standard" in this file always means **0.20**, and `zpf.SPEC_VERSION` is the
 single source of truth for it in code. The format is in `0.x`, where **every
 minor is a separate format**: a reader must reject a `version_minor` it does not
 implement, and no upgrade path between `0.x` versions is guaranteed. So this is
@@ -18,8 +20,9 @@ path, and files written by earlier versions of this library are unreadable by it
 Two traps worth naming, because both look like bugs and are not:
 
 - A **0.9** file stamps `version_major = 1`, `version_minor = 0` — that version
-  was published as "1.0" and renumbered without rewriting its bytes. 0.16 stamps
-  `0`/`16`. A 0.9 file is correctly rejected at the version gate.
+  was published as "1.0" and renumbered without rewriting its bytes, so the
+  `v1.0` tag sorts *above* every `0.x` tag and is the oldest of them. 0.20
+  stamps `0`/`20`. A 0.9 file is correctly rejected at the version gate.
 - `decoder_id` decides **neither** axis. It does not say a record is decoded —
   reassembly is a decoder too, so the layer comes from that decoder's declared
   `output_layer` — and it does not say which stage ran, since a pass-through
@@ -35,14 +38,17 @@ Two traps worth naming, because both look like bugs and are not:
 
 The conformance vectors in `tests/vectors/` are vendored verbatim from the spec
 repository and are the acceptance criteria — do not edit them to make a test
-pass. `VECTOR-DEFECTS.md` records four defects found against them: three closed,
-and defect 4 open at `v0.16`, which holds `tunnel/inner` and `tunnel/outer` in
-`DEFECTIVE`. Never bend the implementation to match a fixture in `DEFECTIVE`.
+pass. `VECTOR-DEFECTS.md` records six defects found against them, all closed
+upstream; `DEFECTIVE` in `tests/test_vectors.py` is empty at `v0.20`. When a
+fixture is wrong, it goes in `DEFECTIVE` by name and is reported upstream —
+never bend the implementation to match a fixture in `DEFECTIVE`.
 
-The 0.14 → 0.16 port is **complete** (`plans/SPEC-0.16-MIGRATION-PLAN.md`, phases 0–8).
-The vectors are vendored at `v0.16` — 53 of them, 59 files — and every name is in
-`KNOWN_PASSING`. The ratchet in `tests/test_vectors.py` stays as the regression
-guard: a name is never removed from that set.
+The 0.19 → 0.20 port is **complete** (`plans/SPEC-0.20-MIGRATION-PLAN.md`); the
+earlier ports are in `plans/` too, and `docs/dev/contributing.md` § *Porting to
+a new spec version* is the checklist. The vectors are vendored at `v0.20` — 55
+of them, 63 files — and every name is in `KNOWN_PASSING`. The ratchet in
+`tests/test_vectors.py` stays as the regression guard: a name is never removed
+from that set while its vector exists.
 
 One vector is judged as a **pair**: `splice` ships two files that are each
 conformant alone, so its violation is only visible to `zpf.check_splice`. The

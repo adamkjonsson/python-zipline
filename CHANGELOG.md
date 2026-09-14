@@ -22,7 +22,46 @@ it back from the installed distribution metadata.
 
 ## [Unreleased]
 
+Implements spec **v0.20** (`SPEC_VERSION == (0, 20)`), up from `0.19`. Files
+written by `0.3.0` are refused at the version gate, and files written by this
+release are unreadable by `0.3.0` — the `0.x` rule, as before.
+
+`0.20` is a repair-and-vector release upstream: no option or block was added,
+no body layout moved, and **no rule this library did not already keep was
+introduced**. Two of its four headline items were filed from this repository.
+The port is therefore the version stamp, the re-vendored vectors, and the
+harness catching up to what the manifest can now say — recorded in
+`plans/SPEC-0.20-MIGRATION-PLAN.md`.
+
 ### Changed
+
+**`RecordFlags.RETRANSMIT` names the sender's act, not the reassembler's**
+([zipline#142](https://github.com/adamkjonsson/zipline/issues/142)). A
+duplicated capture — every packet seen twice through a mirror port or a veth
+pair — is not a retransmission and does not set the flag; what the
+reassembler discarded, retransmitted or duplicated, is an Undecoded block
+against the capture, as it always was. Nothing in this library sets the flag,
+so the change is the enum's docstring and one paragraph in *Concepts*; a
+producer writing records through `zpf` reads the meaning from there.
+
+**The conformance suite is full.** The vectors are re-vendored at `v0.20` —
+55 vectors, 63 files — and every case is in `KNOWN_PASSING`, the first port at
+which the ratchet was full on arrival. `DEFECTIVE` is empty: `0.20` fixed the
+three vectors whose bytes disagreed with their own projection
+([zipline#141](https://github.com/adamkjonsson/zipline/issues/141), found here
+at the `0.19` re-vendor), and made upstream's `build.py` compare a vector's two
+faces at registration so the class cannot recur. The new `merge/` fixture and
+its negative twin `isolate-merge-unmarked-hole` pin the obligation
+`merge_files` already met — a pass-through that cites a transport stream marks
+its input's holes — and `check_extents` finds the twin's unmarked hole from the
+output alone, as it did before the fixture existed.
+
+**Declared extents are asserted for every accept vector.** `0.20` answered
+[zipline#140](https://github.com/adamkjonsson/zipline/issues/140) with an
+`extents` key on every single-file accept entry, stating per participant
+stream the extent a reader must compute. The harness reads it, so the
+hand-transcribed table it replaced is gone: 37 streams across 31 vectors are
+now asserted against `zpf.stream_extent`, where two were.
 
 **Python 3.10 is now supported** — `requires-python` is `>=3.10`, down from
 `>=3.11` ([#67](https://github.com/adamkjonsson/python-zipline/issues/67)).

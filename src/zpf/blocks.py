@@ -42,7 +42,7 @@ _SWAPPED_MAGIC = 0x4650495A
 #: ``(version_major, version_minor)``. A writer stamps the version it
 #: implements; there is no obligation to compute the lowest version whose
 #: features a file happens to use.
-SPEC_VERSION: tuple[int, int] = (0, 19)
+SPEC_VERSION: tuple[int, int] = (0, 20)
 
 
 #: The canonical :class:`Undecoded` ``reason`` values, mapped to their
@@ -167,6 +167,20 @@ class RecordFlags(IntFlag):
     SYN = 0x0008
     URG = 0x0010
     RETRANSMIT = 0x0040
+    """The **sender resent** bytes of this record's range, and the reassembler
+    resolved the retransmission inside this record.
+
+    Since `0.20` this names the sender's act, not the reassembler's. A copy of
+    one transmission — every packet seen twice through a mirror port, a
+    two-interface capture, a veth pair — is not a retransmission and does not
+    set the flag, however the reassembler dealt with the copy. What the
+    reassembler *discarded*, retransmitted or duplicated, has its own home: an
+    :class:`Undecoded` block against the ``capture`` Source. A producer that
+    **cannot** tell a copy from a retransmission SHOULD treat the repeat as a
+    retransmission. Nothing in this library sets the flag: it holds no
+    packet-level reassembler, and :mod:`zpf.reassembly` consumes records a
+    producer already resolved.
+    """
     MESSAGE = 0x0080
 
 

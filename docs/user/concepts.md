@@ -12,10 +12,14 @@ which is normative for this library.
 A `.zpf` file stores the *payload* output of a network sessionizer: the bytes
 that flowed between endpoints once packets have been reassembled into
 sessions, plus the metadata needed to consume them. It is not a packet
-capture — retransmissions, out-of-order segments, and overlaps have already
-been resolved by the producer. What remains is clean application data with
-enough context (who sent it, when, and in what order) to replay or analyze
-it.
+capture — retransmissions, duplicated packets, out-of-order segments, and
+overlaps have already been resolved by the producer. What remains is clean
+application data with enough context (who sent it, when, and in what order)
+to replay or analyze it. Two traces of that resolution survive: a record whose
+range the *sender* resent carries the `retransmit` flag
+({attr}`zpf.RecordFlags.RETRANSMIT` — the sender's act, not the reassembler's,
+so a capture that merely saw every packet twice sets it nowhere), and bytes the
+reassembler *discarded* are marked with an Undecoded block against the capture.
 
 Three nesting levels organize that data:
 

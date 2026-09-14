@@ -430,10 +430,13 @@ def check_extents(
         declaration to detect).
 
     Note:
-        ``coverage-gap`` is reported for a **decode stage** only. A
-        pass-through re-emits records rather than citing them, so it has no
-        ``spans`` and the guarantee is not its to keep — see
-        :class:`~zpf.conformance.CoverageLedger`.
+        ``coverage-gap`` is reported against **every input stream the file
+        cites**, and since `0.19` that includes a pass-through's: its identity
+        spans cite the input, which makes the file answerable for every offset
+        of it, so a merge that leaves a hole in its input unmarked is found here
+        from the output alone (`0.20`'s ``isolate-merge-unmarked-hole``). The
+        ledger decides per input stream, by whether any record's spans cited
+        it — see :class:`~zpf.conformance.CoverageLedger`.
 
     Example:
         >>> for finding in zpf.check_extents("http.zpf"):
