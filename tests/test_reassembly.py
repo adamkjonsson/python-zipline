@@ -709,6 +709,34 @@ def test_a_record_with_no_seq_start_on_an_anchored_stream_is_unplaceable():
     assert extent == 6
 
 
+def test_without_an_isn_the_reader_reports_every_record_it_zeroes():
+    """#70's repro: four records 1 GiB apart on a stream with no handshake.
+
+    Every neighbour is within 2³¹, so the file is accepted, and the third and
+    fourth records are serially below the first — the origin — so they cover
+    no byte. Before the fix ``record_ranges`` zeroed them and
+    ``reader.unplaceable`` stayed empty, so a consumer trusting the latter
+    believed the file whole. The two now agree, record for record.
+    """
+    gib = 1 << 30
+    with malformed(
+        rec(0, b"AAAA", 1000),
+        rec(gib, b"BBBB", 2000),
+        rec(2 * gib, b"CCCC", 3000),
+        rec(3 * gib, b"DDDD", 4000),
+        isn=None,
+    ) as reader:
+        ranges, extent = measure(reader)
+        reported = [d.message for d in reader.unplaceable]
+    assert ranges == ((0, 4), (gib, gib + 4), (gib + 4, gib + 4), (gib + 4, gib + 4))
+    assert extent == gib + 4
+    assert [n[n.index("seq_start") :].split(",")[0] for n in reported] == [
+        f"seq_start {2 * gib}",
+        f"seq_start {3 * gib}",
+    ]
+    assert all("below the stream origin 0 (the first captured byte)" in n for n in reported)
+
+
 def test_the_unplaceable_range_is_the_running_maximum_not_the_last_end():
     """Why the placement is a maximum, which is what `0.18` settled and `0.19` unpinned.
 

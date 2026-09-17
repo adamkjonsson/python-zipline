@@ -71,6 +71,22 @@ are now `TYPE_CHECKING`-only, `timezone.utc`, and a `tomli` fallback for the
 test on 3.10 (a dev-only dependency; the package still has zero runtime
 dependencies). CI runs the suite on 3.10 as well.
 
+### Fixed
+
+**A record below the origin of an `isn`-less stream is now reported**
+([#70](https://github.com/adamkjonsson/python-zipline/issues/70)). The format
+fixes the origin at the first captured byte when there is no `isn` and measures
+everything from it, which `record_ranges()` always did — but the conformance
+checker read "no `isn`" as "no floor" and returned early, so such a record was
+zeroed by one path and noted by neither, and `reader.unplaceable` stayed empty
+on a file that had lost bytes. The checker now applies the same floor from the
+same origin, and the note names which one (`isn + 1` or `the first captured
+byte`). The only stream that reaches this without an `isn` is one that has
+carried more than 2 GiB — the ordering rule keeps neighbours within 2³¹, so the
+only way below the origin is around it. That ceiling is the format's
+([zipline#146](https://github.com/adamkjonsson/zipline/issues/146)), still open;
+until it moves, the reader's two answers agree about it.
+
 ## [0.3.0] - 2026-09-06
 
 Implements spec **v0.19** (`SPEC_VERSION == (0, 19)`), up from `0.16`. Files
