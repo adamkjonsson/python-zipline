@@ -26,7 +26,9 @@ the test suite.
 | [`SPEC-0.14-MIGRATION-PLAN.md`](SPEC-0.14-MIGRATION-PLAN.md) | The 0.12 → 0.14 port, phases 0–6. |
 | [`SPEC-0.14-FINDINGS.md`](SPEC-0.14-FINDINGS.md) | What that port found in 0.14 itself, kept apart from the plan. |
 | [`SPEC-0.15-REVIEW.md`](SPEC-0.15-REVIEW.md) | Why 0.15 was unimplementable as written; its findings were adopted into 0.16. |
-| [`SPEC-0.16-MIGRATION-PLAN.md`](SPEC-0.16-MIGRATION-PLAN.md) | The 0.14 → 0.16 port, phases 0–8. The version the library implements today. |
+| [`SPEC-0.16-MIGRATION-PLAN.md`](SPEC-0.16-MIGRATION-PLAN.md) | The 0.14 → 0.16 port, phases 0–8. |
+| [`V0.3.0-RELEASE-PLAN.md`](V0.3.0-RELEASE-PLAN.md) | The 0.16 → 0.19 port, as Phase 0 of the `0.3.0` release plan below. |
+| [`SPEC-0.20-MIGRATION-PLAN.md`](SPEC-0.20-MIGRATION-PLAN.md) | The 0.19 → 0.20 port. The version the library implements today. |
 
 ## API and documentation design
 
@@ -40,6 +42,6 @@ the test suite.
 
 | Document | What it is |
 | --- | --- |
-| [`V0.3.0-RELEASE-PLAN.md`](V0.3.0-RELEASE-PLAN.md) | The `0.16` → `0.19` port and the four issues open at `0.2.0` (#58, #59, #62, #63), including the API break that makes `0.3.0` a minor. **Live** — every phase landed 2026-09-06, all four issues closed; the release itself is what remains. |
+| [`V0.3.0-RELEASE-PLAN.md`](V0.3.0-RELEASE-PLAN.md) | The `0.16` → `0.19` port and the four issues open at `0.2.0` (#58, #59, #62, #63), including the API break that makes `0.3.0` a minor. Shipped in `0.3.0` on 2026-09-06; historical. |
 | [`SIMPLIFICATION-IMPACT.md`](SIMPLIFICATION-IMPACT.md) | What the spec repository's simplification analysis would remove from this library, and what it would cost. `0.19` answered it by taking the three packages it supports; historical, and its header says what it missed. |
 | [`V0.2.0-ISSUES-PLAN.md`](V0.2.0-ISSUES-PLAN.md) | The four issues on the `v0.2.0` milestone (#47, #48, #49, #50). Shipped in `0.2.0`; historical. |

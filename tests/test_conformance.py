@@ -1031,6 +1031,42 @@ def test_an_earlier_hint_anchors_the_stream_for_what_follows():
     assert len(checker.unplaceable_notes) == 1
 
 
+def test_without_an_isn_the_first_captured_byte_is_the_origin_and_has_a_floor():
+    """#70: the checker returned early without an ``isn``, and reported nothing.
+
+    The format fixes the origin at the first captured byte when there is no
+    ``isn`` and measures everything from it, which is what ``record_ranges``
+    always did. The checker read "no ``isn``" as "no floor", so a record
+    serially below the first hint was zeroed by one path and noted by neither.
+    The ordering rule keeps consecutive records within 2³¹, so the only way
+    below the origin here is around it: a stream past 2 GiB. That ceiling is
+    the format's (zipline#146); agreeing about it is ours.
+    """
+    gib = 1 << 30
+    checker = anchored(raw_record(seq_start=0, payload=b"AAAA"), isn=None)
+    assert checker.unplaceable_notes == ()  # the first hint is the origin itself
+    checker.observe(raw_record(seq_start=gib, payload=b"BBBB"))
+    assert checker.unplaceable_notes == ()
+    checker.observe(raw_record(seq_start=2 * gib, payload=b"CCCC"))
+    (note,) = checker.unplaceable_notes
+    assert "seq_start 2147483648, below the stream origin 0 (the first captured byte)" in note
+    assert "excluded from the extent" in note
+    checker.observe(raw_record(seq_start=3 * gib, payload=b"DDDD"))
+    assert len(checker.unplaceable_notes) == 1
+
+
+def test_with_an_isn_the_origin_is_isn_plus_one_not_the_first_record():
+    """The two origins are not interchangeable: an ``isn`` wins when declared.
+
+    A stream whose first record sits above ``isn + 1`` has a leading hole,
+    not a new origin; a later record between the two is placeable, and the
+    note that would call it below-origin would be wrong.
+    """
+    checker = anchored(raw_record(seq_start=1040, payload=b"AAAA"))  # isn=1000
+    checker.observe(raw_record(seq_start=1040, payload=b"AAAA"))  # retransmit
+    assert checker.unplaceable_notes == ()
+
+
 def test_a_syn_away_from_the_origin_is_advisory():
     """A MUST on the writer whose breach costs a reader the handshake's timing.
 

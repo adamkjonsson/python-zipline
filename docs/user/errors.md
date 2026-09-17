@@ -177,7 +177,8 @@ Categories you will meet:
 ## Unplaceable records: reported, but not a violation
 
 Some records cannot be placed in their stream's offset space at all: one whose
-`seq_start` falls below the origin (`isn + 1`), and one carrying no `seq_start`
+`seq_start` falls below the origin (`isn + 1`, or the first captured byte when
+there is no `isn`), and one carrying no `seq_start`
 on a stream whose other records do. Such a record **covers no byte and
 contributes nothing to the extent**, so its payload is excluded from every
 coverage answer the file supports.

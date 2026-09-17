@@ -22,6 +22,8 @@ it back from the installed distribution metadata.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-17
+
 Implements spec **v0.20** (`SPEC_VERSION == (0, 20)`), up from `0.19`. Files
 written by `0.3.0` are refused at the version gate, and files written by this
 release are unreadable by `0.3.0` — the `0.x` rule, as before.
@@ -70,6 +72,22 @@ in one module, `datetime.UTC` in a few places, and `tomllib` in one test. Those
 are now `TYPE_CHECKING`-only, `timezone.utc`, and a `tomli` fallback for the
 test on 3.10 (a dev-only dependency; the package still has zero runtime
 dependencies). CI runs the suite on 3.10 as well.
+
+### Fixed
+
+**A record below the origin of an `isn`-less stream is now reported**
+([#70](https://github.com/adamkjonsson/python-zipline/issues/70)). The format
+fixes the origin at the first captured byte when there is no `isn` and measures
+everything from it, which `record_ranges()` always did — but the conformance
+checker read "no `isn`" as "no floor" and returned early, so such a record was
+zeroed by one path and noted by neither, and `reader.unplaceable` stayed empty
+on a file that had lost bytes. The checker now applies the same floor from the
+same origin, and the note names which one (`isn + 1` or `the first captured
+byte`). The only stream that reaches this without an `isn` is one that has
+carried more than 2 GiB — the ordering rule keeps neighbours within 2³¹, so the
+only way below the origin is around it. That ceiling is the format's
+([zipline#146](https://github.com/adamkjonsson/zipline/issues/146)), still open;
+until it moves, the reader's two answers agree about it.
 
 ## [0.3.0] - 2026-09-06
 
@@ -349,7 +367,8 @@ as "1.0" and renumbered without rewriting its bytes.
 - The streaming causal merge and `SEQUENCED` verification.
 - The merge transform, the coverage validator, and the `zpf` CLI.
 
-[Unreleased]: https://github.com/adamkjonsson/python-zipline/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/python-zipline/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/adamkjonsson/python-zipline/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/adamkjonsson/python-zipline/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/adamkjonsson/python-zipline/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/adamkjonsson/python-zipline/releases/tag/v0.1.0

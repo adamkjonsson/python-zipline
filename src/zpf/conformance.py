@@ -135,6 +135,10 @@ class _ParticipantState:
             ``isn + 1``. Kept because two questions need it and neither can
             be answered from a record alone: whether a handshake record sits
             where the format says, and whether a record is placeable at all.
+        first_seq: The first ``seq_start`` any of its records carried. With
+            no ``isn`` this *is* the origin — the first captured byte — and
+            the floor measures from it exactly as it does from ``isn + 1``
+            (`#70 <https://github.com/adamkjonsson/python-zipline/issues/70>`_).
         provenances: The Source kinds its records reference.
         layers: The layers its records resolve to. More than one is a
             violation — the stream's offset space would have two
@@ -159,6 +163,7 @@ class _ParticipantState:
     provenances: set[SourceKind | int] = field(default_factory=set)
     layers: set[OutputLayer | int] = field(default_factory=set)
     has_discontinuity: str | None = None
+    first_seq: int | None = None
     last_seq: int | None = None
     prev_reach: dict[tuple[int, int, int], int] = field(default_factory=dict)
     broke_since: bool = False
@@ -612,6 +617,8 @@ class ConformanceChecker:
         self._check_record_order(block, stream, described)
         self._classify_record(block, stream, described)
         if block.seq_start is not None:
+            if stream.first_seq is None:
+                stream.first_seq = block.seq_start
             stream.last_seq = block.seq_start
 
     def _on_discontinuity(self, block: Discontinuity) -> None:
@@ -863,8 +870,23 @@ class ConformanceChecker:
 
         See :attr:`unplaceable_notes` for why this is a channel of its own and
         which shape it cannot decide.
+
+        The floor is the same one :func:`zpf.record_ranges` applies, from the
+        same origin: ``isn + 1`` where the participant declares an ``isn``,
+        and the first captured byte — the first record's ``seq_start`` —
+        otherwise. This used to return early without an ``isn``, on the
+        reading that there was then no floor to be below; but the offset
+        space measured from the first hint anyway, so a record serially below
+        it was zeroed by ``record_ranges`` and reported by nothing (`#70
+        <https://github.com/adamkjonsson/python-zipline/issues/70>`_). The
+        ordering rule keeps consecutive records within 2³¹ of each other, so
+        without an ``isn`` the only way below the origin is *around* it: a
+        stream that has carried more than 2 GiB reads its later records as
+        below its first. That is the format's ceiling, not this check's
+        (`zipline#146 <https://github.com/adamkjonsson/zipline/issues/146>`_),
+        and until the format moves, both paths say the same thing about it.
         """
-        anchored = stream.isn is not None or stream.last_seq is not None
+        anchored = stream.isn is not None or stream.first_seq is not None
         if block.seq_start is None:
             if anchored:
                 self._unplaceable.append(
@@ -873,13 +895,18 @@ class ConformanceChecker:
                     f"contributes nothing to the extent"
                 )
             return
-        if stream.isn is None:
-            return  # no floor to be below; the first hint fixes the origin
-        origin = (stream.isn + 1) % SEQ_SPACE
+        if stream.isn is not None:
+            origin = (stream.isn + 1) % SEQ_SPACE
+            fixed_by = "isn + 1"
+        elif stream.first_seq is not None:
+            origin = stream.first_seq
+            fixed_by = "the first captured byte"
+        else:
+            return  # this record is the first hint, and so the origin itself
         if seq_lt(block.seq_start, origin):
             self._unplaceable.append(
                 f"{described} has seq_start {block.seq_start}, below the stream origin "
-                f"{origin} (isn + 1), so the offset space cannot place it: its "
+                f"{origin} ({fixed_by}), so the offset space cannot place it: its "
                 f"{len(block.payload)} payload byte(s) are excluded from the extent and "
                 f"from every coverage answer this file supports"
             )
