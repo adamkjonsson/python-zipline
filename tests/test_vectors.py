@@ -1,4 +1,4 @@
-"""Conformance-vector harness for the upstream 0.20 vectors.
+"""Conformance-vector harness for the upstream 0.21 vectors.
 
 The vectors in ``tests/vectors/`` are hand-built from the specification's
 normative text (see ``tests/vectors/VENDORED.md``). They are the acceptance
@@ -8,7 +8,7 @@ targets pass.
 **The ratchet.** A vector case is a hard requirement only once its name is added
 to :data:`KNOWN_PASSING`; every other case is ``xfail(strict=False)``. That keeps
 the suite green across a migration that starts with every file unreadable — until
-the version gate moves, a 0.20 file is refused whatever else is implemented. A
+the version gate moves, a 0.21 file is refused whatever else is implemented. A
 case that starts passing shows up as ``XPASS`` — that is the progress signal —
 and is then promoted into :data:`KNOWN_PASSING` so it can never silently
 regress.
@@ -60,31 +60,32 @@ VECTORS = Path(__file__).parent / "vectors"
 #: Vector cases that MUST pass. Grow it as phases land; never remove a name
 #: while its vector exists, because that is the regression guard.
 #:
-#: **55 names, 63 files, and every case in this set at the ``0.20``
-#: re-vendor** — the first port at which the ratchet is full on arrival. The
-#: arithmetic from ``0.19``'s 55: the three names :data:`DEFECTIVE` held
-#: (``handshake-at-origin``, ``unplaceable-below-origin``,
-#: ``mixed-derivation``) arrived, ``0.20`` having fixed the fixtures under
-#: `zipline#141 <https://github.com/adamkjonsson/zipline/issues/141>`_; and
-#: four joined from the two new vectors, ``merge`` (three files) and its
-#: negative twin ``isolate-merge-unmarked-hole``. Nothing was deleted.
+#: **62 names, 70 files, and every case in this set at the ``0.21`` port.**
+#: The arithmetic from ``0.20``'s 55: seven joined, one per new vector, and
+#: nothing was deleted. Unlike ``0.20``, where the ratchet was full on
+#: arrival, every one of the seven was *earned* by a phase of the port:
+#: ``stream-past-2gib`` and ``stream-wraps-seq`` by the unwrapping walk
+#: (Phase 3; the second already measured right, the first read two records
+#: as below the origin); ``unit-sequence-reversed``, ``unit-sequence-nested``
+#: and ``session-split-capture-gap`` by the ``adjacency`` field's projection
+#: (Phase 2 — they accepted and measured right from the start, but projected
+#: ``units`` as ``contiguous``, and re-encoded it so); and the two negative
+#: ones, ``isolate-unknown-adjacency`` and ``advisory-transport-adjacency``,
+#: by the checker's two new conditions (Phase 4). Each showed up as ``XPASS``
+#: the moment its phase landed, and this promotion is what turns the signal
+#: into a guard.
 #:
-#: **Nothing was implemented to earn the four new names.** The rule they pin
-#: — a pass-through that cites a transport stream marks the input's holes —
-#: is the one ``0.19`` implied and this library already kept, which the
-#: ``0.20`` changelog records. The twin xfailed for exactly as long as
-#: :data:`_ISOLATE_REASONS` lacked its entry.
-#:
-#: (62 case names against 55 manifest entries: ``chain`` and ``merge`` expand
+#: (69 case names against 62 manifest entries: ``chain`` and ``merge`` expand
 #: to three files each, ``tunnel`` to four, and ``splice`` is one name for
 #: two.)
 #:
 #: ``splice`` is one name for two files, because its violation belongs to
-#: neither of them, which is why 55 names cover 63 files. :data:`PAIRWISE`
+#: neither of them, which is why 62 names cover 70 files. :data:`PAIRWISE`
 #: routes it to :func:`test_a_pairwise_vector_is_caught`, and the per-file
 #: tiers skip it.
 KNOWN_PASSING: frozenset[str] = frozenset(
     {
+        "advisory-transport-adjacency",
         "advisory-transport-content-type",
         "advisory-transport-role",
         "broken-chain",
@@ -116,6 +117,7 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "isolate-self-derived",
         "isolate-unbound-zpf-stream",
         "isolate-undeclared-session",
+        "isolate-unknown-adjacency",
         "isolate-unknown-output-layer",
         "isolate-unknown-source-kind",
         "isolate-unmarked-break",
@@ -136,8 +138,11 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "reordered-decoded",
         "sequenced-session",
         "session-fan-out",
+        "session-split-capture-gap",
         "sessionization-stage",
         "splice",
+        "stream-past-2gib",
+        "stream-wraps-seq",
         "tunnel/http",
         "tunnel/inner",
         "tunnel/outer",
@@ -145,6 +150,8 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "undecoded-in-capture",
         "undecoded-reason-class",
         "undecoded-skipped",
+        "unit-sequence-nested",
+        "unit-sequence-reversed",
         "unplaceable-below-origin",
         "unplaceable-no-seq-start",
     }
@@ -155,7 +162,9 @@ KNOWN_PASSING: frozenset[str] = frozenset(
 #: that nobody bends this implementation to match a broken fixture: if one of
 #: these starts passing, the vector was fixed — or we got it wrong.
 #:
-#: **Empty at ``v0.20``.** The three entries it held at ``v0.19`` —
+#: **Empty at ``v0.21``, as at ``v0.20``.** The projection sweep at this
+#: re-vendor found nothing, and the new key was checked byte-against-``.jsonl``
+#: on every Participant block. The three entries it held at ``v0.19`` —
 #: ``handshake-at-origin``, ``unplaceable-below-origin`` and
 #: ``mixed-derivation``, whose ``.zpf`` disagreed with their own ``.jsonl``
 #: (defects 5 and 6, `zipline#141
@@ -210,7 +219,8 @@ UNIMPLEMENTED: dict[str, str] = {}
 #: `zipline#140 <https://github.com/adamkjonsson/zipline/issues/140>`_; ``0.20``
 #: answered with an ``extents`` key on every single-file accept entry, so the
 #: hand-kept table is gone and :func:`_extent_params` reads the manifest — 37
-#: streams across 31 vectors, where the table held two.
+#: streams across 31 vectors at ``0.20``, 44 across 37 at ``0.21``, where the
+#: table held two.
 #:
 #: Empty since Phase 1 of the ``0.19`` port, which landed the one offset rule.
 _EXTENTS_PENDING: dict[str, str] = {}
@@ -270,11 +280,16 @@ _ISOLATE_REASONS: dict[str, str] = {
 #: Syntax new in 0.13/0.14, by the option id carrying it. Each must be parsed
 #: into a typed field rather than preserved through the unknown-option escape.
 #:
-#: **Nothing joins this at 0.16.** The port's one piece of new syntax,
-#: ``output_layer``, is a Decoder *body* field rather than an option — there is
-#: no id for it and no escape it could hide in, which is why the specification
-#: chose a body field. A dropped ``output_layer`` shows up in the re-encode and
-#: projection tests instead.
+#: **Nothing joins this at 0.16, and nothing at 0.21.** Each port's one piece
+#: of new syntax — ``output_layer`` on the Decoder, ``adjacency`` on the
+#: Participant — is a *body* field rather than an option: there is no id for
+#: it and no escape it could hide in, which is why the specification chose a
+#: body field both times. A dropped body field shows up in the projection
+#: test instead, and — once the dataclass has a field for it — in the
+#: re-encode and JSONL → binary tests too. The ``0.21`` port found the
+#: qualification the hard way: until Phase 2 added ``Participant.adjacency``,
+#: every dataclass comparison was blind to the byte, and only the projection
+#: saw ``units`` come out as ``contiguous``.
 _NEW_OPTION_IDS: dict[int, str] = {
     0x0015: "transform_params_digest",
     0x0054: "external_session_id",
@@ -446,7 +461,7 @@ def _params(tier: str) -> list[Any]:
             marks: tuple[Any, ...] = ()
         else:
             reason = DEFECTIVE.get(case.name) or UNIMPLEMENTED.get(
-                case.name, "not yet ported to 0.20"
+                case.name, "not yet ported to 0.21"
             )
             marks = (pytest.mark.xfail(reason=reason, strict=False),)
         params.append(pytest.param(case, id=case.name, marks=marks))
@@ -743,7 +758,7 @@ def _pairwise_params() -> list[Any]:
     for name in PAIRWISE:
         marks: tuple[Any, ...] = ()
         if name not in KNOWN_PASSING:
-            marks = (pytest.mark.xfail(reason="not yet ported to 0.20", strict=False),)
+            marks = (pytest.mark.xfail(reason="not yet ported to 0.21", strict=False),)
         params.append(pytest.param(name, id=name, marks=marks))
     return params
 

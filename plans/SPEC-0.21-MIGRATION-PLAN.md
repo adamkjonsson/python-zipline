@@ -40,7 +40,12 @@ and the 62 vectors at tag `v0.21` (commit `4964dee`, cut 2026-09-18). We ship
 > `adjacency=` as the override. `StreamView` learns its layer from the
 > reader (a callable, so `layer()`'s error stays lazy) and falls back to
 > the hint test when built by hand. `rewrite_decoded` keeps the per-seam
-> form and takes no override. Suite: 1000 passed, 7 xpassed.
+> form and takes no override. **Phase 6 done**: `KNOWN_PASSING` is 62
+> names, 70 files, every case; the harness docstrings are retold for
+> `0.21`, including the note that a body field is invisible to a dataclass
+> comparison until the dataclass has the field. Suite: **1007 passed, zero
+> xfail, zero xpass.** Phases 7 (changelog) and 8 (documentation sweep)
+> remain.
 > Every number below comes from the scratch run, not from the changelog.
 
 ---
