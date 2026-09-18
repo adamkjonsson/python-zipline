@@ -1,0 +1,11 @@
+{"type":"file","format":"zipline-payload/0.21","tick_hz":1000000}
+{"type":"source","source_id":1,"kind":"capture","uri":"paused.pcap"}
+{"type":"session","session_id":7,"proto":"tcp","key":"10.0.0.1:51000 <-> 93.184.216.34:80"}
+{"type":"participant","session_id":7,"pid":0,"adjacency":"contiguous","endpoint":["10.0.0.1:51000"],"isn":1000,"tcp_role":"initiator"}
+{"type":"record","session_id":7,"sender_pid":0,"source_id":1,"ts":1000,"flags":["psh"],"payload":"QUFBQUJCQkI=","seq_start":1001}
+{"type":"session_end","session_id":7,"reason":"capture-gap"}
+{"type":"session","session_id":8,"proto":"tcp","key":"10.0.0.1:51000 <-> 93.184.216.34:80"}
+{"type":"participant","session_id":8,"pid":0,"adjacency":"contiguous","endpoint":["10.0.0.1:51000"]}
+{"type":"record","session_id":8,"sender_pid":0,"source_id":1,"ts":90000000,"flags":["psh"],"payload":"Q0NDQ0REREQ=","seq_start":2147484657}
+{"type":"session_end","session_id":8,"reason":"capture-end"}
+{"type":"end"}

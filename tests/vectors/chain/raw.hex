@@ -8,7 +8,7 @@
 0004  28 00 00 00              length = 40
 0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
 000C  00 00                    version_major = 0
-000E  14 00                    version_minor = 20
+000E  15 00                    version_minor = 21
 0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
 0018  11 00 12 00              option 0x0011 creator, len = 18
 001C  7A 70 66 2D 73 65 73 73  "zpf-sessionize 1.0"
@@ -38,7 +38,8 @@
 0064  28 00 00 00              length = 40
 0068  07 00 00 00 00 00 00 00  session_id = 7  (u64)
 0070  00 00                    participant_id = 0
-0072  00 00                    _reserved
+0072  00                       adjacency = 0  (contiguous)
+0073  00                       _reserved
 0074  60 00 0E 00              option 0x0060 endpoint, len = 14
 0078  31 30 2E 30 2E 30 2E 31  "10.0.0.1:51000"
 0080  3A 35 31 30 30 30
@@ -51,7 +52,8 @@
 0094  28 00 00 00              length = 40
 0098  07 00 00 00 00 00 00 00  session_id = 7  (u64)
 00A0  01 00                    participant_id = 1
-00A2  00 00                    _reserved
+00A2  00                       adjacency = 0  (contiguous)
+00A3  00                       _reserved
 00A4  60 00 10 00              option 0x0060 endpoint, len = 16
 00A8  39 33 2E 31 38 34 2E 32  "93.184.216.34:80"
 00B0  31 36 2E 33 34 3A 38 30

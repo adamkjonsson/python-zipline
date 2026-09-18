@@ -8,7 +8,7 @@
 0004  2C 00 00 00              length = 44
 0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
 000C  00 00                    version_major = 0
-000E  14 00                    version_minor = 20
+000E  15 00                    version_minor = 21
 0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
 0018  12 00 0B 00              option 0x0012 produced_by, len = 11
 001C  73 73 6C 2D 74 61 70 20  "ssl-tap 0.3"
@@ -52,7 +52,8 @@
 0090  20 00 00 00              length = 32
 0094  03 00 00 00 00 00 00 00  session_id = 3  (u64)
 009C  00 00                    participant_id = 0
-009E  00 00                    _reserved
+009E  00                       adjacency = 0  (contiguous)
+009F  00                       _reserved
 00A0  60 00 0E 00              option 0x0060 endpoint, len = 14
 00A4  31 30 2E 30 2E 30 2E 31  "10.0.0.1:51000"
 00AC  3A 35 31 30 30 30

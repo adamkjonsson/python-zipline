@@ -1,0 +1,94 @@
+# isolate-unknown-adjacency
+#
+# Generated from the same description as the .zpf -- never edited
+# by hand, so the annotation cannot drift from the bytes.
+
+0000  01 00                    type   = 0x0001  File Header
+0002  00 00                    reserved
+0004  30 00 00 00              length = 48
+0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
+000C  00 00                    version_major = 0
+000E  15 00                    version_minor = 21
+0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
+0018  12 00 0E 00              option 0x0012 produced_by, len = 14
+001C  7A 70 66 2D 64 65 63 6F  "zpf-decode 0.9"
+0024  64 65 20 30 2E 39
+002A  00 00                    value padding
+002C  13 00 08 00              option 0x0013 produced_at, len = 8  (1719820000)
+0030  E0 5E 82 66 00 00 00 00
+
+0038  02 00                    type   = 0x0002  Source Descriptor
+003A  00 00                    reserved
+003C  28 00 00 00              length = 40
+0040  01 00                    source_id = 1
+0042  01                       kind = 1  (zpf-input)
+0043  00                       _reserved
+0044  20 00 0D 00              option 0x0020 uri, len = 13
+0048  74 72 61 6E 73 70 6F 72  "transport.zpf"
+0050  74 2E 7A 70 66
+0055  00 00 00                 value padding
+0058  21 00 0B 00              option 0x0021 digest, len = 11
+005C  73 68 61 32 35 36 3A 32  "sha256:2e9d"
+0064  65 39 64
+0067  00                       value padding
+
+0068  03 00                    type   = 0x0003  Decoder Descriptor
+006A  00 00                    reserved
+006C  18 00 00 00              length = 24
+0070  01 00                    decoder_id = 1
+0072  00                       output_layer = 0  (decoded)
+0073  00                       _reserved
+0074  41 00 08 00              option 0x0041 name, len = 8
+0078  68 74 74 70 2F 31 2E 31  "http/1.1"
+0080  42 00 03 00              option 0x0042 version, len = 3
+0084  30 2E 34                 "0.4"
+0087  00                       value padding
+
+0088  10 00                    type   = 0x0010  Session Descriptor
+008A  00 00                    reserved
+008C  10 00 00 00              length = 16
+0090  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+0098  50 00 04 00              option 0x0050 proto, len = 4
+009C  68 74 74 70              "http"
+
+00A0  11 00                    type   = 0x0011  Participant Descriptor
+00A2  00 00                    reserved
+00A4  20 00 00 00              length = 32
+00A8  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+00B0  00 00                    participant_id = 0
+00B2  02                       adjacency = 2  (?)
+00B3  00                       _reserved
+00B4  60 00 0E 00              option 0x0060 endpoint, len = 14
+00B8  31 30 2E 30 2E 30 2E 31  "10.0.0.1:51000"
+00C0  3A 35 31 30 30 30
+00C6  00 00                    value padding
+
+00C8  20 00                    type   = 0x0020  Record
+00CA  00 00                    reserved
+00CC  58 00 00 00              length = 88
+00D0  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+00D8  00 00                    sender_pid = 0
+00DA  01 00                    source_id  = 1
+00DC  E8 03 00 00 00 00 00 00  timestamp  = 1000
+00E4  00 00                    _reserved  (u16 = 0)
+00E6  00 00                    flags      = 0x0000
+00E8  12 00 00 00              payload_len = 18
+00EC  47 45 54 20 2F 20 48 54
+00F4  54 50 2F 31 2E 31 0D 0A
+00FC  0D 0A
+00FE  00 00                    payload padding
+0100  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
+0104  01 00
+0106  00 00                    value padding
+0108  80 00 1C 00              option 0x0080 spans, len = 28  (1 entry/entries)
+010C  01 00 00 00 07 00 00 00
+0114  00 00 00 00 00 00 00 00
+011C  00 00 00 00 12 00 00 00
+0124  00 00 00 00
+
+0128  41 00                    type   = 0x0041  End of file
+012A  00 00                    reserved
+012C  04 00 00 00              length = 4
+0130  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
+
+0134                           (end of file, 308 bytes)

@@ -1,0 +1,9 @@
+{"type":"file","format":"zipline-payload/0.21","tick_hz":1000000}
+{"type":"source","source_id":1,"kind":"capture","uri":"bulk.pcap"}
+{"type":"session","session_id":7,"proto":"tcp"}
+{"type":"participant","session_id":7,"pid":0,"adjacency":"contiguous","endpoint":["10.0.0.1:51000"],"isn":1000,"tcp_role":"initiator"}
+{"type":"record","session_id":7,"sender_pid":0,"source_id":1,"ts":1000,"flags":["psh"],"payload":"QUFBQUJCQkI=","seq_start":1001}
+{"type":"record","session_id":7,"sender_pid":0,"source_id":1,"ts":2000,"flags":["psh"],"payload":"Q0NDQ0REREQ=","seq_start":1073742825}
+{"type":"record","session_id":7,"sender_pid":0,"source_id":1,"ts":3000,"flags":["psh"],"payload":"RUVFRUZGRkY=","seq_start":2147484649}
+{"type":"record","session_id":7,"sender_pid":0,"source_id":1,"ts":4000,"flags":["psh"],"payload":"R0dHR0hISEg=","seq_start":3221226473}
+{"type":"end"}

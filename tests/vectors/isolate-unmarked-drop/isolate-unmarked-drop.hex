@@ -8,7 +8,7 @@
 0004  40 00 00 00              length = 64
 0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
 000C  00 00                    version_major = 0
-000E  14 00                    version_minor = 20
+000E  15 00                    version_minor = 21
 0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
 0018  12 00 0E 00              option 0x0012 produced_by, len = 14
 001C  7A 70 66 2D 66 69 6C 74  "zpf-filter 0.1"
@@ -60,7 +60,8 @@
 00B0  20 00 00 00              length = 32
 00B4  07 00 00 00 00 00 00 00  session_id = 7  (u64)
 00BC  01 00                    participant_id = 1
-00BE  00 00                    _reserved
+00BE  00                       adjacency = 0  (contiguous)
+00BF  00                       _reserved
 00C0  60 00 10 00              option 0x0060 endpoint, len = 16
 00C4  39 33 2E 31 38 34 2E 32  "93.184.216.34:80"
 00CC  31 36 2E 33 34 3A 38 30

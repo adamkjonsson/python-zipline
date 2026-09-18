@@ -6,9 +6,13 @@ its [CHANGELOG](https://github.com/adamkjonsson/zipline/blob/v0.21/CHANGELOG.md)
 and the 62 vectors at tag `v0.21` (commit `4964dee`, cut 2026-09-18). We ship
 `0.4.0` (2026-09-17) on `0.20`; this is a one-release jump.
 
-> **Status, 2026-09-18: planned, nothing landed.** Phase 0 was rehearsed in a
-> scratch copy (see *What the suite said*); every number below comes from that
-> run, not from reading the changelog.
+> **Status, 2026-09-18: Phase 0 done**, on branch `spec-0.21-plan`. The tree
+> is byte-identical to the tag; the projection sweep found no new defect (49
+> two-faced files, 0 disagreements on projected keys; the `adjacency` byte of
+> all 61 Participant blocks checked against the `.jsonl` directly, 0
+> mismatches). The suite is red at the gate — 343 failures, every one
+> "reads 20" or the 63→70 count — which is the state Phase 1 clears.
+> Every number below comes from the scratch run, not from the changelog.
 
 ---
 
