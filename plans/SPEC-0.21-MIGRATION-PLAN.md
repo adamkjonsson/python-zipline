@@ -29,8 +29,18 @@ and the 62 vectors at tag `v0.21` (commit `4964dee`, cut 2026-09-18). We ship
 > and `units` on a transport participant is reported at the **first
 > record** that settles the layer, because advisory findings can only be
 > raised from `observe` — which also makes the checked writer refuse it,
-> so D4's writer-side MUST NOT is already met. Suite: 994 passed, 0
-> failed, 7 xpassed — all seven new vectors, promoted in Phase 6.
+> so D4's writer-side MUST NOT is already met. **Phase 5 done**, with one
+> refinement of D4: re-declarations carry the input's *effective*
+> adjacency, not the byte verbatim — `units` only where the input really
+> was a unit sequence (decoded layer), since the field on a transport input
+> is ignored by a reader and copying it would turn an inert value into a
+> claim about the output; `derive_from` reads it through
+> `StreamView.is_unit_sequence`, and the merge, transport-only, always
+> writes `contiguous`. `derive_from` and `decode_stage` take
+> `adjacency=` as the override. `StreamView` learns its layer from the
+> reader (a callable, so `layer()`'s error stays lazy) and falls back to
+> the hint test when built by hand. `rewrite_decoded` keeps the per-seam
+> form and takes no override. Suite: 1000 passed, 7 xpassed.
 > Every number below comes from the scratch run, not from the changelog.
 
 ---

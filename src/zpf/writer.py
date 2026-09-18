@@ -31,6 +31,7 @@ from typing import IO, TYPE_CHECKING, Literal
 
 from zpf.binary import BlockWriter
 from zpf.blocks import (
+    Adjacency,
     Block,
     Custom,
     Decoder,
@@ -537,6 +538,7 @@ class FileWriter:
         digest: str | None = None,
         proto: str | None = None,
         sequenced: bool = False,
+        adjacency: Adjacency | int | None = None,
         comment: str | None = None,
     ) -> DerivedInput:
         """Scaffold this file as one derived from ``reader``.
@@ -552,7 +554,12 @@ class FileWriter:
         to have the header set for you.
 
         ``isn`` is deliberately not copied: it describes the input's raw TCP
-        stream, which the derived records are no longer in.
+        stream, which the derived records are no longer in. ``adjacency``
+        **is** carried forward, as the input's *effective* value: a unit
+        sequence stays one, because a stage reading it carries the break at
+        every seam and an output declared ``units`` is the wholesale way to;
+        and the field on a transport-layer input is ignored, as a reader
+        ignores it, so it does not become a claim about the output.
 
         Args:
             reader: The open input file.
@@ -580,6 +587,13 @@ class FileWriter:
                 ``produced_by``/``produced_at``, and
                 ``transform_params_digest`` where a merge's ordering key
                 lives — reached by walking ``zpf-input`` Sources back.
+            adjacency: What every output participant declares its stored
+                neighbours assert, overriding what is carried forward from
+                the input. Pass :attr:`~zpf.Adjacency.UNITS` for a stage
+                that reorders every participant's records, or a decoder
+                whose units decompose one another; it replaces a
+                Discontinuity per seam. ``None`` (the default) carries the
+                input's effective value.
             comment: Free-text note for the Source.
 
         Returns:
@@ -613,9 +627,12 @@ class FileWriter:
                 linearize=sequenced,
             )
             sessions[session.session_id] = out
-            for participant in session.participants:
+            for view in session.reassemble():
+                participant = view.participant
+                carried = Adjacency.UNITS if view.is_unit_sequence else Adjacency.CONTIGUOUS
                 participants[session.session_id, participant.participant_id] = out.participant(
                     participant.endpoints or None,
+                    adjacency=carried if adjacency is None else adjacency,
                     tcp_role=participant.tcp_role,
                     identity=participant.identity,
                     pid=participant.participant_id,
@@ -794,6 +811,7 @@ class SessionWriter:
         self,
         endpoint: str | Sequence[str] | None = None,
         *,
+        adjacency: Adjacency | int = Adjacency.CONTIGUOUS,
         isn: int | None = None,
         tcp_role: TcpRole | None = None,
         identity: str | None = None,
@@ -805,6 +823,17 @@ class SessionWriter:
         Args:
             endpoint: One address, or an ordered sequence for tunnelled
                 participants (outermost carrier first, innermost last).
+            adjacency: What this participant's stored neighbours assert.
+                Leave it at :attr:`~zpf.Adjacency.CONTIGUOUS` for a stream
+                whose records join unless a Discontinuity says otherwise.
+                Pass :attr:`~zpf.Adjacency.UNITS` for a **unit sequence** —
+                a decoded participant none of whose adjacent records may be
+                assumed to join, which is the whole-participant form of a
+                Discontinuity at every seam: what a stage that reorders its
+                records, or a decoder whose units decompose one another,
+                declares instead of a block per seam. A writer MUST NOT set
+                it on a participant whose records resolve to the transport
+                layer, and a checked writer refuses the first such record.
             isn: The SYN's sequence number; must be given when the
                 handshake was observed.
             tcp_role: Which side opened the connection, when known.
@@ -823,6 +852,7 @@ class SessionWriter:
             Participant(
                 session_id=self.session_id,
                 participant_id=chosen,
+                adjacency=adjacency,
                 endpoints=endpoints,
                 isn=isn,
                 tcp_role=tcp_role,

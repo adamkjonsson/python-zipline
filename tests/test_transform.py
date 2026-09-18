@@ -131,6 +131,36 @@ def test_a_merge_over_a_holed_input_closes_coverage(tmp_path: Path):
     assert zpf.check_coverage(output, side_b) == []
 
 
+def test_a_merge_writes_contiguous_whatever_a_transport_input_declared(tmp_path: Path):
+    """The field says nothing on a transport participant, so the merge says nothing.
+
+    Written with the flat writer, since the checked one refuses the input.
+    Carrying the byte verbatim would put an advisory violation into a file
+    the merge claims is a faithful pass-through; the effective value is
+    what a transport participant says, which is ``contiguous``.
+    """
+    side_a, side_b = tmp_path / "a.zpf", tmp_path / "b.zpf"
+    write_side_b(side_b)
+    with zpf.BlockWriter(side_a) as w:
+        w.write(zpf.FileHeader(tick_hz=1_000_000))
+        w.write(zpf.Source(source_id=0, kind=zpf.SourceKind.CAPTURE, uri="sideA.pcap"))
+        w.write(zpf.Session(session_id=7, proto="tcp", flow_key=KEY))
+        w.write(zpf.Participant(
+            session_id=7, participant_id=0, adjacency=zpf.Adjacency.UNITS,
+            endpoints=("10.0.0.1:51000",), isn=1000,
+        ))
+        w.write(zpf.Record(
+            session_id=7, sender_pid=0, source_id=0, timestamp=1000,
+            payload=b"GET / HTTP/1.1\r\n\r\n", seq_start=1001, ack=5001,
+        ))
+    out = tmp_path / "merged.zpf"
+    zpf.merge_files(side_a, side_b, out, produced_by="zpf-merge 1.2", produced_at=1)
+    with zpf.open(out) as merged:
+        assert merged.diagnostics == []
+        (session,) = merged.sessions()
+        assert all(p.adjacency is zpf.Adjacency.CONTIGUOUS for p in session.participants)
+
+
 def test_merge_records_input_digests(sides: tuple[Path, Path], tmp_path: Path):
     side_a, side_b = sides
     output = tmp_path / "merged.zpf"
@@ -565,6 +595,31 @@ def test_a_reordering_stages_spans_need_not_ascend(tmp_path: Path):
         assert list(session.ranges(0)) == [(0, 4), (4, 6), (6, 9)]  # recomputed
         cited = [r.spans[0].off_start for r in session.stream(0)]
         assert cited == [5, 3, 0]  # descending: not stored order
+    assert zpf.check_coverage(out, src) == []
+
+
+def test_a_pass_through_of_a_unit_sequence_keeps_it_one(tmp_path: Path):
+    """``unit-sequence-reversed`` through ``rewrite_decoded``: the field survives.
+
+    A pass-through that dropped ``units`` would splice at every seam in the
+    reader's eyes — the failure the field was put in the body to prevent —
+    so this is the property the whole port exists to hold. Every record
+    survives, the offsets are unchanged, and ``units()`` reports the three
+    seams as undeclared breaks.
+    """
+    src = VECTORS / "unit-sequence-reversed/unit-sequence-reversed.zpf"
+    out = tmp_path / "again.zpf"
+    zpf.rewrite_decoded(src, out, produced_by="zpf-pass 1.0", produced_at=2)
+    with zpf.open(out) as f:
+        assert f.diagnostics == []
+        session = f.session(7)
+        assert session.participant(1).adjacency is zpf.Adjacency.UNITS
+        assert list(session.ranges(1)) == [(0, 40), (40, 80), (80, 120), (120, 160)]
+        (view,) = session.reassemble()
+        assert view.is_unit_sequence
+        breaks = [u for u in view.units() if isinstance(u, zpf.Break)]
+        seams = [(b.off_start, b.declared) for b in breaks]
+        assert seams == [(40, False), (80, False), (120, False)]
     assert zpf.check_coverage(out, src) == []
 
 

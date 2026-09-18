@@ -28,7 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from zpf.blocks import Discontinuity, OutputLayer, Record, Span
+from zpf.blocks import Adjacency, Discontinuity, OutputLayer, Record, Span
 from zpf.errors import SemanticError, ZpfError
 from zpf.order import SEQ_SPACE, serial_delta
 
@@ -519,6 +519,16 @@ class Break:
     a record, and the plaintext length it would have produced cannot be
     known from the ciphertext).
 
+    **Not every break is a block.** A participant declared a
+    :attr:`unit sequence <zpf.Adjacency.UNITS>` asserts no join anywhere,
+    and :meth:`StreamView.units` says so the way it says everything else
+    about joins: with a break before every record after the first, carrying
+    ``declared=False``. That is this library's reading of the consumer's
+    duty, not a rule of the format — the specification says a consumer MUST
+    NOT treat two such records as contiguous and leaves how a reader
+    surfaces that to the reader. The flag is what keeps a synthetic break
+    from being mistaken for a producer's statement.
+
     Attributes:
         off_start: Where the break sits in the stream's offset space.
         width: Its extent, or ``None`` when unknowable. An absent width
@@ -526,12 +536,16 @@ class Break:
             numerically adjacent — which is exactly why this marker has to
             be surfaced rather than inferred from the offsets.
         reason: Why the stream breaks here, if declared.
+        declared: Whether a :class:`~zpf.blocks.Discontinuity` block stands
+            here. ``False`` for the break a unit sequence implies at every
+            seam, which no block declares and no ``width`` accompanies.
 
     """
 
     off_start: int
     width: int | None
     reason: str | None
+    declared: bool = True
 
 
 @dataclass(frozen=True)
@@ -571,10 +585,12 @@ class StreamView:
         blocks: Callable[[], Iterator[Record | Discontinuity]],
         *,
         source: SourceHandle | int | None = None,
+        layer: Callable[[], OutputLayer | int] | None = None,
     ) -> None:
         self._blocks = blocks
         self._participant = participant
         self._source_id = None if source is None else _source_id_of(source)
+        self._layer = layer
         self._contributions: tuple[Contribution, ...] | None = None
 
     def _records(self) -> Iterator[Record]:
@@ -597,6 +613,25 @@ class StreamView:
             return True
         first = next(self._records(), None)
         return first is not None and first.seq_start is not None
+
+    @property
+    def is_unit_sequence(self) -> bool:
+        """Whether no two of this stream's records may be assumed to join.
+
+        True for a **decoded** participant declaring
+        :attr:`~zpf.Adjacency.UNITS`. On a transport-layer participant the
+        field says nothing — the offsets come from sequence numbers, and a
+        reader ignores it — so such a participant answers ``False`` here
+        whatever its byte says. The layer is the one
+        :meth:`zpf.SessionReader.layer` resolves when the view came from a
+        reader; a view built by hand falls back to
+        :attr:`is_stream_oriented`, reading a hinted stream as transport.
+        """
+        if self._participant.adjacency is not Adjacency.UNITS:
+            return False
+        if self._layer is not None:
+            return self._layer() is OutputLayer.DECODED
+        return not self.is_stream_oriented
 
     @property
     def off_start(self) -> int:
@@ -756,6 +791,16 @@ class StreamView:
         The same distinction :meth:`zpf.SessionReader.stream` and
         :meth:`~zpf.SessionReader.stream_blocks` draw, one level up.
 
+        A :attr:`unit sequence <is_unit_sequence>` asserts no join anywhere,
+        so it is reported the same way: a :class:`Break` with
+        ``declared=False`` before every record after the first, alongside
+        any Discontinuity the participant also carries. A consumer that
+        flushes on every break therefore honours a unit sequence without a
+        second branch. **This goes one step beyond the standard**: the
+        specification forbids the splice and does not say how a reader
+        surfaces the prohibition, so the synthetic breaks are this library's
+        answer, and the flag tells them from a producer's.
+
         Yields:
             Each :class:`Datagram` and :class:`Break`, in stored order.
 
@@ -769,7 +814,9 @@ class StreamView:
         """
         hinted = self.is_stream_oriented
         placer = self._placer() if hinted else None
+        seams = self.is_unit_sequence
         cursor = 0
+        emitted = False
         for block in self._blocks():
             if isinstance(block, Discontinuity):
                 yield Break(off_start=cursor, width=block.width, reason=block.reason)
@@ -777,6 +824,9 @@ class StreamView:
                     cursor += block.width or 0
                 continue
             record = block
+            if seams and emitted:
+                yield Break(off_start=cursor, width=None, reason=None, declared=False)
+            emitted = True
             if hinted:
                 if placer is None and record.seq_start is not None:
                     placer = _Placer(record.seq_start)
@@ -878,7 +928,7 @@ class StreamView:
             A new view over the same stream, with the source bound.
 
         """
-        return StreamView(self._participant, self._blocks, source=source)
+        return StreamView(self._participant, self._blocks, source=source, layer=self._layer)
 
     def cite(
         self, off_start: int, off_end: int, *, source: SourceHandle | int | None = None
