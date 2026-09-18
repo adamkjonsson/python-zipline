@@ -44,8 +44,10 @@ and the 62 vectors at tag `v0.21` (commit `4964dee`, cut 2026-09-18). We ship
 > names, 70 files, every case; the harness docstrings are retold for
 > `0.21`, including the note that a body field is invisible to a dataclass
 > comparison until the dataclass has the field. Suite: **1007 passed, zero
-> xfail, zero xpass.** Phases 7 (changelog) and 8 (documentation sweep)
-> remain.
+> xfail, zero xpass.** **Phase 7 done**: the `[Unreleased]` entry, under
+> *Changed* and *Decided*, closing #70's "until the format moves"; D5's
+> `capture-gap` paragraph landed on `SessionEnd.reason` with it, since the
+> entry cites it. Phase 8 (the documentation sweep) remains.
 > Every number below comes from the scratch run, not from the changelog.
 
 ---

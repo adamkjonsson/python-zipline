@@ -1023,7 +1023,18 @@ class SessionEnd(Block):
     Attributes:
         session_id: The session being ended.
         reason: How the session ended (open vocabulary: ``"fin"``, ``"rst"``,
-            ``"timeout"``, ``"capture-end"``, …).
+            ``"timeout"``, ``"capture-end"``, ``"capture-gap"``, …). The
+            block only asserts the *file* is done with the session; whether
+            the wire conversation ended is what ``reason`` conveys — ``fin``
+            and ``rst`` say it did, the other three say the writer merely
+            stopped tracking. ``capture-gap`` (since ``0.21``) is the one to
+            write when the capture resumed and the stream could not: a hole
+            of 2³¹ bytes or more between two consecutive records is the one
+            shape the offset walk cannot place, so the producer ends the
+            session at the hole and opens another on the same key with no
+            ``isn``. Under that word the next session on the same key is the
+            same conversation, carried on; a consumer is not required to
+            join them, and nothing in the file lets it.
         input_extents: How long each input participant stream this session drew
             on was — derived files only. What makes the coverage guarantee
             checkable from this file alone; see :class:`InputExtent`. One
