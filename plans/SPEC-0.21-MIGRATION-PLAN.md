@@ -16,8 +16,14 @@ and the 62 vectors at tag `v0.21` (commit `4964dee`, cut 2026-09-18). We ship
 > on the same branch: `Adjacency`, `Participant.adjacency`, `<QHBB>`, the
 > JSONL key after `pid`, both directions; the four spec examples quoted in
 > `test_jsonl.py` and the `cli.md` sample gained the key as the spec's own
-> text did. Suite: 981 passed, 1 failed (`stream-past-2gib`'s extent —
-> Phase 3's), 5 xpassed (the five accept vectors, promoted in Phase 6).
+> text did. **Phase 3 done**: `serial_delta` in `zpf.order`, `_Placer`
+> replacing `_offset_of` at all three sites, the checker anchored on the
+> last placeable record (`anchor_seq`/`placed_any` replacing #70's
+> `first_seq`), the two #70 tests inverted. One shape in the plan needed
+> restating: with no `isn`, below-the-first-byte *is* below-the-predecessor,
+> so through the reader the ordering rule isolates it first; the test drives
+> `record_ranges` directly for the placer's own answer. Suite: 989 passed,
+> 0 failed, 5 xpassed (the five accept vectors, promoted in Phase 6).
 > Every number below comes from the scratch run, not from the changelog.
 
 ---

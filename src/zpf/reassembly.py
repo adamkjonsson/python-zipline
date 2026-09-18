@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING
 
 from zpf.blocks import Discontinuity, OutputLayer, Record, Span
 from zpf.errors import SemanticError, ZpfError
-from zpf.order import SEQ_SPACE, seq_lt
+from zpf.order import SEQ_SPACE, serial_delta
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -107,50 +107,72 @@ def layer_name(layer: OutputLayer | int) -> str:
     return layer.name.lower() if isinstance(layer, OutputLayer) else f"output_layer {int(layer)}"
 
 
-def _offset_of(record: Record, origin: int) -> int | None:
-    """Where a record sits in its stream's transport offset space, or ``None``.
+class _Placer:
+    """Walk one transport stream's records, placing each in its offset space.
 
     **The single definition of that question.** It was written three times
     before — in :func:`record_ranges`, :meth:`StreamView.chunks` and
     :meth:`StreamView.units` — and two of the three were wrong, which is
-    `#63 <https://github.com/adamkjonsson/python-zipline/issues/63>`_: each
-    computed ``(seq_start - origin) % SEQ_SPACE`` and trusted the result, so a
-    record one below the origin landed at 4 294 967 295 and took the stream's
-    extent with it.
+    `#63 <https://github.com/adamkjonsson/python-zipline/issues/63>`_; the
+    function that replaced them measured every record against the origin,
+    which was right until the stream passed 2 GiB and wrong after
+    (`zipline#146 <https://github.com/adamkjonsson/zipline/issues/146>`_).
 
-    ``None`` means **unplaceable**, which the specification defines as covering
-    no byte of the stream and contributing nothing to its extent. Two shapes
-    reach it:
+    Since ``0.21`` **offsets unwrap along stored order**: a record's offset is
+    its predecessor's plus the :func:`~zpf.order.serial_delta` of their
+    ``seq_start`` values, and the first record's predecessor is the **origin** —
+    ``isn + 1``, or the first captured byte where the handshake was missed.
+    The walk is well-defined at any length because the ordering rule keeps
+    each record within 2³¹ of the one before, and for a stream under 2 GiB
+    it yields ``(seq_start − origin) mod 2³²`` at every record, so nothing
+    that size reads differently than it did.
 
-    * **No ``seq_start``** on a stream that is sequence-anchored. The commoner
-      of the two, and the one `0.17` left unstated; `unplaceable-no-seq-start`
-      is its vector.
-    * **A ``seq_start`` below the origin.** `0.17` made this a MUST NOT and
-      pinned a repair; `0.19` withdrew both and kept the effect, which is all
-      a reader needs. `unplaceable-below-origin` is its vector, and its eight
-      payload bytes are in no offset at all.
+    ``None`` means **unplaceable**, which the specification defines as
+    covering no byte of the stream and contributing nothing to its extent.
+    Two shapes reach it:
 
-    **The test is undecidable beyond 2³¹, and that is the space, not a gap in
-    the check.** Serial arithmetic (RFC 1982) cannot tell a sequence far below
-    the origin from one far above it, so a stream carrying more than 2 GiB in
-    one direction reads its own later records as below-origin. Nothing here
-    can do better; the alternative is trusting the wrapped offset, which is
-    the failure this exists to prevent.
+    * **No ``seq_start``** on a stream that is sequence-anchored.
+      `unplaceable-no-seq-start` is its vector.
+    * **A ``seq_start`` serially below the one it is measured from** — a
+      negative delta in a space that has none. Below the origin, it would
+      precede byte 0 (`unplaceable-below-origin`); below a predecessor, it is
+      the out-of-order record the ordering rule forbids a writer to emit, and
+      the two are one case seen from two sides.
+
+    **An unplaceable record anchors nothing.** The predecessor is the last
+    *placeable* record, so what follows an unplaceable one is measured past
+    it, not from it — `unplaceable-below-origin`'s extent is 16, not 17.
 
     Args:
-        record: The record to place.
-        origin: The stream's logical-offset origin — ``isn + 1``, or the first
-            captured byte where the handshake was missed.
-
-    Returns:
-        The record's ``off_start``, or ``None`` if it is unplaceable.
+        origin: The stream's logical-offset origin, as a sequence position.
 
     """
-    if record.seq_start is None:
-        return None
-    if seq_lt(record.seq_start, origin):
-        return None
-    return (record.seq_start - origin) % SEQ_SPACE
+
+    __slots__ = ("_offset", "_seq")
+
+    def __init__(self, origin: int) -> None:
+        self._seq = origin % SEQ_SPACE
+        self._offset = 0
+
+    def place(self, record: Record) -> int | None:
+        """Place the next record in stored order.
+
+        Args:
+            record: The record to place.
+
+        Returns:
+            The record's ``off_start``, or ``None`` if it is unplaceable —
+            in which case the anchor does not move.
+
+        """
+        if record.seq_start is None:
+            return None
+        delta = serial_delta(record.seq_start, self._seq)
+        if delta < 0:
+            return None
+        self._seq = record.seq_start
+        self._offset += delta
+        return self._offset
 
 
 def record_ranges(
@@ -249,8 +271,9 @@ def record_ranges(
         return tuple(positional)
     ranges: list[tuple[int, int]] = []
     end = 0
+    placer = _Placer(origin)
     for record in records:
-        start = _offset_of(record, origin)
+        start = placer.place(record)
         if start is None:
             ranges.append((end, end))
             continue
@@ -607,18 +630,18 @@ class StreamView:
 
         """
         self._require_stream_oriented("chunks")
-        origin: int | None = self._origin()
+        placer = self._placer()
         cursor = 0
         run = bytearray()
         run_start = 0
         run_ts = 0
         parts: list[Contribution] = []
         for record in self._records():
-            if origin is None and record.seq_start is not None:
-                # No isn: the first record carrying a hint fixes the origin,
-                # and nothing can then be below it.
-                origin = record.seq_start
-            off = None if origin is None else _offset_of(record, origin)
+            if placer is None and record.seq_start is not None:
+                # No isn: the first record carrying a hint is the origin,
+                # and it places at 0.
+                placer = _Placer(record.seq_start)
+            off = None if placer is None else placer.place(record)
             if off is None:
                 continue  # unplaceable: it occupies no range of this stream
             if not record.payload:
@@ -745,7 +768,7 @@ class StreamView:
 
         """
         hinted = self.is_stream_oriented
-        origin = self._origin() if hinted else None
+        placer = self._placer() if hinted else None
         cursor = 0
         for block in self._blocks():
             if isinstance(block, Discontinuity):
@@ -755,9 +778,9 @@ class StreamView:
                 continue
             record = block
             if hinted:
-                if origin is None and record.seq_start is not None:
-                    origin = record.seq_start
-                placed = None if origin is None else _offset_of(record, origin)
+                if placer is None and record.seq_start is not None:
+                    placer = _Placer(record.seq_start)
+                placed = None if placer is None else placer.place(record)
                 if placed is None:
                     continue  # unplaceable: no range of this stream to report
                 off = placed
@@ -908,10 +931,10 @@ class StreamView:
         )
         raise ZpfError(msg)
 
-    def _origin(self) -> int | None:
-        """Return the logical-offset origin from ``isn``, or None until a record fixes it."""
+    def _placer(self) -> _Placer | None:
+        """Return a placer anchored at ``isn + 1``, or None until a record fixes the origin."""
         isn = self._participant.isn
-        return None if isn is None else (isn + 1) % SEQ_SPACE
+        return None if isn is None else _Placer(isn + 1)
 
     def _require_stream_oriented(self, method: str) -> None:
         if not self.is_stream_oriented:

@@ -69,7 +69,15 @@ from zpf.jsonl import (
     jsonl_to_binary,
     loads_block,
 )
-from zpf.order import causal_merge, record_end, seq_geq, seq_leq, seq_lt, verify_sequenced
+from zpf.order import (
+    causal_merge,
+    record_end,
+    seq_geq,
+    seq_leq,
+    seq_lt,
+    serial_delta,
+    verify_sequenced,
+)
 from zpf.reader import FileReader, SessionReader, as_datetime, detect_face, open
 from zpf.reassembly import (
     Break,
@@ -198,6 +206,7 @@ __all__ = [
     "seq_geq",
     "seq_leq",
     "seq_lt",
+    "serial_delta",
     "stream_extent",
     "stream_layer",
     "unix_seconds",

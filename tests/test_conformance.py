@@ -1031,28 +1031,59 @@ def test_an_earlier_hint_anchors_the_stream_for_what_follows():
     assert len(checker.unplaceable_notes) == 1
 
 
-def test_without_an_isn_the_first_captured_byte_is_the_origin_and_has_a_floor():
-    """#70: the checker returned early without an ``isn``, and reported nothing.
+def test_without_an_isn_a_stream_past_2_gib_places_every_record():
+    """#70's repro, inverted by `0.21`: four records 1 GiB apart, no handshake.
 
-    The format fixes the origin at the first captured byte when there is no
-    ``isn`` and measures everything from it, which is what ``record_ranges``
-    always did. The checker read "no ``isn``" as "no floor", so a record
-    serially below the first hint was zeroed by one path and noted by neither.
-    The ordering rule keeps consecutive records within 2³¹, so the only way
-    below the origin here is around it: a stream past 2 GiB. That ceiling is
-    the format's (zipline#146); agreeing about it is ours.
+    Through `0.20` the floor measured every record against the origin, so
+    the third and fourth — 2³¹ and 3·2³⁰ past the first — read as below it,
+    and #70 made this checker note them as ``record_ranges`` zeroed them.
+    `0.21` binds the floor to each record's *predecessor* (zipline#146):
+    every neighbour here is one serial step of 2³⁰ from the last, so all
+    four place and nothing is noted. The reader and the checker still agree,
+    which was the whole of #70; they now agree on the right answer.
     """
     gib = 1 << 30
     checker = anchored(raw_record(seq_start=0, payload=b"AAAA"), isn=None)
     assert checker.unplaceable_notes == ()  # the first hint is the origin itself
-    checker.observe(raw_record(seq_start=gib, payload=b"BBBB"))
+    for seq_start in (gib, 2 * gib, 3 * gib):
+        checker.observe(raw_record(seq_start=seq_start, payload=b"BBBB"))
+        assert checker.unplaceable_notes == ()
+
+
+def test_with_an_isn_a_stream_past_2_gib_places_every_record():
+    """`stream-past-2gib`, at the checker: the same walk from ``isn + 1``."""
+    gib = 1 << 30
+    checker = anchored(raw_record(seq_start=1001, payload=b"AAAA"))  # isn=1000
+    for seq_start in (1001 + gib, 1001 + 2 * gib, 1001 + 3 * gib):
+        checker.observe(raw_record(seq_start=seq_start, payload=b"BBBB"))
+        assert checker.unplaceable_notes == ()
+
+
+def test_sequence_numbers_passing_through_2_to_the_32_are_placeable():
+    """`stream-wraps-seq`: serial order, so 4 follows 2³² − 4 and nothing is noted."""
+    checker = anchored(raw_record(seq_start=2**32 - 4, payload=b"AAAABBBB"), isn=2**32 - 5)
+    checker.observe(raw_record(seq_start=4, payload=b"CCCCDDDD"))
     assert checker.unplaceable_notes == ()
-    checker.observe(raw_record(seq_start=2 * gib, payload=b"CCCC"))
-    (note,) = checker.unplaceable_notes
-    assert "seq_start 2147483648, below the stream origin 0 (the first captured byte)" in note
-    assert "excluded from the extent" in note
-    checker.observe(raw_record(seq_start=3 * gib, payload=b"DDDD"))
+
+
+def test_an_unplaceable_record_anchors_nothing():
+    """`unplaceable-below-origin`'s second lesson: the floor moves only when a record places.
+
+    The record at 1000 is below the origin 1001 and noted; the one at 1001
+    is then measured from the origin, not from 1000, and places at 0. Had
+    the unplaceable record anchored, 1001 would have been placeable either
+    way — so the shape that tells the two apart is a record *between* them:
+    1000 unplaceable, then 1001, then 1000 again, which is out of order
+    against 1001 and below its predecessor, one case seen from two sides.
+    """
+    checker = anchored(raw_record(seq_start=1000, payload=b"AAAA"))  # isn=1000
     assert len(checker.unplaceable_notes) == 1
+    checker.observe(raw_record(seq_start=1001, payload=b"BBBB"))
+    assert checker.unplaceable_notes == ()
+    with pytest.raises(zpf.SemanticError, match="precedes the participant's previous record"):
+        checker.observe(raw_record(seq_start=1000, payload=b"CCCC"))
+    (note,) = checker.unplaceable_notes
+    assert "below its predecessor's seq_start 1001" in note
 
 
 def test_with_an_isn_the_origin_is_isn_plus_one_not_the_first_record():
