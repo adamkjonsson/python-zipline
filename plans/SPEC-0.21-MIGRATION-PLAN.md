@@ -12,11 +12,13 @@ and the 62 vectors at tag `v0.21` (commit `4964dee`, cut 2026-09-18). We ship
 > `adjacency` byte of all 61 Participant blocks checked against the `.jsonl`
 > directly, 0 mismatches). Phase 1 is on branch `spec-0.21-port`: gate at
 > `(0, 21)`, `0.5.0.dev0`, every literal moved; the golden test needed
-> nothing, asserting through `SPEC_VERSION` since `0.20`. Suite: 931 passed,
-> 40 failed, 7 xfailed — the 40 are 39 `test_accept` projection diffs on the
-> participant line and `stream-past-2gib`'s extent, exactly the red Phase 1
-> predicts. Every number below comes from the scratch run, not from the
-> changelog.
+> nothing, asserting through `SPEC_VERSION` since `0.20`. **Phase 2 done**
+> on the same branch: `Adjacency`, `Participant.adjacency`, `<QHBB>`, the
+> JSONL key after `pid`, both directions; the four spec examples quoted in
+> `test_jsonl.py` and the `cli.md` sample gained the key as the spec's own
+> text did. Suite: 981 passed, 1 failed (`stream-past-2gib`'s extent —
+> Phase 3's), 5 xpassed (the five accept vectors, promoted in Phase 6).
+> Every number below comes from the scratch run, not from the changelog.
 
 ---
 

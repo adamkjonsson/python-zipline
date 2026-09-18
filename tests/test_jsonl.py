@@ -24,15 +24,15 @@ CHAT_EXAMPLE = """\
 {"type":"source","source_id":1,"kind":"capture","uri":"chat.pcap"}
 
 {"type":"session","session_id":8,"proto":"irc","key":"#zipline@irc.example.net"}
-{"type":"participant","session_id":8,"pid":0,"endpoint":["alice"]}
-{"type":"participant","session_id":8,"pid":1,"endpoint":["bob"]}
-{"type":"participant","session_id":8,"pid":2,"endpoint":["carol"]}
+{"type":"participant","session_id":8,"pid":0,"adjacency":"contiguous","endpoint":["alice"]}
+{"type":"participant","session_id":8,"pid":1,"adjacency":"contiguous","endpoint":["bob"]}
+{"type":"participant","session_id":8,"pid":2,"adjacency":"contiguous","endpoint":["carol"]}
 
 {"type":"record","session_id":8,"sender_pid":0,"source_id":1,"ts":2000,"payload":"aGksIGFsbCE="}
 {"type":"record","session_id":8,"sender_pid":2,"source_id":1,"ts":2100,"payload":"aGV5IGFsaWNl"}
 {"type":"record","session_id":8,"sender_pid":1,"source_id":1,"ts":2150,"payload":"bW9ybmluZw=="}
 
-{"type":"participant","session_id":8,"pid":3,"endpoint":["dave"]}
+{"type":"participant","session_id":8,"pid":3,"adjacency":"contiguous","endpoint":["dave"]}
 {"type":"record","session_id":8,"sender_pid":3,"source_id":1,"ts":2300,"payload":"YW0gSSBsYXRlPw=="}
 
 {"type":"session_end","session_id":8,"reason":"timeout"}
@@ -44,8 +44,8 @@ SKEWED_EXAMPLE = """\
 {"type":"source","source_id":1,"kind":"capture","uri":"sideA.pcap"}
 {"type":"source","source_id":2,"kind":"capture","uri":"sideB.pcap"}
 {"type":"session","session_id":7,"proto":"tcp","key":"10.0.0.1:51000 <-> 93.184.216.34:80"}
-{"type":"participant","session_id":7,"pid":0,"endpoint":["10.0.0.1:51000"],"isn":1000}
-{"type":"participant","session_id":7,"pid":1,"endpoint":["93.184.216.34:80"],"isn":5000}
+{"type":"participant","session_id":7,"pid":0,"adjacency":"contiguous","endpoint":["10.0.0.1:51000"],"isn":1000}
+{"type":"participant","session_id":7,"pid":1,"adjacency":"contiguous","endpoint":["93.184.216.34:80"],"isn":5000}
 {"type":"record","session_id":7,"sender_pid":0,"source_id":1,"ts":1000,"seq_start":1001,"ack":5001,"payload":"R0VUIC8gSFRUUC8xLjENCg0K"}
 {"type":"record","session_id":7,"sender_pid":1,"source_id":2,"ts":995,"seq_start":5001,"ack":1019,"payload":"SFRUUC8xLjEgMjAwIE9LDQouLi4="}
 """
@@ -59,8 +59,8 @@ MERGED_EXAMPLE = "\n".join(
         '{"type":"source","source_id":2,"kind":"zpf-input","uri":"sideB.zpf","digest":"sha256:22bb…"}',
         '{"type":"session","session_id":1,"proto":"tcp",'
         '"key":"10.0.0.1:51000 <-> 93.184.216.34:80","sequenced":true}',
-        '{"type":"participant","session_id":1,"pid":0,"endpoint":["10.0.0.1:51000"],"isn":1000}',
-        '{"type":"participant","session_id":1,"pid":1,"endpoint":["93.184.216.34:80"],"isn":5000}',
+        '{"type":"participant","session_id":1,"pid":0,"adjacency":"contiguous","endpoint":["10.0.0.1:51000"],"isn":1000}',
+        '{"type":"participant","session_id":1,"pid":1,"adjacency":"contiguous","endpoint":["93.184.216.34:80"],"isn":5000}',
         # Identity spans: the same range in as out, which is how a
         # pass-through states its provenance since 0.19.
         '{"type":"record","session_id":1,"sender_pid":0,"source_id":1,"ts":1000,'
@@ -82,8 +82,8 @@ DECODED_EXAMPLE = "\n".join(
         '{"type":"decoder","decoder_id":1,"output_layer":"decoded","name":"http/1.1",'
         '"version":"0.4","params_digest":"sha256:00ab…"}',
         '{"type":"session","session_id":7,"proto":"http"}',
-        '{"type":"participant","session_id":7,"pid":0,"endpoint":["10.0.0.1:51000"]}',
-        '{"type":"participant","session_id":7,"pid":1,"endpoint":["93.184.216.34:80"]}',
+        '{"type":"participant","session_id":7,"pid":0,"adjacency":"contiguous","endpoint":["10.0.0.1:51000"]}',
+        '{"type":"participant","session_id":7,"pid":1,"adjacency":"contiguous","endpoint":["93.184.216.34:80"]}',
         '{"type":"record","session_id":7,"sender_pid":0,"ts":1000,"decoder_id":1,"source_id":1,'
         '"spans":[{"source_id":1,"session_id":7,"pid":0,"off_start":0,"off_end":18}],'
         '"content_type":"dec:request","payload":"cmVxdWVzdA=="}',
@@ -445,6 +445,48 @@ def test_numeric_output_layer_round_trips():
     obj = block_to_obj(decoder)
     assert obj["output_layer"] == 9
     assert loads_block(dumps_block(decoder)) == decoder
+
+
+@pytest.mark.parametrize(
+    ("adjacency", "label"),
+    [(zpf.Adjacency.CONTIGUOUS, "contiguous"), (zpf.Adjacency.UNITS, "units")],
+)
+def test_adjacency_renders_as_its_label_both_ways(adjacency: zpf.Adjacency, label: str):
+    participant = zpf.Participant(session_id=7, participant_id=1, adjacency=adjacency)
+    assert block_to_obj(participant)["adjacency"] == label
+    assert loads_block(dumps_block(participant)) == participant
+
+
+def test_adjacency_is_always_written_and_sits_after_pid():
+    """A body field has no absent case, so the line always carries it.
+
+    Its place in the line is the specification's own: every participant
+    line in the document and the vectors puts it right after ``pid``, before
+    the options, which is where a reader diffing a projection expects it.
+    """
+    obj = block_to_obj(zpf.Participant(session_id=7, participant_id=0))
+    assert obj["adjacency"] == "contiguous"
+    assert list(obj)[:4] == ["type", "session_id", "pid", "adjacency"]
+
+
+def test_a_participant_line_without_an_adjacency_is_rejected():
+    line = '{"type":"participant","session_id":7,"pid":0,"endpoint":["alice"]}'
+    with pytest.raises(ValueError, match="adjacency"):
+        loads_block(line)
+
+
+def test_numeric_adjacency_round_trips():
+    """Load-bearing, so the raw number survives and is not resolved to a label."""
+    participant = zpf.Participant(session_id=7, participant_id=0, adjacency=2)
+    obj = block_to_obj(participant)
+    assert obj["adjacency"] == 2
+    assert loads_block(dumps_block(participant)) == participant
+
+
+def test_an_unknown_adjacency_label_is_rejected():
+    line = '{"type":"participant","session_id":7,"pid":0,"adjacency":"joined"}'
+    with pytest.raises(ValueError, match="adjacency"):
+        loads_block(line)
 
 
 def test_unknown_binary_block_escapes_as_a_hex_type():
