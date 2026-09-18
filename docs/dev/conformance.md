@@ -12,8 +12,9 @@ by the transform that owns them.
 | ---------- | -------- | ----------- | ---- |
 | Structural framing | magic, version, `tick_hz != 0`, block length a multiple of 4, lengths within bounds | `binary.py` (`BlockReader`) while decoding | `StructuralError` — always fatal |
 | Value encodability | integer range, option ≤ 65 535 bytes, `Custom` length a multiple of 4 | `blocks.py` / `_frame.py` at construction/serialization | `EncodeError` — write side |
-| Semantic (single-pass) | declare-before-use, id uniqueness, session lifetime, per-participant `seq_start` order, file-kind purity | `conformance.py` (`ConformanceChecker`) | `SemanticError` — isolate or reject |
-| Semantic, writer-only | reserved flag bits, `prim:` payload widths and token vocabulary | `conformance.py` (`ConformanceChecker`) | `AdvisoryError` — report, but keep the block |
+| Semantic (single-pass) | declare-before-use, id uniqueness, session lifetime, per-participant `seq_start` order, an `adjacency` this version does not define | `conformance.py` (`ConformanceChecker`) | `SemanticError` — isolate or reject |
+| Semantic, writer-only | reserved flag bits, `prim:` payload widths and token vocabulary, a label or `units` on a transport-layer participant | `conformance.py` (`ConformanceChecker`) | `AdvisoryError` — report, but keep the block |
+| Placement | a record the offset space cannot place — below the record it is measured from, or hint-less on an anchored stream | `conformance.py` `_check_placement`, on the same anchor `reassembly._Placer` walks | `unplaceable` notes — reported, never a violation |
 | Sequenced order | a SEQUENCED session's stored order really is a causal linearization | `order.py` `_StoredOrder`, driven by `SessionWriter` while writing and by `verify_sequenced` / `SessionReader.verify()` on request | `SemanticError` — write side always, read side opt-in |
 | Coverage, from the file alone | an interior range neither decoded nor marked; a declared `input_extents` its own spans contradict | `conformance.py` (`CoverageLedger`), ruled on at `finish()` | end-of-stream property |
 | Coverage, against the input | every input offset decoded or marked Undecoded, never both; a declared extent the input disagrees with | `transform.py` `check_coverage` | needs a second file |
@@ -121,7 +122,22 @@ per participant instead.
 Two rules bind per participant and settle at Session End, because both are
 properties of its *records* and declare-on-first-use puts the Participant
 block first: its records must resolve to **one layer**, and a layer this
-version does not define must not be guessed past.
+version does not define must not be guessed past. A third load-bearing enum
+joined them in `0.21`, and it is ruled *earlier*: `adjacency` is a Participant
+body field, decidable at the block, so an undefined value isolates the block
+itself — and its records then name an undeclared participant, which is the
+"discard the Participant together with everything referencing it" the
+specification describes. `units` on a participant whose records resolve to the
+transport layer is the advisory case, reported once at the first record that
+settles the layer, since the field says nothing there and ignoring it loses
+nothing.
+
+**Offsets are measured along stored order**, since `0.21`. The checker's
+placement note and the reader's `record_ranges` share one anchor — the last
+placeable record, the origin before any — so a stream past 2 GiB places on
+both paths and neither reports a record the other zeroes. Through `0.20` both
+measured against the origin under serial arithmetic, and #70 had just made
+them agree on that reading when the format retired it.
 
 **Provenance is a per-record rule, and there is one of it:** every
 `zpf`-sourced record carries `spans`. Through `0.18` a derived stream was
@@ -147,15 +163,15 @@ subject, from the reader's side.
 ## Going beyond the standard
 
 Per `CLAUDE.md`, support must stay complete *and* must not silently exceed the
-v0.20 spec: any behavior beyond the standard has to be flagged to the user with
+v0.21 spec: any behavior beyond the standard has to be flagged to the user with
 an explicit callout. The checker's rules are the spec's, and the two out-of-band
 checks (sequenced order, coverage) are spec requirements enforced elsewhere,
-not extensions. A new rule that isn't in v0.20 does not belong in the
+not extensions. A new rule that isn't in v0.21 does not belong in the
 `ConformanceChecker`.
 
-**One thing does exceed the standard, and it is on the write side only.**
+**Two things exceed the standard.** One is on the write side:
 {meth}`~zpf.SessionWriter.record` refuses a payload-carrying record whose
-`seq_start` is below the stream origin. `0.19` permits that file — the record
+`seq_start` is below the stream origin. The format permits that file — the record
 is unplaceable, its bytes are in no offset, and a reader accepts and reports —
 so this is a producer-side rule the format does not state. It is deliberate:
 such a writer is discarding its own bytes, the cost is silent, and the only
@@ -170,6 +186,18 @@ a file, places the record at zero width, and reports it under `unplaceable`.
 Being stricter than the format about what we *write* costs a producer nothing
 it wants; being stricter about what we *read* would refuse files the format
 says are fine.
+
+The other is on the read side, and it is a *reading* rather than a rule:
+{meth}`StreamView.units <zpf.reassembly.StreamView.units>` reports a unit
+sequence as a {class}`~zpf.Break` before every record after the first, with
+`declared=False`. The specification says a consumer MUST NOT treat two such
+records as contiguous and does not say how a reader surfaces that; the
+synthetic breaks are this library's answer, chosen so that a consumer written
+to flush on every break honours a unit sequence unchanged. The flag is what
+keeps it honest — nothing a producer did not declare is ever reported as
+declared — and the docstrings and the
+[provenance guide](../user/guides/provenance.md#each-layer-has-its-own-offset-space)
+carry the callout.
 
 ### What the standard asks for and no reader can check
 
@@ -190,11 +218,16 @@ emits a decoded layer instead, where the break is expressible.
 join?*, and it rests on producer knowledge: only the stage knows what it did
 with its input. One case is decidable from a single file — a `hole`-class
 Undecoded region between two adjacent units' input regions — and that one is
-implemented, as the predicate in `_check_unmarked_breaks`. Satisfying it is
-**not** satisfying the duty; it is the minimum a checker owes, deliberately
-conservative, and every pair it declines to test may still be one where the
-duty binds. On the write side {meth}`~zpf.DecodeStage.record` asks the
-producer directly, through `seam=`.
+implemented, as the predicate in `_check_unmarked_breaks`. Its first clause
+is *decoded-layer output streams whose participant is not declared `units`*: a
+unit sequence asserts no join anywhere, so there is nothing for a missing
+block to contradict, and the predicate does not reach it (the block stays
+permitted there). Satisfying the predicate is **not** satisfying the duty; it
+is the minimum a checker owes, deliberately conservative, and every pair it
+declines to test may still be one where the duty binds. On the write side
+{meth}`~zpf.DecodeStage.record` asks the producer directly, through `seam=`,
+and {func}`~zpf.decode_stage` takes `adjacency=` for the stage at which every
+seam is a break.
 
 ### One recommendation the standard declined, then took
 
@@ -223,7 +256,7 @@ bytes side.
 
 ## Conformance vectors
 
-The specification ships 53 hand-built vectors, vendored verbatim into
+The specification ships 62 hand-built vectors, vendored verbatim into
 [`tests/vectors/`](https://github.com/adamkjonsson/python-zipline/tree/main/tests/vectors)
 and run by `tests/test_vectors.py` across the three tiers — `accept` (a
 conformant file, with its expected JSONL projection), `reject` (structural
@@ -233,8 +266,9 @@ silently).
 `0.16` added a key rather than a fourth tier: an `accept` entry marked
 `advisory` declares **one** violation instead of none, and the reader must
 both accept the file completely *and* report it. It is a key because a tier
-names what a reader *does*, and a reader accepts these files. It is the
-format's first violation that accepts, and the harness asserts both halves —
+names what a reader *does*, and a reader accepts these files. It was the
+format's first violation that accepts — there are three at `0.21`, two labels
+and `units` on a transport participant — and the harness asserts both halves:
 silence fails the case as loudly as rejecting it would.
 
 Two habits keep them honest. The harness asserts what each negative vector is

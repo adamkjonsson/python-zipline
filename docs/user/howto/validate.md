@@ -1,6 +1,6 @@
 # Validate a file
 
-Validation reads a file and reports where it departs from the v0.20
+Validation reads a file and reports where it departs from the v0.21
 specification. It answers three separable questions: is the file
 *conformant*, is a SEQUENCED session's stored order *actually* a valid
 ordering, and does a decode stage *cover* its input. This is the recipe; the
@@ -111,7 +111,7 @@ produces most:
 | Category | What it means | Typical fix |
 | -------- | ------------- | ----------- |
 | `truncated` | The stream ended inside a block. | Expected for a live capture; re-capture for a complete file. |
-| `nonconformant` | A block breaks a spec MUST. | Fix the producer; the `message` names the rule. |
+| `nonconformant` | A block breaks a spec MUST. | Fix the producer; the `message` names the rule. Two are new in `0.21`: an `adjacency` this version does not define (isolating — the participant and everything referencing it are discarded), and `units` on a transport-layer participant (advisory — the field is ignored and the file kept). |
 | `coverage-gap` | Input bytes neither decoded nor marked Undecoded. | Add a decoded span or an [Undecoded](decode_stage.md) marker. |
 | `coverage-overlap` | Input bytes both decoded and marked Undecoded. | Drop the redundant Undecoded marker. |
 | `coverage-excess` | A cited range runs past the input stream. | Correct the span's `off_end`. |

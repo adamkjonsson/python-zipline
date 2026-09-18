@@ -117,8 +117,13 @@ never invented, never silently dropped:
 | flag bit | a hex token, e.g. `"flags": ["psh", "0x0020"]` |
 
 A hex token is `0x` plus exactly four hex digits, which is unambiguous against
-every defined `type` string and flag token because those are all words. None of
-this is an error path — it is the normal behaviour that lets a file written
+every defined `type` string and flag token because those are all words. Three
+enums are **load-bearing** — Source `kind`, Decoder `output_layer` and
+Participant `adjacency` — and for those the raw number is not a value a reader
+may act on: it preserves the byte through a round-trip, and the conformance
+checker isolates the stream. The two body-field enums, `output_layer` and
+`adjacency`, are always present on their lines, since a body field has no
+absent case. None of this is an error path — it is the normal behaviour that lets a file written
 against a later version survive a round-trip through an older converter. The
 unknown-block escape is the one case that is *byte*-exact rather than merely
 semantically lossless, precisely because a converter cannot take apart a layout

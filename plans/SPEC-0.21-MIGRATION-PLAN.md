@@ -6,48 +6,49 @@ its [CHANGELOG](https://github.com/adamkjonsson/zipline/blob/v0.21/CHANGELOG.md)
 and the 62 vectors at tag `v0.21` (commit `4964dee`, cut 2026-09-18). We ship
 `0.4.0` (2026-09-17) on `0.20`; this is a one-release jump.
 
-> **Status, 2026-09-18: Phases 0–1 done.** Phase 0 is on `main` (PR #73):
-> the tree is byte-identical to the tag; the projection sweep found no new
-> defect (49 two-faced files, 0 disagreements on projected keys; the
-> `adjacency` byte of all 61 Participant blocks checked against the `.jsonl`
-> directly, 0 mismatches). Phase 1 is on branch `spec-0.21-port`: gate at
-> `(0, 21)`, `0.5.0.dev0`, every literal moved; the golden test needed
-> nothing, asserting through `SPEC_VERSION` since `0.20`. **Phase 2 done**
-> on the same branch: `Adjacency`, `Participant.adjacency`, `<QHBB>`, the
-> JSONL key after `pid`, both directions; the four spec examples quoted in
-> `test_jsonl.py` and the `cli.md` sample gained the key as the spec's own
-> text did. **Phase 3 done**: `serial_delta` in `zpf.order`, `_Placer`
-> replacing `_offset_of` at all three sites, the checker anchored on the
-> last placeable record (`anchor_seq`/`placed_any` replacing #70's
-> `first_seq`), the two #70 tests inverted. One shape in the plan needed
-> restating: with no `isn`, below-the-first-byte *is* below-the-predecessor,
-> so through the reader the ordering rule isolates it first; the test drives
-> `record_ranges` directly for the placer's own answer. **Phase 4 done**,
-> with two departures from the text below: an unknown `adjacency` is ruled
-> at the **Participant block**, not at close, because it is decidable
-> there and a checked writer should refuse it at the point of writing;
-> and `units` on a transport participant is reported at the **first
-> record** that settles the layer, because advisory findings can only be
-> raised from `observe` — which also makes the checked writer refuse it,
-> so D4's writer-side MUST NOT is already met. **Phase 5 done**, with one
-> refinement of D4: re-declarations carry the input's *effective*
-> adjacency, not the byte verbatim — `units` only where the input really
-> was a unit sequence (decoded layer), since the field on a transport input
-> is ignored by a reader and copying it would turn an inert value into a
-> claim about the output; `derive_from` reads it through
-> `StreamView.is_unit_sequence`, and the merge, transport-only, always
-> writes `contiguous`. `derive_from` and `decode_stage` take
-> `adjacency=` as the override. `StreamView` learns its layer from the
-> reader (a callable, so `layer()`'s error stays lazy) and falls back to
-> the hint test when built by hand. `rewrite_decoded` keeps the per-seam
-> form and takes no override. **Phase 6 done**: `KNOWN_PASSING` is 62
-> names, 70 files, every case; the harness docstrings are retold for
-> `0.21`, including the note that a body field is invisible to a dataclass
-> comparison until the dataclass has the field. Suite: **1007 passed, zero
-> xfail, zero xpass.** **Phase 7 done**: the `[Unreleased]` entry, under
-> *Changed* and *Decided*, closing #70's "until the format moves"; D5's
-> `capture-gap` paragraph landed on `SessionEnd.reason` with it, since the
-> entry cites it. Phase 8 (the documentation sweep) remains.
+> **Status, 2026-09-18: every phase is done**, Phase 0 on `main` (PR #73)
+> and Phases 1–8 on branch `spec-0.21-port`. Suite: **1009 passed, zero
+> xfail, zero xpass**; `ruff check` and a `-W` Sphinx build from scratch are
+> clean; the three sweep greps return only history.
+>
+> **What execution changed from the text below.** Phase 4 rules an unknown
+> `adjacency` at the Participant block, not at close (decidable there, and a
+> checked writer should refuse it at the point of writing), and reports
+> `units` on a transport participant at the first record that settles the
+> layer (advisory findings can only come from `observe`) — which makes the
+> checked writer refuse it, so D4's writer-side MUST NOT needed no code.
+> Phase 5 refined D4: re-declarations carry the input's *effective*
+> adjacency, `units` only where the input was a decoded unit sequence,
+> since the byte on a transport input is ignored by a reader and copying it
+> would turn an inert value into a claim; `derive_from`/`decode_stage` take
+> `adjacency=` as the override, the merge always writes `contiguous`,
+> `rewrite_decoded` keeps the per-seam form. `StreamView` learns its layer
+> from the reader lazily. Phase 3 found that with no `isn`,
+> below-the-first-byte *is* below-the-predecessor, so the reader's ordering
+> rule isolates it first; the test drives `record_ranges` directly. Phase 7
+> put D5's `capture-gap` paragraph on `SessionEnd.reason` because the
+> changelog cites it.
+>
+> **What the sweep found**, which is why it runs last: the ergonomic
+> writer's placement guard still measured every record against the origin
+> with `seq_lt`, so `zpf.create` would have refused the third record of a
+> stream past 2 GiB — the very failure zipline#146 was filed over — and no
+> vector reached it, the harness writing through `BlockWriter(check=True)`.
+> It now shares the placer's anchor and refuses only below the origin,
+> leaving below-the-predecessor to the ordering rule's own message. The
+> property test's participant strategy did not generate `adjacency`; it
+> does. `zpf info` gained the word `units` on a decoded stream line.
+>
+> **Pages that needed a rewrite rather than a renumber**, for the next
+> port's list: `docs/user/errors.md` (the unplaceable paragraph),
+> `docs/user/concepts.md` (offset walk; unit sequence),
+> `docs/user/guides/decoding.md` (a new section; the duty admonition),
+> `docs/user/guides/provenance.md` (the walk; the synthetic breaks and their
+> callout), `docs/user/guides/faces-and-io.md` (three load-bearing enums),
+> `docs/dev/conformance.md` (rule table, per-participant rules, beyond the
+> standard ×2, the predicate's first clause, advisory count, vector count),
+> `CLAUDE.md` (two new traps), `docs/dev/contributing.md` (the checklist
+> step this sweep earned). Everything else was a number.
 > Every number below comes from the scratch run, not from the changelog.
 
 ---

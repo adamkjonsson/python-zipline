@@ -207,6 +207,36 @@ def test_out_of_order_seq_start_is_refused():
             session.record(sender, ts=2, payload=b"cc", hints=zpf.Hints(seq_start=0xFFFF_FFF0))
 
 
+def test_the_writer_places_a_stream_past_2_gib_along_stored_order():
+    """The guard measures each record against the last placed one, since `0.21`.
+
+    Through `0.20` it measured every record against the origin under serial
+    arithmetic, so the third record of any stream past 2 GiB read as below
+    it and was refused — the shape zipline#146 was filed over, met by a
+    converter writing a large download. Four records 1 GiB apart now write,
+    and a genuinely below-origin one is still refused.
+    """
+    gib = 1 << 30
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1) as writer:
+        writer.add_source("capture")
+        session = writer.begin_session(proto="tcp")
+        sender = session.participant("alice", isn=1000)
+        for step in range(4):
+            seq_start = (1001 + step * gib) % (1 << 32)
+            session.record(sender, ts=step, payload=b"AAAA", hints=zpf.Hints(seq_start=seq_start))
+    with zpf.open(io.BytesIO(sink.getvalue())) as reader:
+        assert reader.diagnostics == []
+        session_reader = reader.session(0)
+        assert list(session_reader.ranges(0))[-1] == (3 * gib, 3 * gib + 4)
+    with zpf.create(io.BytesIO(), tick_hz=1) as writer:
+        writer.add_source("capture")
+        session = writer.begin_session(proto="tcp")
+        sender = session.participant("alice", isn=1000)
+        with pytest.raises(zpf.SemanticError, match="below the stream origin 1001"):
+            session.record(sender, ts=0, payload=b"AAAA", hints=zpf.Hints(seq_start=1000))
+
+
 def test_a_participant_declares_its_adjacency_through_the_keyword_api():
     sink = io.BytesIO()
     with zpf.create(sink, tick_hz=1, produced_by="t", produced_at=1) as writer:

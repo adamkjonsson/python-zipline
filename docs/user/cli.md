@@ -49,6 +49,10 @@ session 0: proto=tcp key='10.0.0.1:51000 <-> 93.184.216.34:80' participants=[10.
   stream 1: capture transport
 ```
 
+A decoded stream declared a unit sequence gets a third word — `stream 1:
+zpf-input decoded units` — since no two of its records may be assumed to
+join; on a transport stream the field says nothing and is not printed.
+
 There is no file-wide kind line, because there is no file-wide answer: one
 file may hold a decoded stream beside a transport one, and a captured stream
 beside a derived one.

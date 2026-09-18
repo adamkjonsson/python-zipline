@@ -92,6 +92,9 @@ participants = st.builds(
     zpf.Participant,
     session_id=u64,
     participant_id=u16,
+    # Both defined values and an undefined one: load-bearing, so the raw
+    # number must survive every face exactly as output_layer's does.
+    adjacency=st.sampled_from(list(zpf.Adjacency)) | st.integers(2, 255),
     endpoints=st.lists(text, max_size=3).map(tuple),
     isn=st.none() | u32,
     identity=opt_text,

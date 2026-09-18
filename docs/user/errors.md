@@ -177,11 +177,21 @@ Categories you will meet:
 ## Unplaceable records: reported, but not a violation
 
 Some records cannot be placed in their stream's offset space at all: one whose
-`seq_start` falls below the origin (`isn + 1`, or the first captured byte when
-there is no `isn`), and one carrying no `seq_start`
-on a stream whose other records do. Such a record **covers no byte and
-contributes nothing to the extent**, so its payload is excluded from every
-coverage answer the file supports.
+`seq_start` falls serially below the record it is measured from — the origin
+(`isn + 1`, or the first captured byte when there is no `isn`) for the first,
+its last *placeable* predecessor for every later one — and one carrying no
+`seq_start` on a stream whose other records do. Such a record **covers no byte
+and contributes nothing to the extent**, so its payload is excluded from every
+coverage answer the file supports; and it **anchors nothing**, so the record
+after it is measured past it, not from it.
+
+Since `0.21` offsets **unwrap along stored order**: a record's offset is its
+predecessor's plus the signed serial delta of their `seq_start`s, which is what
+lets a stream be placed past 2 GiB, or through the 2³² wrap, without any record
+reading as below the origin. Below a *predecessor* is also the out-of-order
+record the ordering rule forbids, and the reader's checker isolates it as such
+before the offset space ever sees it — the specification states the two as one
+case seen from two sides — so in practice the note below names the origin.
 
 Since `0.19` this is not a violation. The origin floor stopped being a
 `MUST NOT` and what survives is the effect — but a reader still **SHOULD**

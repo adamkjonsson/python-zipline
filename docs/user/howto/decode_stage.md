@@ -146,7 +146,10 @@ output's `produced_by` / `produced_at` say who asserted it.
 
 Two costs to know about: the session is held in memory until it ends, and
 `discontinuity()` is refused while `sequenced=True`, since a break's meaning is
-positional and reordering is exactly what would move it.
+positional and reordering is exactly what would move it. A stage at which
+*every* seam is a break has the other form open to it regardless: declare the
+output participants unit sequences with `adjacency=zpf.Adjacency.UNITS` and
+emit no block at all — see [the decoding guide](../guides/decoding.md#when-every-seam-is-a-break-adjacencyunits).
 
 ## Where to go next
 

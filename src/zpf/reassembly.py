@@ -225,7 +225,8 @@ def record_ranges(
         callers rely on.
 
         An **unplaceable** record — no ``seq_start`` on a sequence-anchored
-        stream, or one below the origin — gets a zero-width
+        stream, or one serially below the last placeable record before it
+        (the origin, for the first) — gets a zero-width
         range at the **running maximum** — the highest ``off_end`` any earlier
         record of this participant reached, or ``0`` where there is none. It
         therefore covers no byte and moves no extent, which is the part the

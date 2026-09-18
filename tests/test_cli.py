@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import io
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 from test_golden import GOLDEN
@@ -11,9 +11,6 @@ from test_transform import write_raw, write_side_a, write_side_b
 
 import zpf
 from zpf.cli import main
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 @pytest.fixture
@@ -31,6 +28,16 @@ def test_info(golden_path: Path, capsys: pytest.CaptureFixture[str]):
     assert "source 1: capture sideA.pcap" in out
     assert "session 7: proto=tcp" in out
     assert "participants=[10.0.0.1:51000] records=1" in out
+
+
+def test_info_names_a_unit_sequence(capsys: pytest.CaptureFixture[str]) -> None:
+    """One more word on the stream line, only where the field means something."""
+    vectors = Path(__file__).parent / "vectors"
+    assert main(["info", str(vectors / "unit-sequence-reversed/unit-sequence-reversed.zpf")]) == 0
+    assert "stream 1: zpf-input decoded units" in capsys.readouterr().out
+    inert = vectors / "advisory-transport-adjacency/advisory-transport-adjacency.zpf"
+    assert main(["info", str(inert)]) == 0
+    assert "stream 0: capture transport\n" in capsys.readouterr().out  # ignored there
 
 
 def test_cat_matches_the_converter(golden_path: Path, capsys: pytest.CaptureFixture[str]):

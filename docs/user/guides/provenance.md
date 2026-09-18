@@ -172,9 +172,14 @@ at a time, which is what the *recovery walk* above does.
 
 One subtlety catches people resolving a *decoded* stream. A **transport**
 stream's offsets are true positions, so a hole counts as if its bytes were
-present. A **decoded** stream is a different object: its space is the
-concatenation of that participant's record payloads in stored order, and
-Undecoded regions name ranges in the *input's* space, so they contribute
+present — and they are reached by walking the records in stored order, each at
+its predecessor's offset plus the signed serial delta of their `seq_start`s,
+the origin being the first record's predecessor. That walk is what places a
+stream past 2 GiB, or one whose sequence numbers pass through 2³²; it yields
+`(seq_start − origin) mod 2³²` for anything smaller, so nothing under that
+size reads differently. A **decoded** stream is a different object: its space
+is the concatenation of that participant's record payloads in stored order,
+and Undecoded regions name ranges in the *input's* space, so they contribute
 nothing.
 
 It is hole-inclusive in exactly one place: where a
@@ -226,6 +231,24 @@ That distinction is not cosmetic. The specification forbids a consumer from
 treating the records either side of a break as contiguous, and with an unknown
 width their offsets are adjacent — so nothing but the marker itself says they
 do not join.
+
+A participant declared a **unit sequence** (`adjacency = units`) asserts no
+join anywhere, and {meth}`~zpf.reassembly.StreamView.units` reports it the
+same way: a {class}`~zpf.Break` before every record after the first, with
+{attr}`~zpf.Break.declared` set `False`, so the loop above honours it without
+a second branch. {attr}`StreamView.is_unit_sequence
+<zpf.reassembly.StreamView.is_unit_sequence>` answers the question directly.
+
+```{admonition} Beyond the standard
+:class: warning
+
+The specification says a consumer MUST NOT treat two records of a unit
+sequence as contiguous, and stops there — it does not say how a reader
+surfaces the prohibition. The synthetic breaks are this library's answer, and
+`declared` is what tells them from a producer's Discontinuity. A consumer
+that needs the format's own statement checks {attr}`Participant.adjacency
+<zpf.Participant.adjacency>` instead.
+```
 
 ## See also
 

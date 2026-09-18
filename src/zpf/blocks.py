@@ -129,11 +129,12 @@ class OutputLayer(IntEnum):
     that says what it always meant. The ordering is deliberately *not*
     parallel to :class:`SourceKind`.
 
-    Like :class:`SourceKind` and unlike ``tcp_role``, this enum is
-    **load-bearing**: an unrecognized value leaves a reader unable to compute
-    the stream's offset space at all, so it MUST NOT be guessed and MUST NOT
-    fall back to the absent-means-decoded default. It is kept as a plain
-    ``int``, preserved through a round-trip, and isolated by the checker.
+    Like :class:`SourceKind` and :class:`Adjacency`, and unlike ``tcp_role``,
+    this enum is **load-bearing**: an unrecognized value leaves a reader
+    unable to compute the stream's offset space at all, so it MUST NOT be
+    guessed and MUST NOT fall back to the absent-means-decoded default. It is
+    kept as a plain ``int``, preserved through a round-trip, and isolated by
+    the checker.
     """
 
     DECODED = 0
