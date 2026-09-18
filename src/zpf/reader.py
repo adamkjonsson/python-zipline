@@ -383,6 +383,7 @@ class SessionReader:
             StreamView(
                 participant,
                 lambda pid=participant.participant_id: self.stream_blocks(pid),
+                layer=lambda pid=participant.participant_id: self.layer(pid),
             )
             for participant in self._index.participants
         )

@@ -87,6 +87,7 @@ from zpf._intervals import complement
 from zpf.blocks import (
     REASON_CLASSES,
     UNDECODED_REASONS,
+    Adjacency,
     Block,
     Decoder,
     Discontinuity,
@@ -105,7 +106,7 @@ from zpf.blocks import (
 )
 from zpf.content import ContentType, prim_fault
 from zpf.errors import AdvisoryError, SemanticError
-from zpf.order import SEQ_SPACE, seq_leq, seq_lt
+from zpf.order import SEQ_SPACE, seq_leq, serial_delta
 from zpf.reassembly import layer_name
 
 if TYPE_CHECKING:
@@ -131,14 +132,27 @@ class _ParticipantState:
 
     Attributes:
         described: The Participant block, for diagnostics.
+        adjacency: What it declares its stored neighbours assert. Decides
+            whether the seam predicate applies to it at all, and — once the
+            layer is known — whether the declaration was one a transport
+            participant may carry.
+        adjacency_reported: Whether ``units`` on a transport-layer stream
+            has been reported yet; the field is per participant, so it is
+            reported once, at the first record that settles the layer.
         isn: Its declared ``isn``, which fixes the stream's origin at
             ``isn + 1``. Kept because two questions need it and neither can
             be answered from a record alone: whether a handshake record sits
             where the format says, and whether a record is placeable at all.
-        first_seq: The first ``seq_start`` any of its records carried. With
-            no ``isn`` this *is* the origin — the first captured byte — and
-            the floor measures from it exactly as it does from ``isn + 1``
-            (`#70 <https://github.com/adamkjonsson/python-zipline/issues/70>`_).
+        anchor_seq: The ``seq_start`` the next record is measured from —
+            the last *placeable* record's, or the origin before any record
+            has been placed: ``isn + 1``, or the first captured byte where
+            there is no ``isn``, fixed by the first record carrying a hint.
+            ``None`` until either fixes it. The predecessor in the unwrapping
+            walk :class:`zpf.reassembly._Placer` performs, kept here so the
+            checker and the reader agree on which records are unplaceable.
+        placed_any: Whether any record has been placed yet — which decides
+            whether an unplaceable record's note names the origin or a
+            predecessor.
         provenances: The Source kinds its records reference.
         layers: The layers its records resolve to. More than one is a
             violation — the stream's offset space would have two
@@ -159,11 +173,14 @@ class _ParticipantState:
     """
 
     described: str
+    adjacency: Adjacency | int = Adjacency.CONTIGUOUS
+    adjacency_reported: bool = False
     isn: int | None = None
     provenances: set[SourceKind | int] = field(default_factory=set)
     layers: set[OutputLayer | int] = field(default_factory=set)
     has_discontinuity: str | None = None
-    first_seq: int | None = None
+    anchor_seq: int | None = None
+    placed_any: bool = False
     last_seq: int | None = None
     prev_reach: dict[tuple[int, int, int], int] = field(default_factory=dict)
     broke_since: bool = False
@@ -586,10 +603,28 @@ class ConformanceChecker:
                 "declared twice"
             )
             raise SemanticError(msg)
+        if not isinstance(block.adjacency, Adjacency):
+            # The third load-bearing enum, and the one decidable at the
+            # block: the value says whether any two of this participant's
+            # records may be spliced, so a reader that does not recognise
+            # it cannot say what a single pair of them asserts. It MUST NOT
+            # guess, and MUST NOT fall back to contiguous -- 0 and an
+            # unrecognised value are different statements. Isolating the
+            # block discards the participant together with everything that
+            # references it, which is the treatment the specification names.
+            msg = (
+                f"{described} declares adjacency {int(block.adjacency)}, which this "
+                f"version does not define; whether any two of its records may be "
+                f"spliced cannot be decided and MUST NOT be guessed"
+            )
+            raise SemanticError(msg)
         # Registration last: a raised violation leaves the checker
         # consistent, so a lenient reader can isolate the block and go on.
         state.participants[block.participant_id] = _ParticipantState(
-            described=described, isn=block.isn
+            described=described,
+            adjacency=block.adjacency,
+            isn=block.isn,
+            anchor_seq=None if block.isn is None else (block.isn + 1) % SEQ_SPACE,
         )
 
     def _on_session_end(self, block: SessionEnd) -> None:
@@ -617,8 +652,6 @@ class ConformanceChecker:
         self._check_record_order(block, stream, described)
         self._classify_record(block, stream, described)
         if block.seq_start is not None:
-            if stream.first_seq is None:
-                stream.first_seq = block.seq_start
             stream.last_seq = block.seq_start
 
     def _on_discontinuity(self, block: Discontinuity) -> None:
@@ -778,6 +811,7 @@ class ConformanceChecker:
                 raise SemanticError(msg)
             layer = declared
         self._note(_transport_label(block, layer, described))
+        self._note(_transport_adjacency(stream, layer, described))
         self._check_spans(block.spans, described=described)
         if source_kind == SourceKind.ZPF_INPUT:
             # **Every `zpf`-sourced record carries `spans`.** One sentence,
@@ -871,45 +905,54 @@ class ConformanceChecker:
         See :attr:`unplaceable_notes` for why this is a channel of its own and
         which shape it cannot decide.
 
-        The floor is the same one :func:`zpf.record_ranges` applies, from the
-        same origin: ``isn + 1`` where the participant declares an ``isn``,
-        and the first captured byte — the first record's ``seq_start`` —
-        otherwise. This used to return early without an ``isn``, on the
-        reading that there was then no floor to be below; but the offset
-        space measured from the first hint anyway, so a record serially below
-        it was zeroed by ``record_ranges`` and reported by nothing (`#70
-        <https://github.com/adamkjonsson/python-zipline/issues/70>`_). The
-        ordering rule keeps consecutive records within 2³¹ of each other, so
-        without an ``isn`` the only way below the origin is *around* it: a
-        stream that has carried more than 2 GiB reads its later records as
-        below its first. That is the format's ceiling, not this check's
-        (`zipline#146 <https://github.com/adamkjonsson/zipline/issues/146>`_),
-        and until the format moves, both paths say the same thing about it.
+        The floor is the one :func:`zpf.record_ranges` applies, and since
+        ``0.21`` it **binds each record to its predecessor**: a record is
+        placeable iff its ``seq_start`` is not serially below the last
+        placeable record's — or the origin's, for the first — and an
+        unplaceable record anchors nothing, so the one after it is measured
+        from the same predecessor. Measuring against the origin throughout,
+        as this did through ``0.20``, read every record more than 2³¹ bytes
+        into a stream as below it (`zipline#146
+        <https://github.com/adamkjonsson/zipline/issues/146>`_); the walk is
+        well-defined at any length because the ordering rule keeps each
+        record within 2³¹ of the one before.
+
+        Below a *predecessor* is therefore also the out-of-order record
+        :meth:`_check_record_order` raises on — the specification states the
+        two as one case seen from two sides — so with the ordering check in
+        force the note below only ever describes the first placeable
+        candidate against the origin, or a hint-less record on an anchored
+        stream. The predecessor wording is kept for the day a lenient mode
+        lets the record through.
         """
-        anchored = stream.isn is not None or stream.first_seq is not None
         if block.seq_start is None:
-            if anchored:
+            if stream.anchor_seq is not None:
                 self._unplaceable.append(
                     f"{described} carries no seq_start on a sequence-anchored stream, "
                     f"so the offset space cannot place it: it covers no byte and "
                     f"contributes nothing to the extent"
                 )
             return
-        if stream.isn is not None:
-            origin = (stream.isn + 1) % SEQ_SPACE
-            fixed_by = "isn + 1"
-        elif stream.first_seq is not None:
-            origin = stream.first_seq
-            fixed_by = "the first captured byte"
+        if stream.anchor_seq is None:
+            # No isn: the first hint is the origin itself, and places at 0.
+            stream.anchor_seq = block.seq_start
+            stream.placed_any = True
+            return
+        if serial_delta(block.seq_start, stream.anchor_seq) >= 0:
+            stream.anchor_seq = block.seq_start
+            stream.placed_any = True
+            return
+        if stream.placed_any:
+            measured_from = f"its predecessor's seq_start {stream.anchor_seq}"
         else:
-            return  # this record is the first hint, and so the origin itself
-        if seq_lt(block.seq_start, origin):
-            self._unplaceable.append(
-                f"{described} has seq_start {block.seq_start}, below the stream origin "
-                f"{origin} ({fixed_by}), so the offset space cannot place it: its "
-                f"{len(block.payload)} payload byte(s) are excluded from the extent and "
-                f"from every coverage answer this file supports"
-            )
+            fixed_by = "isn + 1" if stream.isn is not None else "the first captured byte"
+            measured_from = f"the stream origin {stream.anchor_seq} ({fixed_by})"
+        self._unplaceable.append(
+            f"{described} has seq_start {block.seq_start}, below {measured_from}, so "
+            f"the offset space cannot place it: its {len(block.payload)} payload "
+            f"byte(s) are excluded from the extent and from every coverage answer "
+            f"this file supports"
+        )
 
     def _check_record_order(
         self, block: Record, stream: _ParticipantState, described: str
@@ -1037,11 +1080,14 @@ class ConformanceChecker:
                 f"the break is already expressible as the space no payload covers"
             )
             raise SemanticError(msg)
-        # The predicate's first clause: decoded-layer output streams only.
-        # A transport stream expresses the same break in its offsets and is
-        # forbidden the block, so a checker without this rejects a conformant
-        # sessionization stage.
-        if OutputLayer.DECODED in stream.layers:
+        # The predicate's first clause: decoded-layer output streams whose
+        # participant is not declared units. A transport stream expresses the
+        # same break in its offsets and is forbidden the block, so a checker
+        # without the layer test rejects a conformant sessionization stage;
+        # a unit sequence asserts no join anywhere, so there is nothing for a
+        # missing block to contradict, and a checker without that test
+        # rejects a conformant reordering or decomposing stage.
+        if OutputLayer.DECODED in stream.layers and stream.adjacency is not Adjacency.UNITS:
             self._breaks.extend(stream.candidates)
 
     def _require_derived_header(self, reason: str) -> None:
@@ -1052,6 +1098,48 @@ class ConformanceChecker:
                 "produced_by and produced_at"
             )
             raise SemanticError(msg)
+
+
+def _transport_adjacency(
+    stream: _ParticipantState, layer: OutputLayer | int, described: str
+) -> str | None:
+    """Return the advisory finding for ``units`` on a transport-layer participant.
+
+    On a transport-layer participant ``adjacency`` says nothing: the
+    stream's offsets come from its sequence numbers, and stored order
+    defines nothing there. A writer **MUST NOT** set ``units`` on one, and a
+    reader that finds it gives it the treatment a transport-layer
+    :func:`label <_transport_label>` gets — ignores the field, reports it,
+    and accepts the file — for the same reason: ignoring it loses nothing,
+    every offset being exactly where ``seq_start`` puts it. Not the isolate
+    shape of a Discontinuity in a transport stream, which contradicts the
+    offsets; this field is merely inert.
+
+    The field is per participant and the layer is per stream, so this fires
+    once, at the first record that settles the layer, rather than once per
+    record as the label check does.
+
+    Args:
+        stream: The participant's state, carrying its declared adjacency.
+        layer: The layer the record resolves to, already resolved.
+        described: The record, for the message.
+
+    Returns:
+        The finding, or ``None`` where there is nothing to report.
+
+    """
+    if layer is not OutputLayer.TRANSPORT or stream.adjacency is not Adjacency.UNITS:
+        return None
+    if stream.adjacency_reported:
+        return None
+    stream.adjacency_reported = True
+    return (
+        f"{stream.described} declares adjacency = units, but {described} resolves it "
+        f"to the transport layer, where offsets come from sequence numbers and "
+        f"stored order defines nothing; a writer MUST NOT set units there. The "
+        f"field is ignored and the stream is read as any sequence-anchored "
+        f"transport stream"
+    )
 
 
 def _transport_label(

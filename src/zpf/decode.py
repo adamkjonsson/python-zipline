@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from typing import IO, TYPE_CHECKING
 
 from zpf._intervals import complement, intersections
-from zpf.blocks import InputExtent, OutputLayer, Span
+from zpf.blocks import Adjacency, InputExtent, OutputLayer, Span
 from zpf.errors import SemanticError, ZpfError
 from zpf.reader import FileReader
 from zpf.reassembly import Gap
@@ -89,6 +89,13 @@ class Seam:
             never adjacent is not a hole to be counted.
         reason: Why they do not join, e.g. ``"records-dropped"``,
             ``"reordered"``, ``"tls-record-lost"``. Open vocabulary.
+
+    A seam is the **per-seam** form, right for a stream that mostly joins
+    with a break or two. A stage at which *every* seam is a break — one that
+    reorders a participant's records wholesale, or a decoder whose units
+    decompose one another — has the other honest form: declare the output
+    participant a unit sequence (``adjacency=`` on :func:`decode_stage`)
+    and pass no seam at all.
 
     """
 
@@ -657,6 +664,7 @@ def decode_stage(  # noqa: PLR0913
     output_layer: OutputLayer | int = OutputLayer.DECODED,
     proto: str | None = None,
     sequenced: bool = False,
+    adjacency: Adjacency | int | None = None,
     input_ref: InputRef | None = None,
     comment: str | None = None,
     fill_undecoded: bool = True,
@@ -708,6 +716,16 @@ def decode_stage(  # noqa: PLR0913
             that refusal rested on, so the flag is now asserted and this
             output's ``produced_by``/``produced_at`` identify who asserted
             it — see :meth:`zpf.FileWriter.derive_from`.
+        adjacency: What every output participant declares its stored
+            neighbours assert. Pass :attr:`~zpf.Adjacency.UNITS` for a
+            **unit sequence** — a stage that reorders every participant's
+            records, or a decoder whose units decompose one another (a
+            header, then the fields carved out of it) — instead of a
+            :class:`Seam` at every record. ``None`` (the default) carries
+            the input's effective value forward: a unit sequence read stays
+            one, since a stage reading one carries the break at every seam,
+            and anything else is ``contiguous`` with :class:`Seam` for the
+            seams that do not join.
         input_ref: How to describe the input in the output's Source — see
             :class:`~zpf.InputRef`. Both halves default: the URI to the path
             the input was opened from, the digest to SHA-256 of its bytes.
@@ -748,7 +766,12 @@ def decode_stage(  # noqa: PLR0913
     try:
         ref = input_ref or InputRef()
         derived = writer.derive_from(
-            reader, uri=ref.uri, digest=ref.digest, proto=proto, sequenced=sequenced
+            reader,
+            uri=ref.uri,
+            digest=ref.digest,
+            proto=proto,
+            sequenced=sequenced,
+            adjacency=adjacency,
         )
         handle = _declare_decoder(writer, decoder, output_layer)
     except BaseException:

@@ -147,7 +147,12 @@ def _print_session(session: SessionReader, reader: zpf.FileReader) -> None:
         except zpf.SemanticError as exc:
             print(f"  stream {pid}: unresolvable — {exc}")
             continue
-        print(f"  stream {pid}: {_axis_name(provenance)} {_axis_name(layer)}")
+        line = f"  stream {pid}: {_axis_name(provenance)} {_axis_name(layer)}"
+        if layer is zpf.OutputLayer.DECODED and participant.adjacency is zpf.Adjacency.UNITS:
+            # A third word only where it means something: on a transport
+            # stream the field is ignored, so it is not worth a word there.
+            line += " units"
+        print(line)
 
 
 def _axis_name(value: object) -> str:

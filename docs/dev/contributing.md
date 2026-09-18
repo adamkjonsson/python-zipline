@@ -114,6 +114,18 @@ literal hides, which is what actually goes stale.
    version across the repo and expect roughly twenty files. Most mentions are
    a bare number to bump; some are arguments about *why* a rule reads as it
    does, and those need rewriting rather than renumbering.
+
+   **Grep for the retired readings too**, not only the old number. The `0.21`
+   port was the first where the specification retired sentences this library
+   had *quoted* — "the floor is only decidable within the serial-arithmetic
+   half-space", "a Discontinuity at each such seam" as the only form, "two
+   load-bearing enums" — and every one survived in our prose because it had
+   been correct when written. Read the upstream changelog's *Changed* entries
+   for the phrases they retire, grep for each, and expect them in docstrings
+   and `docs/user/errors.md` as much as in the guides. Do the sweep **last**,
+   after every code phase, so it checks the port rather than predicting it;
+   the `0.21` sweep found a writer guard still measuring against the origin
+   that no vector reached.
 6. **`VECTOR-DEFECTS.md`.** Vector defects are per-version: re-check whether
    each open one still reproduces at the new tag, and whether the new vectors
    introduce any.

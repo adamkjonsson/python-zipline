@@ -1,4 +1,4 @@
-"""Typed block model for the Zipline Payload Format v0.16.
+"""Typed block model for the Zipline Payload Format (:data:`SPEC_VERSION`).
 
 One frozen dataclass per block type, mirroring the specification's normative
 binary encoding. Each class knows how to serialize itself (:meth:`Block.to_bytes`)
@@ -42,7 +42,7 @@ _SWAPPED_MAGIC = 0x4650495A
 #: ``(version_major, version_minor)``. A writer stamps the version it
 #: implements; there is no obligation to compute the lowest version whose
 #: features a file happens to use.
-SPEC_VERSION: tuple[int, int] = (0, 20)
+SPEC_VERSION: tuple[int, int] = (0, 21)
 
 
 #: The canonical :class:`Undecoded` ``reason`` values, mapped to their
@@ -129,11 +129,12 @@ class OutputLayer(IntEnum):
     that says what it always meant. The ordering is deliberately *not*
     parallel to :class:`SourceKind`.
 
-    Like :class:`SourceKind` and unlike ``tcp_role``, this enum is
-    **load-bearing**: an unrecognized value leaves a reader unable to compute
-    the stream's offset space at all, so it MUST NOT be guessed and MUST NOT
-    fall back to the absent-means-decoded default. It is kept as a plain
-    ``int``, preserved through a round-trip, and isolated by the checker.
+    Like :class:`SourceKind` and :class:`Adjacency`, and unlike ``tcp_role``,
+    this enum is **load-bearing**: an unrecognized value leaves a reader
+    unable to compute the stream's offset space at all, so it MUST NOT be
+    guessed and MUST NOT fall back to the absent-means-decoded default. It is
+    kept as a plain ``int``, preserved through a round-trip, and isolated by
+    the checker.
     """
 
     DECODED = 0
@@ -141,6 +142,46 @@ class OutputLayer(IntEnum):
 
     TRANSPORT = 1
     """Byte runs — hole-inclusive offsets, as a reassembler produces."""
+
+
+class Adjacency(IntEnum):
+    """What a participant's stored neighbours assert, from the Participant **body**.
+
+    ``CONTIGUOUS`` is what stored adjacency has always meant on a decoded
+    stream: neighbours join, and a consumer may splice them unless a
+    :class:`Discontinuity` stands between. ``UNITS`` declares the participant
+    a **unit sequence**: its offset space is still the stored-order
+    concatenation of its payloads plus declared widths — every record stays
+    addressable and citable, and nothing about the arithmetic changes — but
+    **no two adjacent records may be assumed to join**, anywhere. It is the
+    wholesale form of the statement a Discontinuity makes at one seam, for
+    the two shapes that have no honest per-seam form: a stage that reorders
+    a participant's records, and a decoder whose units decompose one another.
+
+    ``CONTIGUOUS`` is ``0`` because the field occupies the byte that was
+    ``_reserved`` before 0.21, which a conformant writer MUST have written
+    ``0`` — so every Participant Descriptor ever written already holds the
+    value that says what it always meant, and no byte of any file changed.
+
+    On a **transport-layer** participant the field says nothing, since those
+    offsets come from sequence numbers and stored order defines nothing
+    there; a writer MUST NOT set ``UNITS`` on one, and a reader that finds
+    it ignores the field, reports it, and accepts the file.
+
+    Like :class:`SourceKind` and :class:`OutputLayer`, and unlike
+    ``tcp_role``, this enum is **load-bearing**: it decides whether any two
+    of the participant's records may be spliced, so an unrecognized value
+    leaves a reader unable to say what a single pair of them asserts. It
+    MUST NOT be guessed and MUST NOT fall back to ``CONTIGUOUS`` — ``0`` and
+    an unrecognized value are different statements. It is kept as a plain
+    ``int``, preserved through a round-trip, and isolated by the checker.
+    """
+
+    CONTIGUOUS = 0
+    """Stored neighbours join unless a Discontinuity says otherwise."""
+
+    UNITS = 1
+    """A unit sequence — no two adjacent records may be assumed to join."""
 
 
 class TcpRole(IntEnum):
@@ -885,7 +926,7 @@ class Session(Block):
         return cls(session_id=session_id, extra_options=extras, **values)
 
 
-_PARTICIPANT_BODY = struct.Struct("<QHH")
+_PARTICIPANT_BODY = struct.Struct("<QHBB")
 
 
 @dataclass(frozen=True)
@@ -895,6 +936,12 @@ class Participant(Block):
     Attributes:
         session_id: Session this participant belongs to.
         participant_id: Id within that session (the ``pid``).
+        adjacency: What two of its records stored side by side assert about
+            each other — :attr:`Adjacency.CONTIGUOUS` or
+            :attr:`Adjacency.UNITS` (an unrecognized u8 value is kept as a
+            plain ``int``). A body field, so it is always present and has no
+            absent case; it defaults to ``CONTIGUOUS``, the value every
+            pre-0.21 writer wrote into the byte it now occupies.
         endpoints: Participant addresses, ordered outermost tunnel layer
             first; the last entry is the address at which the participant
             speaks the session protocol. Repeatable option.
@@ -913,6 +960,7 @@ class Participant(Block):
 
     session_id: int
     participant_id: int
+    adjacency: Adjacency | int = Adjacency.CONTIGUOUS
     endpoints: tuple[str, ...] = ()
     isn: int | None = None
     identity: str | None = None
@@ -931,6 +979,9 @@ class Participant(Block):
     def __post_init__(self) -> None:
         _check_uint(self.session_id, 64, "session_id")
         _check_uint(self.participant_id, 16, "participant_id")
+        _check_uint(int(self.adjacency), 8, "adjacency")
+        if not isinstance(self.adjacency, Adjacency) and int(self.adjacency) in (0, 1):
+            object.__setattr__(self, "adjacency", Adjacency(self.adjacency))
         _check_uint_opt(self.isn, 32, "isn")
         if self.tcp_role is not None:
             _check_uint(int(self.tcp_role), 8, "tcp_role")
@@ -947,16 +998,17 @@ class Participant(Block):
         return self.endpoints[-1] if self.endpoints else None
 
     def _encode(self) -> bytes:
-        body = _PARTICIPANT_BODY.pack(self.session_id, self.participant_id, 0)
+        body = _PARTICIPANT_BODY.pack(self.session_id, self.participant_id, int(self.adjacency), 0)
         return body + _encode_options(self, self._SPEC.ordered)
 
     @classmethod
     def _parse(cls, content: bytes) -> Self:
-        session_id, participant_id, _reserved = cls._body(content, _PARTICIPANT_BODY)
+        session_id, participant_id, adjacency, _reserved = cls._body(content, _PARTICIPANT_BODY)
         values, extras = _parse_options(content[_PARTICIPANT_BODY.size :], cls._SPEC.by_id)
         return cls(
             session_id=session_id,
             participant_id=participant_id,
+            adjacency=adjacency,
             extra_options=extras,
             **values,
         )
@@ -972,7 +1024,18 @@ class SessionEnd(Block):
     Attributes:
         session_id: The session being ended.
         reason: How the session ended (open vocabulary: ``"fin"``, ``"rst"``,
-            ``"timeout"``, ``"capture-end"``, …).
+            ``"timeout"``, ``"capture-end"``, ``"capture-gap"``, …). The
+            block only asserts the *file* is done with the session; whether
+            the wire conversation ended is what ``reason`` conveys — ``fin``
+            and ``rst`` say it did, the other three say the writer merely
+            stopped tracking. ``capture-gap`` (since ``0.21``) is the one to
+            write when the capture resumed and the stream could not: a hole
+            of 2³¹ bytes or more between two consecutive records is the one
+            shape the offset walk cannot place, so the producer ends the
+            session at the hole and opens another on the same key with no
+            ``isn``. Under that word the next session on the same key is the
+            same conversation, carried on; a consumer is not required to
+            join them, and nothing in the file lets it.
         input_extents: How long each input participant stream this session drew
             on was — derived files only. What makes the coverage guarantee
             checkable from this file alone; see :class:`InputExtent`. One

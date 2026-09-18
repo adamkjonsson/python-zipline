@@ -709,14 +709,16 @@ def test_a_record_with_no_seq_start_on_an_anchored_stream_is_unplaceable():
     assert extent == 6
 
 
-def test_without_an_isn_the_reader_reports_every_record_it_zeroes():
-    """#70's repro: four records 1 GiB apart on a stream with no handshake.
+def test_a_stream_past_2_gib_is_placed_along_stored_order_without_an_isn():
+    """#70's repro, inverted by `0.21`: four records 1 GiB apart, no handshake.
 
-    Every neighbour is within 2³¹, so the file is accepted, and the third and
-    fourth records are serially below the first — the origin — so they cover
-    no byte. Before the fix ``record_ranges`` zeroed them and
-    ``reader.unplaceable`` stayed empty, so a consumer trusting the latter
-    believed the file whole. The two now agree, record for record.
+    Through `0.20` this library — and the specification — measured every
+    record against the origin under serial arithmetic, so the third and
+    fourth records, 2³¹ and 3·2³⁰ past the first, read as *below* it and
+    covered no byte; #70 made the checker say so too. `0.21` retired that
+    reading (zipline#146): offsets unwrap along stored order, each record
+    measured from its predecessor, so all four place and nothing is
+    reported. The extent is the true one, and both paths agree about it.
     """
     gib = 1 << 30
     with malformed(
@@ -728,13 +730,103 @@ def test_without_an_isn_the_reader_reports_every_record_it_zeroes():
     ) as reader:
         ranges, extent = measure(reader)
         reported = [d.message for d in reader.unplaceable]
-    assert ranges == ((0, 4), (gib, gib + 4), (gib + 4, gib + 4), (gib + 4, gib + 4))
-    assert extent == gib + 4
-    assert [n[n.index("seq_start") :].split(",")[0] for n in reported] == [
-        f"seq_start {2 * gib}",
-        f"seq_start {3 * gib}",
+    assert ranges == ((0, 4), (gib, gib + 4), (2 * gib, 2 * gib + 4), (3 * gib, 3 * gib + 4))
+    assert extent == 3 * gib + 4
+    assert reported == []
+
+
+def test_a_stream_past_2_gib_is_placed_along_stored_order_with_an_isn():
+    """`stream-past-2gib`'s shape, measured through every reading face.
+
+    ``record_ranges``, ``chunks()`` and ``units()`` share one placer, so the
+    three cannot disagree about a record 2³¹ past the origin; this pins that
+    they all put it there, not at zero width.
+    """
+    gib = 1 << 30
+    with malformed(
+        rec(1001, b"AAAA", 1000),
+        rec(1001 + gib, b"BBBB", 2000),
+        rec(1001 + 2 * gib, b"CCCC", 3000),
+        rec(1001 + 3 * gib, b"DDDD", 4000),
+    ) as reader:
+        ranges, extent = measure(reader)
+        (view,) = reader.session(7).reassemble()
+        segments = [(seg.off_start, seg.off_end) for seg in view.segments()]
+        datagrams = [(d.off_start, d.off_end) for d in view.datagrams()]
+    assert ranges == ((0, 4), (gib, gib + 4), (2 * gib, 2 * gib + 4), (3 * gib, 3 * gib + 4))
+    assert extent == 3 * gib + 4
+    assert segments == list(ranges)
+    assert datagrams == list(ranges)
+
+
+def test_sequence_numbers_passing_through_2_to_the_32_unwrap():
+    """`stream-wraps-seq`: the commoner shape, and the one plain subtraction fails.
+
+    ``isn = 2³² − 5``, so the origin is ``2³² − 4``; the first record starts
+    there and its eight bytes end, on the wire, at 4, where the second
+    starts. The signed serial delta between the two ``seq_start`` values is +8, so
+    the second record sits at 8 and the extent is 16 — not −4294967288, and
+    not 4294967304.
+    """
+    with malformed(
+        rec(2**32 - 4, b"AAAABBBB", 1000),
+        rec(4, b"CCCCDDDD", 2000),
+        isn=2**32 - 5,
+    ) as reader:
+        ranges, extent = measure(reader)
+        reported = list(reader.unplaceable)
+    assert ranges == ((0, 8), (8, 16))
+    assert extent == 16
+    assert reported == []
+
+
+def test_an_unplaceable_record_anchors_nothing():
+    """`unplaceable-below-origin`'s second lesson, stated by `0.21`.
+
+    The first record sits at ``seq_start 1000`` on a stream whose origin is
+    1001, so it is unplaceable. The one after it measures from the origin —
+    the last *placeable* predecessor — not from 1000: it sits at 0, and the
+    extent is 16. A reader that let the unplaceable record anchor would put
+    it at 1 and report 17.
+    """
+    with malformed(
+        rec(1000, b"AAAAAAAA", 1000),
+        rec(1001, b"BBBBBBBB", 2000),
+        rec(1009, b"CCCCCCCC", 3000),
+    ) as reader:
+        ranges, extent = measure(reader)
+        reported = [d.message for d in reader.unplaceable]
+    assert ranges == ((0, 0), (0, 8), (8, 16))
+    assert extent == 16
+    assert len(reported) == 1
+    assert "below the stream origin 1001 (isn + 1)" in reported[0]
+
+
+def test_without_an_isn_a_record_below_the_first_captured_byte_is_unplaceable():
+    """The first captured byte is the origin, and has the same floor as ``isn + 1``.
+
+    With no handshake the first hint fixes the origin at itself, so a record
+    serially below it is also below its predecessor: the one case the
+    specification states from two sides. Through the reader the ordering
+    rule sees it first and isolates the record; :func:`zpf.record_ranges`
+    driven directly — the checker off — places it at zero width, so a
+    caller that let it through still gets no byte from it.
+    """
+    records = [
+        rec(5000, b"AAAA", 1000),
+        rec(5004, b"BBBB", 2000),
+        rec(4990, b"CCCC", 3000),
     ]
-    assert all("below the stream origin 0 (the first captured byte)" in n for n in reported)
+    participant = zpf.Participant(session_id=7, participant_id=0)
+    ranges = zpf.record_ranges(participant, records, zpf.OutputLayer.TRANSPORT)
+    assert ranges == ((0, 4), (4, 8), (8, 8))
+    with malformed(*records, isn=None) as reader:
+        stored, extent = measure(reader)
+        isolated = [d.message for d in reader.diagnostics]
+    assert stored == ((0, 4), (4, 8))
+    assert extent == 8
+    assert len(isolated) == 1
+    assert "precedes the participant's previous record" in isolated[0]
 
 
 def test_the_unplaceable_range_is_the_running_maximum_not_the_last_end():

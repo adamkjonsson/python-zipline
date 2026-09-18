@@ -31,6 +31,7 @@ from typing import IO, TYPE_CHECKING, Literal
 
 from zpf.binary import BlockWriter
 from zpf.blocks import (
+    Adjacency,
     Block,
     Custom,
     Decoder,
@@ -54,7 +55,7 @@ from zpf.blocks import (
 from zpf.conformance import ConformanceChecker
 from zpf.errors import SemanticError, ZpfError
 from zpf.jsonl import JsonlWriter
-from zpf.order import SEQ_SPACE, _StoredOrder, causal_merge, seq_lt
+from zpf.order import SEQ_SPACE, _StoredOrder, causal_merge, serial_delta
 
 if TYPE_CHECKING:
     import os
@@ -537,6 +538,7 @@ class FileWriter:
         digest: str | None = None,
         proto: str | None = None,
         sequenced: bool = False,
+        adjacency: Adjacency | int | None = None,
         comment: str | None = None,
     ) -> DerivedInput:
         """Scaffold this file as one derived from ``reader``.
@@ -552,7 +554,12 @@ class FileWriter:
         to have the header set for you.
 
         ``isn`` is deliberately not copied: it describes the input's raw TCP
-        stream, which the derived records are no longer in.
+        stream, which the derived records are no longer in. ``adjacency``
+        **is** carried forward, as the input's *effective* value: a unit
+        sequence stays one, because a stage reading it carries the break at
+        every seam and an output declared ``units`` is the wholesale way to;
+        and the field on a transport-layer input is ignored, as a reader
+        ignores it, so it does not become a claim about the output.
 
         Args:
             reader: The open input file.
@@ -580,6 +587,13 @@ class FileWriter:
                 ``produced_by``/``produced_at``, and
                 ``transform_params_digest`` where a merge's ordering key
                 lives — reached by walking ``zpf-input`` Sources back.
+            adjacency: What every output participant declares its stored
+                neighbours assert, overriding what is carried forward from
+                the input. Pass :attr:`~zpf.Adjacency.UNITS` for a stage
+                that reorders every participant's records, or a decoder
+                whose units decompose one another; it replaces a
+                Discontinuity per seam. ``None`` (the default) carries the
+                input's effective value.
             comment: Free-text note for the Source.
 
         Returns:
@@ -613,9 +627,12 @@ class FileWriter:
                 linearize=sequenced,
             )
             sessions[session.session_id] = out
-            for participant in session.participants:
+            for view in session.reassemble():
+                participant = view.participant
+                carried = Adjacency.UNITS if view.is_unit_sequence else Adjacency.CONTIGUOUS
                 participants[session.session_id, participant.participant_id] = out.participant(
                     participant.endpoints or None,
+                    adjacency=carried if adjacency is None else adjacency,
                     tcp_role=participant.tcp_role,
                     identity=participant.identity,
                     pid=participant.participant_id,
@@ -769,6 +786,9 @@ class SessionWriter:
         self.session_id = session_id
         self._pids: set[int] = set()
         self._isn: dict[int, int] = {}  # per pid, for the placement guards
+        # Per pid, the seq_start the next record is measured from: the last
+        # placed record's, or the origin until one has been.
+        self._anchor: dict[int, int] = {}
         self._next_pid = 0
         self._ended = False
         # Only a sequenced session has an order to keep, so only a sequenced
@@ -794,6 +814,7 @@ class SessionWriter:
         self,
         endpoint: str | Sequence[str] | None = None,
         *,
+        adjacency: Adjacency | int = Adjacency.CONTIGUOUS,
         isn: int | None = None,
         tcp_role: TcpRole | None = None,
         identity: str | None = None,
@@ -805,6 +826,17 @@ class SessionWriter:
         Args:
             endpoint: One address, or an ordered sequence for tunnelled
                 participants (outermost carrier first, innermost last).
+            adjacency: What this participant's stored neighbours assert.
+                Leave it at :attr:`~zpf.Adjacency.CONTIGUOUS` for a stream
+                whose records join unless a Discontinuity says otherwise.
+                Pass :attr:`~zpf.Adjacency.UNITS` for a **unit sequence** —
+                a decoded participant none of whose adjacent records may be
+                assumed to join, which is the whole-participant form of a
+                Discontinuity at every seam: what a stage that reorders its
+                records, or a decoder whose units decompose one another,
+                declares instead of a block per seam. A writer MUST NOT set
+                it on a participant whose records resolve to the transport
+                layer, and a checked writer refuses the first such record.
             isn: The SYN's sequence number; must be given when the
                 handshake was observed.
             tcp_role: Which side opened the connection, when known.
@@ -823,6 +855,7 @@ class SessionWriter:
             Participant(
                 session_id=self.session_id,
                 participant_id=chosen,
+                adjacency=adjacency,
                 endpoints=endpoints,
                 isn=isn,
                 tcp_role=tcp_role,
@@ -833,6 +866,7 @@ class SessionWriter:
         self._pids.add(chosen)
         if isn is not None:
             self._isn[chosen] = isn
+            self._anchor[chosen] = (isn + 1) % SEQ_SPACE
         return ParticipantHandle(session_id=self.session_id, pid=chosen)
 
     def record(
@@ -948,16 +982,26 @@ class SessionWriter:
         draws the same line.
 
         A **payload-carrying record below the origin** is where this goes
-        **beyond the standard**, and says so. `0.19` permits the file: the
-        record is unplaceable, its bytes are in no offset, and they are simply
-        excluded from the extent and from every coverage answer — "the price of
-        not trusting the wrapped offset", in the specification's words. No
+        **beyond the standard**, and says so. The format permits the file: the record is
+        unplaceable, its bytes are in no offset, and they are simply excluded
+        from the extent and from every coverage answer — "the price of not
+        trusting the wrapped offset", in the specification's words. No
         producer wants to pay that price silently. The only instance anyone has
         seen was a bug
         (`#63 <https://github.com/adamkjonsson/python-zipline/issues/63>`_,
         where every file zpfwire had ever written carried it), and a writer
         that emits one is throwing its own bytes away. So this refuses, and the
         error says it is stricter than the format requires.
+
+        *Below the origin* is measured the way `0.21` measures everything:
+        along stored order, each record against the last placed one, so the
+        floor here is the origin only until a record has been placed past it.
+        Measuring every record against the origin, as this did through
+        `0.20`, refused the third record of any stream past 2 GiB — the
+        failure `zipline#146` was filed over. A record below its *predecessor*
+        is the out-of-order record the format's own ordering rule forbids,
+        and the checker refuses it with that rule's message; this guard
+        leaves that case to it, the specification stating the two as one.
 
         Neither check lives in :class:`~zpf.ConformanceChecker`: the first is
         advisory there rather than isolating, and the second is not the
@@ -980,17 +1024,25 @@ class SessionWriter:
                 f"is isn + 1 and not isn"
             )
             raise SemanticError(msg)
-        if block.payload and seq_lt(block.seq_start, origin):
-            msg = (
-                f"record with seq_start {block.seq_start} is below the stream origin "
-                f"{origin} (isn + 1), so its {len(block.payload)} payload byte(s) "
-                f"would be in no offset at all — excluded from the extent and from "
-                f"every coverage answer the file supports. **This refusal is stricter "
-                f"than the format**, which permits the file and asks a reader only to "
-                f"report the record; it is refused here because a writer discarding "
-                f"its own bytes is a bug at the point it can still be fixed"
-            )
-            raise SemanticError(msg)
+        anchor = self._anchor[block.sender_pid]
+        if serial_delta(block.seq_start, anchor) >= 0:
+            self._anchor[block.sender_pid] = block.seq_start
+            return
+        if anchor != origin or not block.payload:
+            # Below a placed predecessor is the ordering rule's case, refused
+            # by the checker in its own words; a payload-less record below
+            # the origin is unplaceable, but nothing is lost by it.
+            return
+        msg = (
+            f"record with seq_start {block.seq_start} is below the stream origin "
+            f"{origin} (isn + 1), so its {len(block.payload)} payload byte(s) "
+            f"would be in no offset at all — excluded from the extent and from "
+            f"every coverage answer the file supports. **This refusal is stricter "
+            f"than the format**, which permits the file and asks a reader only to "
+            f"report the record; it is refused here because a writer discarding "
+            f"its own bytes is a bug at the point it can still be fixed"
+        )
+        raise SemanticError(msg)
 
     def _flush_pending(self) -> None:
         """Emit buffered records in causal order.
@@ -1100,7 +1152,9 @@ class SessionWriter:
 
         Args:
             reason: How the session ended: ``"fin"``, ``"rst"``,
-                ``"timeout"``, ``"capture-end"``, … (open vocabulary).
+                ``"timeout"``, ``"capture-end"``, ``"capture-gap"``, … (open
+                vocabulary; see :class:`~zpf.blocks.SessionEnd` for what each
+                conveys, and when ``capture-gap`` is the word).
             input_extents: How long each input participant stream this
                 session drew on was, in that stream's own offset space —
                 derived files only. Declaring them is what lets a consumer

@@ -216,6 +216,37 @@ absent width contributes 0 to the offset arithmetic, so the records either side
 sit adjacent; what the block asserts is not a length but that they **do not
 join**.
 
+### When every seam is a break: `adjacency=units`
+
+A seam is the per-seam form, right for a stream that mostly joins with a break
+or two. Two shapes have no honest per-seam form: a stage that reorders a
+participant's records wholesale, where every seam is a break, and a decoder
+whose units **decompose one another** — a DNS header emitted whole, then its
+flags word, then the sub-fields of the flags word — where adjacency was never
+a claim about continuity at all. For those, declare the output participant a
+**unit sequence** once and pass no seam:
+
+```python
+with zpf.decode_stage(src, out, decoder=("dns", "1.0"),
+                      produced_by=..., produced_at=...,
+                      adjacency=zpf.Adjacency.UNITS) as dec:
+    for stream in dec.streams():
+        for msg in parse(stream):
+            dec.record(stream, msg.header, cites=msg.header_range)
+            dec.record(stream, msg.flags, cites=msg.flags_range)   # inside the header
+            dec.record(stream, msg.qr, cites=msg.qr_range)         # inside the flags
+```
+
+The offset space is unchanged — every record is still addressable and citable
+at its stored-order offset — so a downstream stage can cite any field. What
+changes is what adjacency *asserts*, which is nothing: a consumer MUST NOT treat
+any two of the participant's records as contiguous, and no Discontinuity is
+owed at any seam. A stage *reading* a unit sequence carries the break at every
+seam; leaving `adjacency=` at its default carries `units` forward for you, since
+a unit sequence read stays one. A writer MUST NOT set `units` on a
+transport-layer participant, where stored order defines nothing, and
+{func}`zpf.create` refuses the first record that would make it one.
+
 ### Naming a record: `role`
 
 `content_type` says what a payload **is**; `role` says **which** one it is, and
@@ -429,9 +460,12 @@ this case. Pass it to {func}`~zpf.rewrite_decoded` or {func}`~zpf.merge_files`.
 :class: note
 
 A stage **MUST** emit a `Discontinuity` between two adjacent units of its own
-output wherever those two do not join. {func}`~zpf.rewrite_decoded` does that
-for you: at every drop point, and wherever a reorder separates records that
-adjoined.
+output wherever those two do not join — or, where every seam is a break,
+**MAY** declare the participant a unit sequence instead and emit none.
+{func}`~zpf.rewrite_decoded` takes the per-seam form: at every drop point, and
+wherever a reorder separates records that adjoined. A stage reversing a
+participant wholesale is the shape the other form exists for; build it with
+{func}`~zpf.decode_stage` and `adjacency=zpf.Adjacency.UNITS`.
 
 The two shapes are told apart by **width**. A *drop* withheld content of known
 extent — the input range between the two survivors — so the block declares it,

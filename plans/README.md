@@ -28,8 +28,8 @@ the test suite.
 | [`SPEC-0.15-REVIEW.md`](SPEC-0.15-REVIEW.md) | Why 0.15 was unimplementable as written; its findings were adopted into 0.16. |
 | [`SPEC-0.16-MIGRATION-PLAN.md`](SPEC-0.16-MIGRATION-PLAN.md) | The 0.14 → 0.16 port, phases 0–8. |
 | [`V0.3.0-RELEASE-PLAN.md`](V0.3.0-RELEASE-PLAN.md) | The 0.16 → 0.19 port, as Phase 0 of the `0.3.0` release plan below. |
-| [`SPEC-0.20-MIGRATION-PLAN.md`](SPEC-0.20-MIGRATION-PLAN.md) | The 0.19 → 0.20 port. The version the library implements today. |
-| [`SPEC-0.21-MIGRATION-PLAN.md`](SPEC-0.21-MIGRATION-PLAN.md) | The 0.20 → 0.21 port, phases 0–8. Planned; the unwrapping walk and the `adjacency` body field. |
+| [`SPEC-0.20-MIGRATION-PLAN.md`](SPEC-0.20-MIGRATION-PLAN.md) | The 0.19 → 0.20 port. |
+| [`SPEC-0.21-MIGRATION-PLAN.md`](SPEC-0.21-MIGRATION-PLAN.md) | The 0.20 → 0.21 port, phases 0–8: the unwrapping walk and the `adjacency` body field. The version the library implements today. |
 
 ## API and documentation design
 

@@ -40,6 +40,7 @@ from typing import IO, TYPE_CHECKING, Any
 from zpf._frame import RawOption
 from zpf.binary import BlockReader, BlockWriter
 from zpf.blocks import (
+    Adjacency,
     Block,
     Custom,
     Decoder,
@@ -98,6 +99,8 @@ _LABEL_TO_KIND = {label: kind for kind, label in _KIND_LABELS.items()}
 
 _LAYER_LABELS = {OutputLayer.DECODED: "decoded", OutputLayer.TRANSPORT: "transport"}
 _LABEL_TO_LAYER = {label: layer for layer, label in _LAYER_LABELS.items()}
+_ADJACENCY_LABELS = {Adjacency.CONTIGUOUS: "contiguous", Adjacency.UNITS: "units"}
+_LABEL_TO_ADJACENCY = {label: adjacency for adjacency, label in _ADJACENCY_LABELS.items()}
 
 
 def _ignore_issue(message: str) -> None:
@@ -390,10 +393,15 @@ def _enc_session(block: Session, on_issue: Callable[[str], None]) -> dict[str, A
 
 def _enc_participant(block: Participant, on_issue: Callable[[str], None]) -> dict[str, Any]:
     del on_issue
+    # Always present: adjacency is a body field, so there is no absent case
+    # to render — the same reasoning as output_layer, and the same escape for
+    # a value with no label.
+    adjacency = _ADJACENCY_LABELS.get(block.adjacency, int(block.adjacency))
     obj: dict[str, Any] = {
         "type": "participant",
         "session_id": _num64(block.session_id),
         "pid": block.participant_id,
+        "adjacency": adjacency,
     }
     if block.endpoints:
         # Always an array, even for one occurrence, so a reader never has to
@@ -675,9 +683,18 @@ def _dec_participant(reader: _ObjReader) -> Participant:
     else:
         # The escape for an enum value with no label is the raw number.
         tcp_role = _dec_int(raw_role, "tcp_role")
+    raw_adjacency = reader.require("adjacency")
+    if isinstance(raw_adjacency, str):
+        if raw_adjacency not in _LABEL_TO_ADJACENCY:
+            msg = f"unknown participant adjacency {raw_adjacency!r}"
+            raise ValueError(msg)
+        adjacency: Adjacency | int = _LABEL_TO_ADJACENCY[raw_adjacency]
+    else:
+        adjacency = _dec_int(raw_adjacency, "adjacency")
     return Participant(
         session_id=reader.require_int("session_id"),
         participant_id=reader.require_int("pid"),
+        adjacency=adjacency,
         endpoints=endpoints,
         isn=reader.take_int("isn"),
         identity=reader.take_str("identity"),

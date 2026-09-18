@@ -22,6 +22,135 @@ it back from the installed distribution metadata.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-18
+
+Implements spec **v0.21** (`SPEC_VERSION == (0, 21)`), up from `0.20`. Files
+written by `0.4.0` are refused at the version gate, and files written by this
+release are unreadable by `0.4.0` — the `0.x` rule, as before.
+
+`0.21` is a design release upstream, and unlike `0.20` it changes what a
+reader computes: one rule the offset space was missing, and the first block
+body change since `0.15`. No byte of any existing file changes and no extent
+under 2 GiB moves — but this library read two of the new vectors wrong,
+dropped a byte on re-encode of two more, and stayed silent on two negative
+ones, so two rules are implemented in this port. Recorded in
+`plans/SPEC-0.21-MIGRATION-PLAN.md`.
+
+### Changed
+
+**Offsets unwrap along stored order, so a transport stream can be placed past
+2 GiB** ([zipline#146](https://github.com/adamkjonsson/zipline/issues/146)).
+Through `0.20` every record was measured against the origin under serial
+arithmetic, which read every record more than 2³¹ bytes into a stream as
+*below the origin* — `stream-past-2gib` measured 1073741832 against a declared
+3221225480. The rule now: a record's offset is its predecessor's plus the
+**signed serial delta** of their `seq_start`s, the first record's is its delta
+from the origin (`isn + 1`, or the first captured byte), and an **unplaceable
+record anchors nothing** — the next record measures from the last placeable
+one. `zpf.serial_delta` is the new primitive in `zpf.order`; `record_ranges`,
+`stream_extent`, `StreamView.chunks()` and `units()` all walk through one
+placer, so they cannot drift; and the checker's unplaceable note measures from
+the same anchor, naming the origin or the predecessor, whichever the record
+fell below. This closes the loop `0.4.0`'s #70 entry left open — "until the
+format moves" — and inverts the two tests that pinned the old reading: four
+records 1 GiB apart on an `isn`-less stream now place at 0, 1, 2 and 3 GiB
+with nothing reported. Nothing under 2 GiB reads differently: the walk yields
+`(seq_start − origin) mod 2³²` there.
+
+**A Participant Descriptor carries `adjacency`, a body field**
+([zipline#80](https://github.com/adamkjonsson/zipline/issues/80),
+[zipline#106](https://github.com/adamkjonsson/zipline/issues/106)). The
+reserved `u16` after `participant_id` is now `adjacency: u8` + `_reserved:
+u8`. `zpf.Adjacency` has two values: `CONTIGUOUS` (`0`) — what every file ever
+written holds there and meant, stored neighbours join unless a Discontinuity
+says otherwise — and `UNITS` (`1`), declaring the participant a **unit
+sequence**: its offset space is still the stored-order concatenation, every
+record addressable and citable, but no two adjacent records may be assumed to
+join. The wholesale form of a Discontinuity at every seam, for a stage that
+reorders and for a decoder whose units decompose one another. It is the third
+**load-bearing** enum: an unrecognized value is kept as a raw `int`, projects
+as its number, and is isolated by the checker — never guessed, and never
+defaulted to `contiguous`. `Participant.adjacency` defaults to `CONTIGUOUS`,
+so a block built without naming it encodes the same twelve body bytes it
+always did. **Every participant JSONL line now carries `"adjacency"`**, right
+after `pid`, as the specification's own lines do; a line without it is
+rejected, as a decoder line without `output_layer` is.
+
+Before this port the parser read the byte into `_reserved` and the encoder
+wrote `0`, so a re-encode — and any transform built on this library — turned
+a unit sequence into a stream that splices, the exact failure the field was
+put in the body to prevent. The harness was blind to it: the re-encode and
+JSONL → binary tests compare dataclasses, and a dataclass with no field for the
+byte compares equal on both sides. There is now a field, and a test that
+`UNITS` survives `dataclasses.replace(...).to_bytes()` at byte 10.
+
+**The producer face is a keyword.** `SessionWriter.participant(adjacency=)`;
+`FileWriter.derive_from(adjacency=)` and `decode_stage(adjacency=)` override
+the whole output. Every re-declaration carries the input's *effective*
+adjacency forward: `UNITS` only where the input really was a unit sequence at
+the decoded layer, because on a transport-layer participant the field says
+nothing and a reader ignores it — copying the byte verbatim would turn an
+inert value into a claim about the output. `merge_files`, transport-only,
+always writes `contiguous`. `rewrite_decoded` keeps the per-seam form and
+takes no override; a pass-through of `unit-sequence-reversed` through it
+stays a unit sequence. `Seam`'s docstring points at the wholesale form.
+
+**The consumer face is `StreamView.is_unit_sequence` and `units()`.** The
+property is layer-aware when the view came from a reader (`False` for a
+transport participant whatever its byte says) and falls back to the hint test
+when the view was built by hand. `units()` reports a unit sequence the way it
+reports everything about joins: a `Break` before every record after the
+first, with the new `Break.declared` attribute set `False`, so a consumer that
+flushes on every break honours a unit sequence without a second branch.
+**This goes one step beyond the standard**, which forbids the splice and does
+not say how a reader surfaces the prohibition; the flag is what tells a
+synthetic break from a producer's, and the docstrings say so. `Break.declared`
+defaults `True`, so existing constructions are unchanged.
+
+**The conformance checker learns two conditions.** An `adjacency` this
+version does not define isolates the Participant block — decidable there,
+unlike `output_layer`, and its records then name an undeclared participant,
+which is the "discard the Participant together with everything referencing
+it" the specification describes. `units` on a participant whose records
+resolve to the transport layer is **advisory**, in the shape of a
+transport-layer label: reported once per participant at the first record that
+settles the layer, ignored, and the file accepted. The checked writer treats
+an advisory finding as a refusal, so a writer that sets `units` on a transport
+participant is refused at that record — the writer's MUST NOT, with no extra
+code. The seam predicate's first clause reads "decoded layer, not `units`": a
+unit sequence asserts no join, so there is nothing for a missing block to
+contradict, and the block stays permitted there.
+
+**`capture-gap` is a Session End reason**
+([zipline#147](https://github.com/adamkjonsson/zipline/issues/147)) — the
+word for the one hole the walk cannot place, 2³¹ bytes or more between two
+consecutive records: the producer ends the session there and opens another on
+the same key with no `isn`. Open vocabulary, so nothing in the reader changes;
+the word is in `SessionEnd.reason`'s docstring beside `capture-end`, with the
+distinction (the capture stopped, or it resumed and the stream could not).
+
+**The conformance suite grows by seven.** The vectors are re-vendored at
+`v0.21` — 62 vectors, 70 files — and every case is in `KNOWN_PASSING`. Unlike
+`0.20`, each new name was earned by a phase: `stream-past-2gib` and
+`stream-wraps-seq` by the walk, `unit-sequence-reversed`,
+`unit-sequence-nested` and `session-split-capture-gap` by the field's
+projection, `isolate-unknown-adjacency` and `advisory-transport-adjacency` by
+the checker. `DEFECTIVE` stays empty: the projection sweep found nothing, and
+the new key was checked byte-against-`.jsonl` on all 61 Participant blocks.
+Declared extents: 44 streams across 37 vectors, all asserted.
+
+### Decided
+
+**Package D is declined upstream, and nothing here is removed**
+([zipline#125](https://github.com/adamkjonsson/zipline/issues/125)). The
+`0.19` and `0.20` plans anticipated a release deleting `input_extents`,
+`reason_class`, the `dropped` MUST and the seam predicate; `0.21` reverses
+that decision, this library's having implemented every piece of it among the
+reasons. `check_extents`, `check_coverage`, the `CoverageLedger` and the
+predicate's two arms all stay. The `u64 offset` Record option for the
+unmeasurable hole is deferred to a `1.x` minor, being safe to add later, so
+`capture-gap` is the whole of the answer for now.
+
 ## [0.4.0] - 2026-09-17
 
 Implements spec **v0.20** (`SPEC_VERSION == (0, 20)`), up from `0.19`. Files
@@ -367,7 +496,8 @@ as "1.0" and renumbered without rewriting its bytes.
 - The streaming causal merge and `SEQUENCED` verification.
 - The merge transform, the coverage validator, and the `zpf` CLI.
 
-[Unreleased]: https://github.com/adamkjonsson/python-zipline/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/python-zipline/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/adamkjonsson/python-zipline/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/adamkjonsson/python-zipline/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/adamkjonsson/python-zipline/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/adamkjonsson/python-zipline/compare/v0.1.0...v0.2.0

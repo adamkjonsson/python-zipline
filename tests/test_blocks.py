@@ -215,6 +215,57 @@ def test_unknown_output_layer_is_kept_as_int():
     assert not isinstance(reparsed.output_layer, zpf.OutputLayer)
 
 
+def test_a_participant_declares_what_its_stored_neighbours_assert():
+    """``adjacency`` is a body field, so it is always present."""
+    units = zpf.Participant(session_id=7, participant_id=1, adjacency=zpf.Adjacency.UNITS)
+    reparsed = zpf.Participant.from_content(units.to_bytes())
+    assert reparsed.adjacency is zpf.Adjacency.UNITS
+
+
+def test_a_participant_defaults_to_contiguous():
+    """The default is the value every pre-0.21 writer already wrote.
+
+    ``contiguous`` is ``0`` and the field occupies a byte that was
+    ``_reserved``, which a conformant writer MUST have written ``0``. So a
+    Participant built without naming an adjacency encodes the same twelve
+    body bytes it always did, and one written before the field existed
+    parses as ``CONTIGUOUS`` rather than as an absent value.
+    """
+    participant = zpf.Participant(session_id=7, participant_id=0)
+    assert participant.adjacency is zpf.Adjacency.CONTIGUOUS
+    assert participant.to_bytes()[:12] == b"\x07" + b"\x00" * 11
+
+
+def test_units_survives_a_canonical_re_encode():
+    """The byte is a field, not padding — which is what stops it being dropped.
+
+    Before the field existed the parser read it into ``_reserved`` and the
+    encoder wrote ``0``, so a re-encode turned a unit sequence into a stream
+    that splices: the ``0x22`` failure the specification put the field in the
+    body to prevent. Byte 10 of the body is the one that carries it.
+    """
+    units = zpf.Participant(session_id=7, participant_id=1, adjacency=zpf.Adjacency.UNITS)
+    parsed = zpf.Participant.from_content(units.to_bytes())
+    again = dataclasses.replace(parsed).to_bytes()
+    assert again == units.to_bytes()
+    assert again[10] == 1
+
+
+def test_unknown_adjacency_is_kept_as_int():
+    """Load-bearing, like ``kind`` and ``output_layer``: preserved, never guessed.
+
+    A reader that met this value could not say whether any two of the
+    participant's records may be spliced, so it must not fall back to
+    ``CONTIGUOUS`` — ``0`` and an unrecognized value are different
+    statements. The block model carries the byte through a round-trip;
+    isolating on it is the checker's job.
+    """
+    participant = zpf.Participant(session_id=7, participant_id=0, adjacency=2)
+    reparsed = zpf.Participant.from_content(participant.to_bytes())
+    assert reparsed.adjacency == 2
+    assert not isinstance(reparsed.adjacency, zpf.Adjacency)
+
+
 def test_spans_auto_chunking_and_concatenation():
     many = tuple(
         zpf.Span(source_id=1, session_id=1, participant_id=0, off_start=i, off_end=i + 1)
@@ -313,6 +364,7 @@ def test_replace_drops_the_byte_cache():
         lambda: zpf.FileHeader(tick_hz=2**64),
         lambda: zpf.Source(source_id=2**16, kind=0),
         lambda: zpf.Decoder(decoder_id=1, output_layer=2**8),
+        lambda: zpf.Participant(session_id=1, participant_id=0, adjacency=2**8),
         lambda: zpf.Session(session_id=2**64),
         lambda: zpf.Session(session_id=-1),
         lambda: zpf.Participant(session_id=1, participant_id=0, isn=2**32),

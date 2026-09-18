@@ -207,6 +207,75 @@ def test_out_of_order_seq_start_is_refused():
             session.record(sender, ts=2, payload=b"cc", hints=zpf.Hints(seq_start=0xFFFF_FFF0))
 
 
+def test_the_writer_places_a_stream_past_2_gib_along_stored_order():
+    """The guard measures each record against the last placed one, since `0.21`.
+
+    Through `0.20` it measured every record against the origin under serial
+    arithmetic, so the third record of any stream past 2 GiB read as below
+    it and was refused — the shape zipline#146 was filed over, met by a
+    converter writing a large download. Four records 1 GiB apart now write,
+    and a genuinely below-origin one is still refused.
+    """
+    gib = 1 << 30
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1) as writer:
+        writer.add_source("capture")
+        session = writer.begin_session(proto="tcp")
+        sender = session.participant("alice", isn=1000)
+        for step in range(4):
+            seq_start = (1001 + step * gib) % (1 << 32)
+            session.record(sender, ts=step, payload=b"AAAA", hints=zpf.Hints(seq_start=seq_start))
+    with zpf.open(io.BytesIO(sink.getvalue())) as reader:
+        assert reader.diagnostics == []
+        session_reader = reader.session(0)
+        assert list(session_reader.ranges(0))[-1] == (3 * gib, 3 * gib + 4)
+    with zpf.create(io.BytesIO(), tick_hz=1) as writer:
+        writer.add_source("capture")
+        session = writer.begin_session(proto="tcp")
+        sender = session.participant("alice", isn=1000)
+        with pytest.raises(zpf.SemanticError, match="below the stream origin 1001"):
+            session.record(sender, ts=0, payload=b"AAAA", hints=zpf.Hints(seq_start=1000))
+
+
+def test_a_participant_declares_its_adjacency_through_the_keyword_api():
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1, produced_by="t", produced_at=1) as writer:
+        source = writer.add_source("zpf-input", uri="in.zpf")
+        decoder = writer.add_decoder("dns")
+        session = writer.begin_session(session_id=7)
+        plain = session.participant("a")
+        units = session.participant("b", adjacency=zpf.Adjacency.UNITS)
+        for sender, pid in ((plain, 0), (units, 1)):
+            span = zpf.Span(
+                source_id=source.source_id, session_id=7, participant_id=pid, off_start=0, off_end=2
+            )
+            session.record(
+                sender, ts=0, payload=b"hi", source=source,
+                decoded=zpf.Decoded(decoder=decoder, spans=(span,)),
+            )
+    with zpf.open(io.BytesIO(sink.getvalue())) as reader:
+        assert reader.diagnostics == []
+        declared = [p.adjacency for p in reader.session(7).participants]
+        assert declared == [zpf.Adjacency.CONTIGUOUS, zpf.Adjacency.UNITS]
+
+
+def test_units_on_a_transport_participant_is_refused_at_its_first_record():
+    """A writer MUST NOT set ``units`` where stored order defines nothing.
+
+    The layer is not known when the Participant block is written — it
+    resolves from the records' decoders — so the ergonomic writer refuses
+    the first record that settles it as transport, the block having gone
+    out already. That is the advisory finding a reader would report on the
+    same file, seen from the writer's side, where advisory means refuse.
+    """
+    with zpf.create(io.BytesIO(), tick_hz=1) as writer:
+        writer.add_source("capture")
+        session = writer.begin_session(proto="tcp")
+        sender = session.participant("alice", isn=1000, adjacency=zpf.Adjacency.UNITS)
+        with pytest.raises(zpf.AdvisoryError, match="MUST NOT set units there"):
+            session.record(sender, ts=0, payload=b"aa", hints=zpf.Hints(seq_start=1001))
+
+
 def test_jsonl_face_matches_the_binary_conversion():
     def build(writer: zpf.FileWriter) -> None:
         writer.add_source("capture", uri="chat.pcap")

@@ -20,19 +20,19 @@ if TYPE_CHECKING:
 # "A first example": a 3-party chat room, dave joins mid-stream. Blank lines
 # appear exactly as in the spec (they must be skipped).
 CHAT_EXAMPLE = """\
-{"type":"file","format":"zipline-payload/0.20","tick_hz":1000000}
+{"type":"file","format":"zipline-payload/0.21","tick_hz":1000000}
 {"type":"source","source_id":1,"kind":"capture","uri":"chat.pcap"}
 
 {"type":"session","session_id":8,"proto":"irc","key":"#zipline@irc.example.net"}
-{"type":"participant","session_id":8,"pid":0,"endpoint":["alice"]}
-{"type":"participant","session_id":8,"pid":1,"endpoint":["bob"]}
-{"type":"participant","session_id":8,"pid":2,"endpoint":["carol"]}
+{"type":"participant","session_id":8,"pid":0,"adjacency":"contiguous","endpoint":["alice"]}
+{"type":"participant","session_id":8,"pid":1,"adjacency":"contiguous","endpoint":["bob"]}
+{"type":"participant","session_id":8,"pid":2,"adjacency":"contiguous","endpoint":["carol"]}
 
 {"type":"record","session_id":8,"sender_pid":0,"source_id":1,"ts":2000,"payload":"aGksIGFsbCE="}
 {"type":"record","session_id":8,"sender_pid":2,"source_id":1,"ts":2100,"payload":"aGV5IGFsaWNl"}
 {"type":"record","session_id":8,"sender_pid":1,"source_id":1,"ts":2150,"payload":"bW9ybmluZw=="}
 
-{"type":"participant","session_id":8,"pid":3,"endpoint":["dave"]}
+{"type":"participant","session_id":8,"pid":3,"adjacency":"contiguous","endpoint":["dave"]}
 {"type":"record","session_id":8,"sender_pid":3,"source_id":1,"ts":2300,"payload":"YW0gSSBsYXRlPw=="}
 
 {"type":"session_end","session_id":8,"reason":"timeout"}
@@ -40,12 +40,12 @@ CHAT_EXAMPLE = """\
 
 # "Worked example: a skewed two-file capture".
 SKEWED_EXAMPLE = """\
-{"type":"file","format":"zipline-payload/0.20","tick_hz":1000000}
+{"type":"file","format":"zipline-payload/0.21","tick_hz":1000000}
 {"type":"source","source_id":1,"kind":"capture","uri":"sideA.pcap"}
 {"type":"source","source_id":2,"kind":"capture","uri":"sideB.pcap"}
 {"type":"session","session_id":7,"proto":"tcp","key":"10.0.0.1:51000 <-> 93.184.216.34:80"}
-{"type":"participant","session_id":7,"pid":0,"endpoint":["10.0.0.1:51000"],"isn":1000}
-{"type":"participant","session_id":7,"pid":1,"endpoint":["93.184.216.34:80"],"isn":5000}
+{"type":"participant","session_id":7,"pid":0,"adjacency":"contiguous","endpoint":["10.0.0.1:51000"],"isn":1000}
+{"type":"participant","session_id":7,"pid":1,"adjacency":"contiguous","endpoint":["93.184.216.34:80"],"isn":5000}
 {"type":"record","session_id":7,"sender_pid":0,"source_id":1,"ts":1000,"seq_start":1001,"ack":5001,"payload":"R0VUIC8gSFRUUC8xLjENCg0K"}
 {"type":"record","session_id":7,"sender_pid":1,"source_id":2,"ts":995,"seq_start":5001,"ack":1019,"payload":"SFRUUC8xLjEgMjAwIE9LDQouLi4="}
 """
@@ -53,14 +53,14 @@ SKEWED_EXAMPLE = """\
 # The merged pass-through file derived from the skewed capture.
 MERGED_EXAMPLE = "\n".join(
     [
-        '{"type":"file","format":"zipline-payload/0.20","tick_hz":1000000,'
+        '{"type":"file","format":"zipline-payload/0.21","tick_hz":1000000,'
         '"produced_by":"zpf-merge 1.2","produced_at":1719510000}',
         '{"type":"source","source_id":1,"kind":"zpf-input","uri":"sideA.zpf","digest":"sha256:11aa…"}',
         '{"type":"source","source_id":2,"kind":"zpf-input","uri":"sideB.zpf","digest":"sha256:22bb…"}',
         '{"type":"session","session_id":1,"proto":"tcp",'
         '"key":"10.0.0.1:51000 <-> 93.184.216.34:80","sequenced":true}',
-        '{"type":"participant","session_id":1,"pid":0,"endpoint":["10.0.0.1:51000"],"isn":1000}',
-        '{"type":"participant","session_id":1,"pid":1,"endpoint":["93.184.216.34:80"],"isn":5000}',
+        '{"type":"participant","session_id":1,"pid":0,"adjacency":"contiguous","endpoint":["10.0.0.1:51000"],"isn":1000}',
+        '{"type":"participant","session_id":1,"pid":1,"adjacency":"contiguous","endpoint":["93.184.216.34:80"],"isn":5000}',
         # Identity spans: the same range in as out, which is how a
         # pass-through states its provenance since 0.19.
         '{"type":"record","session_id":1,"sender_pid":0,"source_id":1,"ts":1000,'
@@ -76,14 +76,14 @@ MERGED_EXAMPLE = "\n".join(
 # "A decoded file, end to end" (payload placeholders replaced with real base64).
 DECODED_EXAMPLE = "\n".join(
     [
-        '{"type":"file","format":"zipline-payload/0.20","tick_hz":1000000,'
+        '{"type":"file","format":"zipline-payload/0.21","tick_hz":1000000,'
         '"produced_by":"zpf-decode 0.4","produced_at":1719500000}',
         '{"type":"source","source_id":1,"kind":"zpf-input","uri":"raw.zpf","digest":"sha256:9f2c…"}',
         '{"type":"decoder","decoder_id":1,"output_layer":"decoded","name":"http/1.1",'
         '"version":"0.4","params_digest":"sha256:00ab…"}',
         '{"type":"session","session_id":7,"proto":"http"}',
-        '{"type":"participant","session_id":7,"pid":0,"endpoint":["10.0.0.1:51000"]}',
-        '{"type":"participant","session_id":7,"pid":1,"endpoint":["93.184.216.34:80"]}',
+        '{"type":"participant","session_id":7,"pid":0,"adjacency":"contiguous","endpoint":["10.0.0.1:51000"]}',
+        '{"type":"participant","session_id":7,"pid":1,"adjacency":"contiguous","endpoint":["93.184.216.34:80"]}',
         '{"type":"record","session_id":7,"sender_pid":0,"ts":1000,"decoder_id":1,"source_id":1,'
         '"spans":[{"source_id":1,"session_id":7,"pid":0,"off_start":0,"off_end":18}],'
         '"content_type":"dec:request","payload":"cmVxdWVzdA=="}',
@@ -294,7 +294,7 @@ def test_tick_hz_is_a_rate_never_a_unit_label(tick_hz: int):
 
 def test_tick_hz_accepts_decimal_strings():
     header = obj_to_block(
-        {"type": "file", "format": "zipline-payload/0.20", "tick_hz": str(2**60)}
+        {"type": "file", "format": "zipline-payload/0.21", "tick_hz": str(2**60)}
     )
     assert header.tick_hz == 2**60
 
@@ -302,13 +302,13 @@ def test_tick_hz_accepts_decimal_strings():
 def test_time_units_is_no_longer_accepted():
     """0.10 removed the key outright rather than deprecating it."""
     with pytest.raises(ValueError, match="tick_hz"):
-        obj_to_block({"type": "file", "format": "zipline-payload/0.20", "time_units": "us"})
+        obj_to_block({"type": "file", "format": "zipline-payload/0.21", "time_units": "us"})
 
 
 def test_format_string_round_trips_the_supported_version():
     header = zpf.FileHeader(tick_hz=1)
     obj = block_to_obj(header)
-    assert obj["format"] == "zipline-payload/0.20"
+    assert obj["format"] == "zipline-payload/0.21"
     assert obj_to_block(obj) == header
 
 
@@ -447,6 +447,48 @@ def test_numeric_output_layer_round_trips():
     assert loads_block(dumps_block(decoder)) == decoder
 
 
+@pytest.mark.parametrize(
+    ("adjacency", "label"),
+    [(zpf.Adjacency.CONTIGUOUS, "contiguous"), (zpf.Adjacency.UNITS, "units")],
+)
+def test_adjacency_renders_as_its_label_both_ways(adjacency: zpf.Adjacency, label: str):
+    participant = zpf.Participant(session_id=7, participant_id=1, adjacency=adjacency)
+    assert block_to_obj(participant)["adjacency"] == label
+    assert loads_block(dumps_block(participant)) == participant
+
+
+def test_adjacency_is_always_written_and_sits_after_pid():
+    """A body field has no absent case, so the line always carries it.
+
+    Its place in the line is the specification's own: every participant
+    line in the document and the vectors puts it right after ``pid``, before
+    the options, which is where a reader diffing a projection expects it.
+    """
+    obj = block_to_obj(zpf.Participant(session_id=7, participant_id=0))
+    assert obj["adjacency"] == "contiguous"
+    assert list(obj)[:4] == ["type", "session_id", "pid", "adjacency"]
+
+
+def test_a_participant_line_without_an_adjacency_is_rejected():
+    line = '{"type":"participant","session_id":7,"pid":0,"endpoint":["alice"]}'
+    with pytest.raises(ValueError, match="adjacency"):
+        loads_block(line)
+
+
+def test_numeric_adjacency_round_trips():
+    """Load-bearing, so the raw number survives and is not resolved to a label."""
+    participant = zpf.Participant(session_id=7, participant_id=0, adjacency=2)
+    obj = block_to_obj(participant)
+    assert obj["adjacency"] == 2
+    assert loads_block(dumps_block(participant)) == participant
+
+
+def test_an_unknown_adjacency_label_is_rejected():
+    line = '{"type":"participant","session_id":7,"pid":0,"adjacency":"joined"}'
+    with pytest.raises(ValueError, match="adjacency"):
+        loads_block(line)
+
+
 def test_unknown_binary_block_escapes_as_a_hex_type():
     """The type itself carries the number; the line has no other key."""
     unknown = zpf.UnknownBlock(block_type=0x77, content=b"\x01\x02\x03\x04")
@@ -475,7 +517,7 @@ def test_reader_requires_a_file_line_first():
 
 
 def test_reader_rejects_second_file_line():
-    line = '{"type":"file","format":"zipline-payload/0.20","tick_hz":1000000}\n'
+    line = '{"type":"file","format":"zipline-payload/0.21","tick_hz":1000000}\n'
     with pytest.raises(zpf.StructuralError):
         read_all(line + line)
 

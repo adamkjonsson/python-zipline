@@ -36,7 +36,15 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING
 
 from zpf._intervals import complement, intersections
-from zpf.blocks import Discontinuity, InputExtent, OutputLayer, Record, SourceKind, Span
+from zpf.blocks import (
+    Adjacency,
+    Discontinuity,
+    InputExtent,
+    OutputLayer,
+    Record,
+    SourceKind,
+    Span,
+)
 from zpf.conformance import CoverageLedger
 from zpf.errors import Diagnostic, ZpfError
 from zpf.order import causal_merge
@@ -253,8 +261,12 @@ def _copy_participant(
     values; dropping ``isn`` would leave those unanchored.
     """
     participant = input_session.participants[0]
+    # A merge takes transport streams only, where adjacency says nothing and
+    # a reader ignores it -- so the output says what a transport participant
+    # says, whatever byte the input carried.
     return session.participant(
         participant.endpoints,
+        adjacency=Adjacency.CONTIGUOUS,
         isn=participant.isn,
         tcp_role=participant.tcp_role,
         identity=participant.identity,

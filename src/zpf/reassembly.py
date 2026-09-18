@@ -28,9 +28,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from zpf.blocks import Discontinuity, OutputLayer, Record, Span
+from zpf.blocks import Adjacency, Discontinuity, OutputLayer, Record, Span
 from zpf.errors import SemanticError, ZpfError
-from zpf.order import SEQ_SPACE, seq_lt
+from zpf.order import SEQ_SPACE, serial_delta
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -107,50 +107,72 @@ def layer_name(layer: OutputLayer | int) -> str:
     return layer.name.lower() if isinstance(layer, OutputLayer) else f"output_layer {int(layer)}"
 
 
-def _offset_of(record: Record, origin: int) -> int | None:
-    """Where a record sits in its stream's transport offset space, or ``None``.
+class _Placer:
+    """Walk one transport stream's records, placing each in its offset space.
 
     **The single definition of that question.** It was written three times
     before — in :func:`record_ranges`, :meth:`StreamView.chunks` and
     :meth:`StreamView.units` — and two of the three were wrong, which is
-    `#63 <https://github.com/adamkjonsson/python-zipline/issues/63>`_: each
-    computed ``(seq_start - origin) % SEQ_SPACE`` and trusted the result, so a
-    record one below the origin landed at 4 294 967 295 and took the stream's
-    extent with it.
+    `#63 <https://github.com/adamkjonsson/python-zipline/issues/63>`_; the
+    function that replaced them measured every record against the origin,
+    which was right until the stream passed 2 GiB and wrong after
+    (`zipline#146 <https://github.com/adamkjonsson/zipline/issues/146>`_).
 
-    ``None`` means **unplaceable**, which the specification defines as covering
-    no byte of the stream and contributing nothing to its extent. Two shapes
-    reach it:
+    Since ``0.21`` **offsets unwrap along stored order**: a record's offset is
+    its predecessor's plus the :func:`~zpf.order.serial_delta` of their
+    ``seq_start`` values, and the first record's predecessor is the **origin** —
+    ``isn + 1``, or the first captured byte where the handshake was missed.
+    The walk is well-defined at any length because the ordering rule keeps
+    each record within 2³¹ of the one before, and for a stream under 2 GiB
+    it yields ``(seq_start − origin) mod 2³²`` at every record, so nothing
+    that size reads differently than it did.
 
-    * **No ``seq_start``** on a stream that is sequence-anchored. The commoner
-      of the two, and the one `0.17` left unstated; `unplaceable-no-seq-start`
-      is its vector.
-    * **A ``seq_start`` below the origin.** `0.17` made this a MUST NOT and
-      pinned a repair; `0.19` withdrew both and kept the effect, which is all
-      a reader needs. `unplaceable-below-origin` is its vector, and its eight
-      payload bytes are in no offset at all.
+    ``None`` means **unplaceable**, which the specification defines as
+    covering no byte of the stream and contributing nothing to its extent.
+    Two shapes reach it:
 
-    **The test is undecidable beyond 2³¹, and that is the space, not a gap in
-    the check.** Serial arithmetic (RFC 1982) cannot tell a sequence far below
-    the origin from one far above it, so a stream carrying more than 2 GiB in
-    one direction reads its own later records as below-origin. Nothing here
-    can do better; the alternative is trusting the wrapped offset, which is
-    the failure this exists to prevent.
+    * **No ``seq_start``** on a stream that is sequence-anchored.
+      `unplaceable-no-seq-start` is its vector.
+    * **A ``seq_start`` serially below the one it is measured from** — a
+      negative delta in a space that has none. Below the origin, it would
+      precede byte 0 (`unplaceable-below-origin`); below a predecessor, it is
+      the out-of-order record the ordering rule forbids a writer to emit, and
+      the two are one case seen from two sides.
+
+    **An unplaceable record anchors nothing.** The predecessor is the last
+    *placeable* record, so what follows an unplaceable one is measured past
+    it, not from it — `unplaceable-below-origin`'s extent is 16, not 17.
 
     Args:
-        record: The record to place.
-        origin: The stream's logical-offset origin — ``isn + 1``, or the first
-            captured byte where the handshake was missed.
-
-    Returns:
-        The record's ``off_start``, or ``None`` if it is unplaceable.
+        origin: The stream's logical-offset origin, as a sequence position.
 
     """
-    if record.seq_start is None:
-        return None
-    if seq_lt(record.seq_start, origin):
-        return None
-    return (record.seq_start - origin) % SEQ_SPACE
+
+    __slots__ = ("_offset", "_seq")
+
+    def __init__(self, origin: int) -> None:
+        self._seq = origin % SEQ_SPACE
+        self._offset = 0
+
+    def place(self, record: Record) -> int | None:
+        """Place the next record in stored order.
+
+        Args:
+            record: The record to place.
+
+        Returns:
+            The record's ``off_start``, or ``None`` if it is unplaceable —
+            in which case the anchor does not move.
+
+        """
+        if record.seq_start is None:
+            return None
+        delta = serial_delta(record.seq_start, self._seq)
+        if delta < 0:
+            return None
+        self._seq = record.seq_start
+        self._offset += delta
+        return self._offset
 
 
 def record_ranges(
@@ -203,7 +225,8 @@ def record_ranges(
         callers rely on.
 
         An **unplaceable** record — no ``seq_start`` on a sequence-anchored
-        stream, or one below the origin — gets a zero-width
+        stream, or one serially below the last placeable record before it
+        (the origin, for the first) — gets a zero-width
         range at the **running maximum** — the highest ``off_end`` any earlier
         record of this participant reached, or ``0`` where there is none. It
         therefore covers no byte and moves no extent, which is the part the
@@ -249,8 +272,9 @@ def record_ranges(
         return tuple(positional)
     ranges: list[tuple[int, int]] = []
     end = 0
+    placer = _Placer(origin)
     for record in records:
-        start = _offset_of(record, origin)
+        start = placer.place(record)
         if start is None:
             ranges.append((end, end))
             continue
@@ -496,6 +520,16 @@ class Break:
     a record, and the plaintext length it would have produced cannot be
     known from the ciphertext).
 
+    **Not every break is a block.** A participant declared a
+    :attr:`unit sequence <zpf.Adjacency.UNITS>` asserts no join anywhere,
+    and :meth:`StreamView.units` says so the way it says everything else
+    about joins: with a break before every record after the first, carrying
+    ``declared=False``. That is this library's reading of the consumer's
+    duty, not a rule of the format — the specification says a consumer MUST
+    NOT treat two such records as contiguous and leaves how a reader
+    surfaces that to the reader. The flag is what keeps a synthetic break
+    from being mistaken for a producer's statement.
+
     Attributes:
         off_start: Where the break sits in the stream's offset space.
         width: Its extent, or ``None`` when unknowable. An absent width
@@ -503,12 +537,16 @@ class Break:
             numerically adjacent — which is exactly why this marker has to
             be surfaced rather than inferred from the offsets.
         reason: Why the stream breaks here, if declared.
+        declared: Whether a :class:`~zpf.blocks.Discontinuity` block stands
+            here. ``False`` for the break a unit sequence implies at every
+            seam, which no block declares and no ``width`` accompanies.
 
     """
 
     off_start: int
     width: int | None
     reason: str | None
+    declared: bool = True
 
 
 @dataclass(frozen=True)
@@ -548,10 +586,12 @@ class StreamView:
         blocks: Callable[[], Iterator[Record | Discontinuity]],
         *,
         source: SourceHandle | int | None = None,
+        layer: Callable[[], OutputLayer | int] | None = None,
     ) -> None:
         self._blocks = blocks
         self._participant = participant
         self._source_id = None if source is None else _source_id_of(source)
+        self._layer = layer
         self._contributions: tuple[Contribution, ...] | None = None
 
     def _records(self) -> Iterator[Record]:
@@ -574,6 +614,25 @@ class StreamView:
             return True
         first = next(self._records(), None)
         return first is not None and first.seq_start is not None
+
+    @property
+    def is_unit_sequence(self) -> bool:
+        """Whether no two of this stream's records may be assumed to join.
+
+        True for a **decoded** participant declaring
+        :attr:`~zpf.Adjacency.UNITS`. On a transport-layer participant the
+        field says nothing — the offsets come from sequence numbers, and a
+        reader ignores it — so such a participant answers ``False`` here
+        whatever its byte says. The layer is the one
+        :meth:`zpf.SessionReader.layer` resolves when the view came from a
+        reader; a view built by hand falls back to
+        :attr:`is_stream_oriented`, reading a hinted stream as transport.
+        """
+        if self._participant.adjacency is not Adjacency.UNITS:
+            return False
+        if self._layer is not None:
+            return self._layer() is OutputLayer.DECODED
+        return not self.is_stream_oriented
 
     @property
     def off_start(self) -> int:
@@ -607,18 +666,18 @@ class StreamView:
 
         """
         self._require_stream_oriented("chunks")
-        origin: int | None = self._origin()
+        placer = self._placer()
         cursor = 0
         run = bytearray()
         run_start = 0
         run_ts = 0
         parts: list[Contribution] = []
         for record in self._records():
-            if origin is None and record.seq_start is not None:
-                # No isn: the first record carrying a hint fixes the origin,
-                # and nothing can then be below it.
-                origin = record.seq_start
-            off = None if origin is None else _offset_of(record, origin)
+            if placer is None and record.seq_start is not None:
+                # No isn: the first record carrying a hint is the origin,
+                # and it places at 0.
+                placer = _Placer(record.seq_start)
+            off = None if placer is None else placer.place(record)
             if off is None:
                 continue  # unplaceable: it occupies no range of this stream
             if not record.payload:
@@ -733,6 +792,16 @@ class StreamView:
         The same distinction :meth:`zpf.SessionReader.stream` and
         :meth:`~zpf.SessionReader.stream_blocks` draw, one level up.
 
+        A :attr:`unit sequence <is_unit_sequence>` asserts no join anywhere,
+        so it is reported the same way: a :class:`Break` with
+        ``declared=False`` before every record after the first, alongside
+        any Discontinuity the participant also carries. A consumer that
+        flushes on every break therefore honours a unit sequence without a
+        second branch. **This goes one step beyond the standard**: the
+        specification forbids the splice and does not say how a reader
+        surfaces the prohibition, so the synthetic breaks are this library's
+        answer, and the flag tells them from a producer's.
+
         Yields:
             Each :class:`Datagram` and :class:`Break`, in stored order.
 
@@ -745,8 +814,10 @@ class StreamView:
 
         """
         hinted = self.is_stream_oriented
-        origin = self._origin() if hinted else None
+        placer = self._placer() if hinted else None
+        seams = self.is_unit_sequence
         cursor = 0
+        emitted = False
         for block in self._blocks():
             if isinstance(block, Discontinuity):
                 yield Break(off_start=cursor, width=block.width, reason=block.reason)
@@ -754,10 +825,13 @@ class StreamView:
                     cursor += block.width or 0
                 continue
             record = block
+            if seams and emitted:
+                yield Break(off_start=cursor, width=None, reason=None, declared=False)
+            emitted = True
             if hinted:
-                if origin is None and record.seq_start is not None:
-                    origin = record.seq_start
-                placed = None if origin is None else _offset_of(record, origin)
+                if placer is None and record.seq_start is not None:
+                    placer = _Placer(record.seq_start)
+                placed = None if placer is None else placer.place(record)
                 if placed is None:
                     continue  # unplaceable: no range of this stream to report
                 off = placed
@@ -855,7 +929,7 @@ class StreamView:
             A new view over the same stream, with the source bound.
 
         """
-        return StreamView(self._participant, self._blocks, source=source)
+        return StreamView(self._participant, self._blocks, source=source, layer=self._layer)
 
     def cite(
         self, off_start: int, off_end: int, *, source: SourceHandle | int | None = None
@@ -908,10 +982,10 @@ class StreamView:
         )
         raise ZpfError(msg)
 
-    def _origin(self) -> int | None:
-        """Return the logical-offset origin from ``isn``, or None until a record fixes it."""
+    def _placer(self) -> _Placer | None:
+        """Return a placer anchored at ``isn + 1``, or None until a record fixes the origin."""
         isn = self._participant.isn
-        return None if isn is None else (isn + 1) % SEQ_SPACE
+        return None if isn is None else _Placer(isn + 1)
 
     def _require_stream_oriented(self, method: str) -> None:
         if not self.is_stream_oriented:

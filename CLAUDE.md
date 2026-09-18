@@ -2,26 +2,26 @@
 
 ## The product
 
-This code is a Python implementation of v0.20 of the Zipline Payload Format,
+This code is a Python implementation of v0.21 of the Zipline Payload Format,
 which is defined in
-`https://github.com/adamkjonsson/zipline/blob/v0.20/docs/zipline-payload-format.md`.
+`https://github.com/adamkjonsson/zipline/blob/v0.21/docs/zipline-payload-format.md`.
 A checkout of the spec repository lives at `~/projs/zipline`; a new spec release
 is a new tag there, and `v1.0` is the *old* one (see the first trap below).
 It is a module that readers and writers of zpf-files use to access and create
 files.
 
-"The standard" in this file always means **0.20**, and `zpf.SPEC_VERSION` is the
+"The standard" in this file always means **0.21**, and `zpf.SPEC_VERSION` is the
 single source of truth for it in code. The format is in `0.x`, where **every
 minor is a separate format**: a reader must reject a `version_minor` it does not
 implement, and no upgrade path between `0.x` versions is guaranteed. So this is
 a single-version library — there is deliberately no 0.9 or 0.10 compatibility
 path, and files written by earlier versions of this library are unreadable by it.
 
-Two traps worth naming, because both look like bugs and are not:
+Four traps worth naming, because each looks like a bug and is not:
 
 - A **0.9** file stamps `version_major = 1`, `version_minor = 0` — that version
   was published as "1.0" and renumbered without rewriting its bytes, so the
-  `v1.0` tag sorts *above* every `0.x` tag and is the oldest of them. 0.20
+  `v1.0` tag sorts *above* every `0.x` tag and is the oldest of them. 0.21
   stamps `0`/`20`. A 0.9 file is correctly rejected at the version gate.
 - `decoder_id` decides **neither** axis. It does not say a record is decoded —
   reassembly is a decoder too, so the layer comes from that decoder's declared
@@ -35,18 +35,35 @@ Two traps worth naming, because both look like bugs and are not:
   rules that policed which of the two a stream was. A pass-through therefore
   cites its inputs, which makes it answerable for their coverage the way a
   decode stage is.
+- **Offsets unwrap along stored order** (since `0.21`). A transport record's
+  offset is its *predecessor's* plus the signed serial delta of their
+  `seq_start`s — never `seq_start − origin` under serial arithmetic, which
+  read every record more than 2³¹ bytes into a stream as below the origin. The
+  origin is the first record's predecessor, and an unplaceable record anchors
+  nothing. `_Placer` in `reassembly.py` is the single definition; the checker
+  and the writer's guard use the same anchor. A stream past 2 GiB, or one
+  whose sequence numbers pass through 2³², is conformant and places.
+- **`adjacency` is a Participant body field, and the third load-bearing enum.**
+  `contiguous` (`0`) is what every file ever written holds there; `units` (`1`)
+  declares a *unit sequence* — offsets unchanged, no two adjacent records may
+  be assumed to join, no Discontinuity owed at any seam. An unrecognised value
+  is isolated, never defaulted to `contiguous`. On a transport-layer participant
+  the field says nothing and a reader ignores it (advisory). `StreamView.units()`
+  surfaces a unit sequence as a `Break(declared=False)` before every record
+  after the first — **that is this library's reading, not the format's**, and
+  the docs say so wherever it appears.
 
 The conformance vectors in `tests/vectors/` are vendored verbatim from the spec
 repository and are the acceptance criteria — do not edit them to make a test
 pass. `VECTOR-DEFECTS.md` records six defects found against them, all closed
-upstream; `DEFECTIVE` in `tests/test_vectors.py` is empty at `v0.20`. When a
+upstream; `DEFECTIVE` in `tests/test_vectors.py` is empty at `v0.21`. When a
 fixture is wrong, it goes in `DEFECTIVE` by name and is reported upstream —
 never bend the implementation to match a fixture in `DEFECTIVE`.
 
-The 0.19 → 0.20 port is **complete** (`plans/SPEC-0.20-MIGRATION-PLAN.md`); the
+The 0.20 → 0.21 port is **complete** (`plans/SPEC-0.21-MIGRATION-PLAN.md`); the
 earlier ports are in `plans/` too, and `docs/dev/contributing.md` § *Porting to
-a new spec version* is the checklist. The vectors are vendored at `v0.20` — 55
-of them, 63 files — and every name is in `KNOWN_PASSING`. The ratchet in
+a new spec version* is the checklist. The vectors are vendored at `v0.21` — 62
+of them, 70 files — and every name is in `KNOWN_PASSING`. The ratchet in
 `tests/test_vectors.py` stays as the regression guard: a name is never removed
 from that set while its vector exists.
 

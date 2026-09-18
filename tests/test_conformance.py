@@ -825,6 +825,62 @@ def test_a_stream_resolving_to_an_undefined_layer_is_isolated():
     )
 
 
+def test_a_participant_declaring_an_undefined_adjacency_is_isolated():
+    """``isolate-unknown-adjacency``: the third load-bearing enum.
+
+    The value decides whether any two of the participant's records may be
+    spliced, so a reader that does not recognise it cannot say what a single
+    pair asserts. It MUST NOT guess and MUST NOT fall back to ``contiguous``
+    — ``0`` and an unrecognised value are different statements. Decidable
+    at the block, unlike ``output_layer``, so it is ruled there: isolating
+    the block discards the participant with everything referencing it.
+    """
+    reject(
+        DERIVED_HEADER, INP, DEC, SESS,
+        zpf.Participant(session_id=5, participant_id=0, adjacency=2),
+        match="adjacency 2, which this version does not define",
+    )
+    # ...and its records then reference an undeclared participant, which is
+    # the cascade the specification names.
+    reject(
+        DERIVED_HEADER, INP, DEC, SESS,
+        zpf.Participant(session_id=5, participant_id=0, adjacency=2),
+        raw_record(source_id=2, decoder_id=3, spans=(IDENTITY,)),
+        match="does not define",
+    )
+
+
+UNITS = zpf.Participant(session_id=5, participant_id=0, adjacency=zpf.Adjacency.UNITS)
+
+
+def test_units_on_a_transport_participant_is_advisory():
+    """``advisory-transport-adjacency``: the field is inert there, so it is ignored.
+
+    A transport stream's offsets come from its sequence numbers and stored
+    order defines nothing, so ``units`` says nothing. A writer MUST NOT set
+    it; a reader gives it the transport-layer-label treatment — ignore,
+    report, accept. Once per participant, at the first record that settles
+    the layer, and not again for the second.
+    """
+    with pytest.raises(zpf.AdvisoryError, match="MUST NOT set units there"):
+        accept(HEADER, CAP, SESS, UNITS, raw_record(seq_start=1001))
+    checker = zpf.ConformanceChecker()
+    checker.check([HEADER, CAP, SESS, UNITS])
+    with pytest.raises(zpf.AdvisoryError):
+        checker.observe(raw_record(seq_start=1001, payload=b"AAAA"))
+    checker.observe(raw_record(seq_start=1005, payload=b"BBBB"))  # reported already
+    checker.finish()
+
+
+def test_units_on_a_decoded_participant_is_what_the_field_is_for():
+    """``unit-sequence-reversed``: spans descending at every seam, no block owed."""
+    finished(
+        DERIVED_HEADER, INP, DEC, SESS, UNITS,
+        _unit(_range(120, 160)), _unit(_range(80, 120), ts=1),
+        _unit(_range(40, 80), ts=2), _unit(_range(0, 40), ts=3),
+    )
+
+
 def test_two_decoders_in_one_session_are_ordinary():
     """What is NOT wrong: the rule is per participant, not per session."""
     other = zpf.Decoder(decoder_id=4, name="tls")
@@ -931,6 +987,35 @@ def test_a_bytes_class_region_between_two_units_owes_nothing():
     )
 
 
+def test_the_predicate_does_not_reach_a_unit_sequence():
+    """The predicate's first clause, second half: a ``units`` participant asserts no join.
+
+    No vector ships this shape — both ``unit-sequence-*`` vectors are built of
+    ``A ≥ B`` pairs the predicate declines anyway — so this is the test that
+    the exclusion does work: the same hole between the same two ascending
+    units fires on a ``contiguous`` participant and is silent on a ``units``
+    one, because there is nothing for a missing block to contradict.
+    """
+    shape = (_unit(_range(0, 100)), _hole(100, 139), _unit(_range(139, 200), ts=1))
+    reject(*DECODE_PRELUDE, *shape, match="a Discontinuity between them is required")
+    finished(DERIVED_HEADER, INP, DEC, SESS, UNITS, *shape)
+
+
+def test_a_discontinuity_in_a_unit_sequence_is_permitted():
+    """The block stays permitted there: a ``width`` is a term in the arithmetic either way.
+
+    ``filtered-decoded``'s shape on a ``units`` participant. The no-join
+    claim beside the width is redundant, and redundant is not wrong.
+    """
+    finished(
+        DERIVED_HEADER, INP, DEC, SESS, UNITS,
+        _unit(_range(0, 100)),
+        _hole(100, 139),
+        zpf.Discontinuity(session_id=5, participant_id=0, width=39),
+        _unit(_range(139, 200), ts=1),
+    )
+
+
 def test_the_predicate_does_not_reach_a_transport_stream():
     """``sessionization-stage`` and ``tunnel/inner``, excluded by the layer test.
 
@@ -1031,28 +1116,59 @@ def test_an_earlier_hint_anchors_the_stream_for_what_follows():
     assert len(checker.unplaceable_notes) == 1
 
 
-def test_without_an_isn_the_first_captured_byte_is_the_origin_and_has_a_floor():
-    """#70: the checker returned early without an ``isn``, and reported nothing.
+def test_without_an_isn_a_stream_past_2_gib_places_every_record():
+    """#70's repro, inverted by `0.21`: four records 1 GiB apart, no handshake.
 
-    The format fixes the origin at the first captured byte when there is no
-    ``isn`` and measures everything from it, which is what ``record_ranges``
-    always did. The checker read "no ``isn``" as "no floor", so a record
-    serially below the first hint was zeroed by one path and noted by neither.
-    The ordering rule keeps consecutive records within 2³¹, so the only way
-    below the origin here is around it: a stream past 2 GiB. That ceiling is
-    the format's (zipline#146); agreeing about it is ours.
+    Through `0.20` the floor measured every record against the origin, so
+    the third and fourth — 2³¹ and 3·2³⁰ past the first — read as below it,
+    and #70 made this checker note them as ``record_ranges`` zeroed them.
+    `0.21` binds the floor to each record's *predecessor* (zipline#146):
+    every neighbour here is one serial step of 2³⁰ from the last, so all
+    four place and nothing is noted. The reader and the checker still agree,
+    which was the whole of #70; they now agree on the right answer.
     """
     gib = 1 << 30
     checker = anchored(raw_record(seq_start=0, payload=b"AAAA"), isn=None)
     assert checker.unplaceable_notes == ()  # the first hint is the origin itself
-    checker.observe(raw_record(seq_start=gib, payload=b"BBBB"))
+    for seq_start in (gib, 2 * gib, 3 * gib):
+        checker.observe(raw_record(seq_start=seq_start, payload=b"BBBB"))
+        assert checker.unplaceable_notes == ()
+
+
+def test_with_an_isn_a_stream_past_2_gib_places_every_record():
+    """`stream-past-2gib`, at the checker: the same walk from ``isn + 1``."""
+    gib = 1 << 30
+    checker = anchored(raw_record(seq_start=1001, payload=b"AAAA"))  # isn=1000
+    for seq_start in (1001 + gib, 1001 + 2 * gib, 1001 + 3 * gib):
+        checker.observe(raw_record(seq_start=seq_start, payload=b"BBBB"))
+        assert checker.unplaceable_notes == ()
+
+
+def test_sequence_numbers_passing_through_2_to_the_32_are_placeable():
+    """`stream-wraps-seq`: serial order, so 4 follows 2³² − 4 and nothing is noted."""
+    checker = anchored(raw_record(seq_start=2**32 - 4, payload=b"AAAABBBB"), isn=2**32 - 5)
+    checker.observe(raw_record(seq_start=4, payload=b"CCCCDDDD"))
     assert checker.unplaceable_notes == ()
-    checker.observe(raw_record(seq_start=2 * gib, payload=b"CCCC"))
-    (note,) = checker.unplaceable_notes
-    assert "seq_start 2147483648, below the stream origin 0 (the first captured byte)" in note
-    assert "excluded from the extent" in note
-    checker.observe(raw_record(seq_start=3 * gib, payload=b"DDDD"))
+
+
+def test_an_unplaceable_record_anchors_nothing():
+    """`unplaceable-below-origin`'s second lesson: the floor moves only when a record places.
+
+    The record at 1000 is below the origin 1001 and noted; the one at 1001
+    is then measured from the origin, not from 1000, and places at 0. Had
+    the unplaceable record anchored, 1001 would have been placeable either
+    way — so the shape that tells the two apart is a record *between* them:
+    1000 unplaceable, then 1001, then 1000 again, which is out of order
+    against 1001 and below its predecessor, one case seen from two sides.
+    """
+    checker = anchored(raw_record(seq_start=1000, payload=b"AAAA"))  # isn=1000
     assert len(checker.unplaceable_notes) == 1
+    checker.observe(raw_record(seq_start=1001, payload=b"BBBB"))
+    assert checker.unplaceable_notes == ()
+    with pytest.raises(zpf.SemanticError, match="precedes the participant's previous record"):
+        checker.observe(raw_record(seq_start=1000, payload=b"CCCC"))
+    (note,) = checker.unplaceable_notes
+    assert "below its predecessor's seq_start 1001" in note
 
 
 def test_with_an_isn_the_origin_is_isn_plus_one_not_the_first_record():

@@ -4,7 +4,7 @@ This page is the mental model behind the Zipline Payload Format and this
 library. The [tutorial](tutorial.md) walks you through the API; this page
 explains *why* the format looks the way it does, and defines the vocabulary
 the rest of the documentation uses. Deep links go to the
-[v0.20 specification](https://github.com/adamkjonsson/zipline/blob/v0.20/docs/zipline-payload-format.md),
+[v0.21 specification](https://github.com/adamkjonsson/zipline/blob/v0.21/docs/zipline-payload-format.md),
 which is normative for this library.
 
 ## What a `.zpf` file holds
@@ -301,8 +301,14 @@ into the input's participant streams. Offsets are **logical stream
 offsets** — 0-based positions in the reassembled application stream,
 counting missing bytes (gaps) as if present — not record ids and not TCP
 sequence numbers. Byte 0 is the stream's first application byte (anchored
-at `isn + 1` when the TCP handshake was seen). A decoder consumes those
-streams through
+at `isn + 1` when the TCP handshake was seen, the first captured byte
+otherwise), and every later offset is reached by walking the stream's
+records in stored order: each record sits at its predecessor's offset plus
+the signed serial delta of their `seq_start`s. That walk is what lets a
+stream carry more than 2 GiB in one direction, or pass through 2³², and
+still be placed — a record is only *unplaceable* when it falls serially
+below the record it is measured from, and then it anchors nothing. A
+decoder consumes those streams through
 {meth}`SessionReader.reassemble <zpf.reader.SessionReader.reassemble>`,
 which works in these offsets directly and can {meth}`cite
 <zpf.reassembly.StreamView.cite>` a range without the arithmetic.
@@ -334,6 +340,18 @@ A decoded stream may also declare a **Discontinuity**: a break in the file's
 of an Undecoded block — that one is about the input, this one about what
 was produced — and it discharges no coverage obligation. See
 [provenance](guides/provenance.md#each-layer-has-its-own-offset-space).
+
+Where *every* seam is a break, a participant says so once instead: its
+`adjacency` — a body field, always present — is `contiguous` for a stream
+whose neighbours join unless a Discontinuity says otherwise, and `units` for a
+**unit sequence**, a decoded participant none of whose adjacent records may be
+assumed to join. Its offset space is unchanged, every record addressable and
+citable; only what adjacency *asserts* changes. It exists for two shapes with
+no honest per-seam form: a stage that reorders a participant's records, and a
+decoder whose units decompose one another — a header, then the fields carved
+out of it. Like Source `kind` and `output_layer` it is **load-bearing**: an
+unrecognised value is isolated, never read as `contiguous`. On a
+transport-layer participant it says nothing and is ignored.
 
 A pass-through carries spans too — identity ones, the same range in as out.
 Because it cites its inputs, it is answerable for their coverage exactly as a

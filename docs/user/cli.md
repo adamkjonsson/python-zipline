@@ -49,6 +49,10 @@ session 0: proto=tcp key='10.0.0.1:51000 <-> 93.184.216.34:80' participants=[10.
   stream 1: capture transport
 ```
 
+A decoded stream declared a unit sequence gets a third word — `stream 1:
+zpf-input decoded units` — since no two of its records may be assumed to
+join; on a transport stream the field says nothing and is not printed.
+
 There is no file-wide kind line, because there is no file-wide answer: one
 file may hold a decoded stream beside a transport one, and a captured stream
 beside a derived one.
@@ -77,11 +81,11 @@ it is exactly what `convert ... --to jsonl` writes.
 
 ```console
 $ zpf cat session.zpf
-{"type":"file","format":"zipline-payload/0.20","tick_hz":1000000}
+{"type":"file","format":"zipline-payload/0.21","tick_hz":1000000}
 {"type":"source","source_id":0,"kind":"capture","uri":"capture.pcap"}
 {"type":"session","session_id":0,"proto":"tcp","key":"10.0.0.1:51000 <-> 93.184.216.34:80"}
-{"type":"participant","session_id":0,"pid":0,"endpoint":["10.0.0.1:51000"],"isn":1000}
-{"type":"participant","session_id":0,"pid":1,"endpoint":["93.184.216.34:80"],"isn":5000}
+{"type":"participant","session_id":0,"pid":0,"adjacency":"contiguous","endpoint":["10.0.0.1:51000"],"isn":1000}
+{"type":"participant","session_id":0,"pid":1,"adjacency":"contiguous","endpoint":["93.184.216.34:80"],"isn":5000}
 {"type":"record","session_id":0,"sender_pid":0,"source_id":0,"ts":1000,"seq_start":1001,"ack":5001,"payload":"R0VUIC8gSFRUUC8xLjENCg0K"}
 {"type":"record","session_id":0,"sender_pid":1,"source_id":0,"ts":1005,"seq_start":5001,"ack":1019,"payload":"SFRUUC8xLjEgMjAwIE9LDQoNCmhp"}
 {"type":"session_end","session_id":0}

@@ -6,12 +6,49 @@ its [CHANGELOG](https://github.com/adamkjonsson/zipline/blob/v0.21/CHANGELOG.md)
 and the 62 vectors at tag `v0.21` (commit `4964dee`, cut 2026-09-18). We ship
 `0.4.0` (2026-09-17) on `0.20`; this is a one-release jump.
 
-> **Status, 2026-09-18: Phase 0 done**, on branch `spec-0.21-plan`. The tree
-> is byte-identical to the tag; the projection sweep found no new defect (49
-> two-faced files, 0 disagreements on projected keys; the `adjacency` byte of
-> all 61 Participant blocks checked against the `.jsonl` directly, 0
-> mismatches). The suite is red at the gate — 343 failures, every one
-> "reads 20" or the 63→70 count — which is the state Phase 1 clears.
+> **Status, 2026-09-18: every phase is done**, Phase 0 on `main` (PR #73)
+> and Phases 1–8 on branch `spec-0.21-port`. Suite: **1009 passed, zero
+> xfail, zero xpass**; `ruff check` and a `-W` Sphinx build from scratch are
+> clean; the three sweep greps return only history.
+>
+> **What execution changed from the text below.** Phase 4 rules an unknown
+> `adjacency` at the Participant block, not at close (decidable there, and a
+> checked writer should refuse it at the point of writing), and reports
+> `units` on a transport participant at the first record that settles the
+> layer (advisory findings can only come from `observe`) — which makes the
+> checked writer refuse it, so D4's writer-side MUST NOT needed no code.
+> Phase 5 refined D4: re-declarations carry the input's *effective*
+> adjacency, `units` only where the input was a decoded unit sequence,
+> since the byte on a transport input is ignored by a reader and copying it
+> would turn an inert value into a claim; `derive_from`/`decode_stage` take
+> `adjacency=` as the override, the merge always writes `contiguous`,
+> `rewrite_decoded` keeps the per-seam form. `StreamView` learns its layer
+> from the reader lazily. Phase 3 found that with no `isn`,
+> below-the-first-byte *is* below-the-predecessor, so the reader's ordering
+> rule isolates it first; the test drives `record_ranges` directly. Phase 7
+> put D5's `capture-gap` paragraph on `SessionEnd.reason` because the
+> changelog cites it.
+>
+> **What the sweep found**, which is why it runs last: the ergonomic
+> writer's placement guard still measured every record against the origin
+> with `seq_lt`, so `zpf.create` would have refused the third record of a
+> stream past 2 GiB — the very failure zipline#146 was filed over — and no
+> vector reached it, the harness writing through `BlockWriter(check=True)`.
+> It now shares the placer's anchor and refuses only below the origin,
+> leaving below-the-predecessor to the ordering rule's own message. The
+> property test's participant strategy did not generate `adjacency`; it
+> does. `zpf info` gained the word `units` on a decoded stream line.
+>
+> **Pages that needed a rewrite rather than a renumber**, for the next
+> port's list: `docs/user/errors.md` (the unplaceable paragraph),
+> `docs/user/concepts.md` (offset walk; unit sequence),
+> `docs/user/guides/decoding.md` (a new section; the duty admonition),
+> `docs/user/guides/provenance.md` (the walk; the synthetic breaks and their
+> callout), `docs/user/guides/faces-and-io.md` (three load-bearing enums),
+> `docs/dev/conformance.md` (rule table, per-participant rules, beyond the
+> standard ×2, the predicate's first clause, advisory count, vector count),
+> `CLAUDE.md` (two new traps), `docs/dev/contributing.md` (the checklist
+> step this sweep earned). Everything else was a number.
 > Every number below comes from the scratch run, not from the changelog.
 
 ---
@@ -98,11 +135,15 @@ measured against the manifest's `extents`. Result:
 - **`adjacency = units` is lost on re-encode.** `Participant._encode` packs
   the reserved half-word as `0`, so `dataclasses.replace(p).to_bytes()` on
   `unit-sequence-reversed`'s participant differs from the original at byte 10
-  (`01` → `00`). `test_a_vector_survives_a_canonical_re_encode` would fail on
-  both `unit-sequence-*` files — and a pass-through built on this library
-  would silently turn a unit sequence into a stream that splices, which is
-  the exact failure the field was put in the body to prevent. **This is the
-  item with teeth.**
+  (`01` → `00`). A pass-through built on this library would silently turn
+  a unit sequence into a stream that splices, which is the exact failure the
+  field was put in the body to prevent. **This is the item with teeth** — and,
+  Phase 1 found, the one the harness is *blind* to until Phase 2: the
+  re-encode, JSONL → binary and own-writer tests all compare dataclasses, and
+  a dataclass with no field for the byte compares equal on both sides. Only
+  `test_accept`'s projection half sees it (`units` projects as `contiguous`).
+  All three become sensitive the moment the field exists, which is the
+  argument for adding it before anything else.
 - **`stream-past-2gib` measures 1073741832 against a declared 3221225480** —
   the reading the vector's summary names as wrong. `_offset_of` in
   `reassembly.py` tests every record against the origin, so records 3 and 4

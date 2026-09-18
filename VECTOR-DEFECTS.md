@@ -1,7 +1,7 @@
 # Defects in the conformance vectors
 
 **Six found, six closed.** None is live against the vectors currently vendored
-in [`tests/vectors/`](tests/vectors/), which are `v0.20`, so `DEFECTIVE` in
+in [`tests/vectors/`](tests/vectors/), which are `v0.21`, so `DEFECTIVE` in
 [`tests/test_vectors.py`](tests/test_vectors.py) is empty. Every one was
 reported upstream and fixed in the release that followed.
 

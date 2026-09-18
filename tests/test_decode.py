@@ -193,6 +193,74 @@ def test_decode_stage_writes_a_conformant_decode_stage_file(tmp_path: Path):
         assert all(r.content_type == "dec:http-message" for r in records)
 
 
+def test_decode_stage_declares_a_unit_sequence_on_request(tmp_path: Path):
+    """``adjacency=UNITS`` is the wholesale form of a Seam at every record.
+
+    A decoder whose units decompose one another — a header, then the fields
+    carved out of it — owes no block between a parent and its child, and
+    says so once, for the participant. The input is transport, so nothing
+    is carried forward; the value is the stage's own statement.
+    """
+    path = raw_path(tmp_path)
+    sink = io.BytesIO()
+    with zpf.decode_stage(
+        path, sink, decoder=("dns", "0.1"), produced_by="t 1.0", produced_at=1,
+        adjacency=zpf.Adjacency.UNITS,
+    ) as dec:
+        for stream in dec.streams():
+            for seg in stream.segments():
+                dec.record(stream, seg.data, ts=seg.ts, cites=(seg.off_start, seg.off_end))
+                head = (seg.off_start, seg.off_start + 2)
+                dec.record(stream, seg.data[:2], ts=seg.ts, cites=head)
+    with zpf.open(io.BytesIO(sink.getvalue())) as out:
+        assert out.diagnostics == []
+        session = out.session(7)
+        assert all(p.adjacency is zpf.Adjacency.UNITS for p in session.participants)
+        (client, _) = session.reassemble()
+        assert client.is_unit_sequence
+        units = list(client.units())
+        assert [type(u).__name__ for u in units] == ["Datagram", "Break", "Datagram"]
+        seam = zpf.Break(off_start=len(REQUEST), width=None, reason=None, declared=False)
+        assert units[1] == seam
+
+
+def test_derive_from_carries_the_effective_adjacency_forward(tmp_path: Path):
+    """A unit sequence read stays one; the field on a transport input does not.
+
+    ``units`` on a transport-layer participant says nothing and a reader
+    ignores it, so carrying the byte verbatim would turn an inert value into
+    a claim about the output. The effective value is what is carried:
+    ``units`` only where the input really was a unit sequence.
+    """
+    transport = tmp_path / "t.zpf"
+    with zpf.create(transport, tick_hz=1) as w:
+        w.add_source("capture", uri="c.pcap")
+        with w.begin_session(session_id=7) as session:
+            # Written with the flat, unchecked writer's leniency: the checked
+            # writer would refuse this, which is the next test's subject.
+            session.participant("a", isn=1000, adjacency=zpf.Adjacency.UNITS)
+    units = tmp_path / "u.zpf"
+    with zpf.create(units, tick_hz=1, produced_by="t", produced_at=1) as w:
+        source = w.add_source("zpf-input", uri="x.zpf")
+        decoder = w.add_decoder("dns")
+        with w.begin_session(session_id=7) as session:
+            sender = session.participant("a", adjacency=zpf.Adjacency.UNITS)
+            span = zpf.Span(
+                source_id=source.source_id, session_id=7, participant_id=0, off_start=0, off_end=2
+            )
+            decoded = zpf.Decoded(decoder=decoder, spans=(span,))
+            session.record(sender, ts=0, payload=b"hi", source=source, decoded=decoded)
+    for path, expected in ((transport, zpf.Adjacency.CONTIGUOUS), (units, zpf.Adjacency.UNITS)):
+        sink = io.BytesIO()
+        with zpf.open(path) as reader, zpf.create(
+            sink, tick_hz=1, produced_by="t", produced_at=1
+        ) as w:
+            w.derive_from(reader)
+        with zpf.open(io.BytesIO(sink.getvalue())) as out:
+            (participant,) = out.session(7).participants
+            assert participant.adjacency is expected, path.name
+
+
 def test_decode_stage_cites_the_input_with_the_right_ids(tmp_path: Path):
     path = raw_path(tmp_path)
     sink = io.BytesIO()

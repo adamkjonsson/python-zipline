@@ -67,6 +67,33 @@ def seq_lt(a: int, b: int) -> bool:
     return a != b and (a - b) % SEQ_SPACE >= _SEQ_HIGH_BIT
 
 
+def serial_delta(a: int, b: int) -> int:
+    """Return the signed serial distance from ``b`` to ``a``: ``a − b`` under RFC 1982.
+
+    The comparison :func:`seq_lt` makes, as a number. It is what the offset
+    space is built from since ``0.21``: a transport record's offset is its
+    predecessor's plus the serial delta of their ``seq_start`` values, which is
+    well-defined at any stream length because the ordering rule keeps each
+    record within 2³¹ of the one before — exactly the range in which the
+    delta is defined. For two positions under 2³¹ apart it is the plain
+    difference; across the 2³² wrap it is the short way round.
+
+    Args:
+        a: A 32-bit sequence position.
+        b: A 32-bit sequence position.
+
+    Returns:
+        An integer in ``[−2³¹, 2³¹)``: positive iff ``b`` precedes ``a``,
+        zero iff they are equal, and negative iff ``a`` precedes ``b`` —
+        the same sign :func:`seq_lt` reports. A distance of exactly 2³¹ is
+        the undefined case RFC 1982 names, and reads as negative here,
+        which is the side the ordering rule puts it on.
+
+    """
+    delta = (a - b) % SEQ_SPACE
+    return delta - SEQ_SPACE if delta >= _SEQ_HIGH_BIT else delta
+
+
 def seq_leq(a: int, b: int) -> bool:
     """Return whether ``a`` equals or precedes ``b`` in the sequence space."""
     return a == b or seq_lt(a, b)
