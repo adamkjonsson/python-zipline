@@ -2,7 +2,7 @@
 
 Small `.zpf` files, each with its expected JSON-Lines projection or its expected
 failure, for testing an implementation of the
-[Zipline Payload Format](../docs/zipline-payload-format.md) `0.20`.
+[Zipline Payload Format](../docs/zipline-payload-format.md) `0.21`.
 
 Run `python3 check.py` to verify the tree is self-consistent.
 Run `python3 build.py` to regenerate it.
@@ -292,6 +292,40 @@ example of the origination duty into a positive test of it.
 | `unplaceable-below-origin` | A below-origin record **carrying payload**. Since `0.19` it is not a violation — the floor stopped being a MUST NOT when the advisory tier stopped pinning repairs — but the **effect** survives and is what this pins: the record is unplaceable, covers no byte, and its eight bytes are outside the offset space. What `0.19` dropped is the exact range a reader reports for it. A reader that trusts the wrapped offset places it near 2³² and corrupts the extent for every other record. |
 | `handshake-at-origin` | *(accept)* The mandated shape of a recorded handshake, both directions, and the **tie** it necessarily produces: each SYN sits at `isn + 1` and the first data record of that direction starts at the same origin, so each participant has **two records at one `seq_start`**. The per-participant ordering MUST is *non-descending*, and a reader treating equal `seq_start` as out-of-order rejects this file — and with it every conformant capture whose handshake was observed. No vector in the suite carried a tie before `0.18`, so that reader passed the whole suite and failed on real traffic. Also the only file exercising the responder's SYN-ACK as its own zero-length `syn` record with an `ack`. |
 
+### Added in `0.21`
+
+The two vectors no suite had: a transport stream past 2 GiB, and one whose
+sequence numbers pass through 2³². `0.20` measured every record against the
+origin under serial arithmetic and conceded that the floor was undecidable past
+2³¹ — which made every record more than 2 GiB into a stream *below the origin*.
+Since `0.21` **offsets unwrap along stored order**: a record's offset is its
+predecessor's plus the signed serial delta of their `seq_start`s, the origin
+being the first record's predecessor, and an unplaceable record anchors nothing
+(#146). No extent under 2 GiB moves. The third vector is the one shape the walk
+cannot place, and what a producer does instead (#147).
+
+The other four are the **`adjacency` body field** (#80, #106), the first change
+to a block body since `0.15`: a Participant Descriptor's reserved u16 became
+`adjacency: u8` plus a reserved u8, numbered so that every existing file's `0`
+means what it always meant — `contiguous`, stored neighbours join. `units`
+declares a **unit sequence**: the offset space unchanged, no join asserted
+anywhere, so a reordering stage owes no block per seam and a decomposing decoder
+owes none between a parent and the field carved out of it. It is a body field
+for the reason `output_layer` is — as an option it would not have been safe to
+skip — and it is the third load-bearing enum. **Every participant `.jsonl` line
+now carries `adjacency`**, since body fields always project; no `.zpf` byte
+changed.
+
+| Vector | What it carries |
+|--------|-----------------|
+| `stream-past-2gib` | *(accept)* Four eight-byte records at offsets 0, 1 GiB, 2 GiB and 3 GiB from `isn 1000`, every neighbour one serial step of 2³⁰ from the last; extent `3221225480`. The third record is 2³¹ past the origin, which serial arithmetic cannot tell from 2³¹ before it — so a reader measuring against the origin reports two unplaceable records and `1073741832`, the reading this vector exists to fail. |
+| `stream-wraps-seq` | *(accept)* `isn = 2³² − 5`, the first record at the origin `2³² − 4` with eight bytes, the second at `seq_start 4`; extent 16. The **commoner** shape — a stream wraps with probability `length / 2³²` per random `isn` — and until `0.21` the suite's own extent arithmetic got it wrong: plain `seq_start − (isn + 1)` gave the second record a negative range and an extent of 8. A reader subtracting without the modulus fails here; one taking the delta unsigned places the second record at `4294967304`. |
+| `session-split-capture-gap` | *(accept)* The one shape the walk cannot place: a hole of 2³¹ bytes or more between consecutive records, whose far side serial arithmetic reads as *before* the near side. The exit the format offers, and `0.21` names: session 7 ends at the hole with `reason = capture-gap`, session 8 opens on the **same key** with no `isn`, and the resumed stream starts at its first captured byte. Extents 8 and 8; no stream spans the hole. A repeated `flow_key` is not a duplicate id, and the ordering rule binds within a `(session_id, participant_id)` (#147). |
+| `unit-sequence-reversed` | *(accept)* #80's shape: a stage that **reverses** four decoded records and declares the participant `units` instead of emitting three Discontinuities. Spans run downward at every step; offsets are unchanged at `[0,40)` … `[120,160)`, extent 160. A reader that raises the reordering predicate here, or splices any two records, has ignored a body field. `reordered-decoded` keeps the per-seam form for a stream that mostly joins. |
+| `unit-sequence-nested` | *(accept)* #106's shape: a DNS header emitted whole, then its flags word, then three sub-fields of the flags word — input bytes `[2,4)` at five different output offsets, spans overlapping **by containment**, extent 17. Adjacency was never a claim about continuity here, and before `0.21` such a file was untested rather than conformant (the seam predicate declines every `A ≥ B` pair). Now it says what it is. `kober`'s DNS output in miniature. |
+| `isolate-unknown-adjacency` | *(isolate)* An `adjacency` value this version does not define — the load-bearing twin of `isolate-unknown-output-layer`: the value decides whether any two of the participant's records may be spliced, so a reader cannot say what a single pair asserts. MUST NOT guess, and MUST NOT fall back to `contiguous`. |
+| `advisory-transport-adjacency` | *(accept, **advisory**)* `units` on a **transport-layer** participant, where offsets come from sequence numbers and the field says nothing. A writer MUST NOT set it there; a reader ignores it, reports it, and accepts — the treatment a transport-layer label gets, and for the same reason. Not the isolate shape of `isolate-discontinuity-in-raw`: that block contradicts the offsets, this field is inert. Extent 16. |
+
 ## Multi-file fixtures
 
 Four directories are **fixtures** rather than vectors: several files that only
@@ -299,7 +333,9 @@ mean anything together, because what they test is a relationship *between*
 files. `check.py` walks each member exactly as it walks a single-file vector —
 framing, projection, the lot — and adds arithmetic specific to `chain/`,
 `tunnel/` and `merge/` on top: one function each, sharing the digest check, the
-`seq_start − (isn + 1)` extent arithmetic and the coverage union.
+unwrapping extent arithmetic (signed serial delta from the last placeable record,
+the origin `isn + 1` first — `stream-wraps-seq` is what keeps it honest) and the
+coverage union.
 
 ### The splice fixture
 

@@ -1,5 +1,5 @@
 {
-  "format": "zipline-payload/0.20",
+  "format": "zipline-payload/0.21",
   "vectors": [
     {
       "name": "raw-minimal",
@@ -645,7 +645,7 @@
         "0x0091",
         "0x00D1"
       ],
-      "summary": "A stage that reorders a participant's decoded records without decoding them. It is a decode stage -- stored order defines the offsets, so reordering changes them -- and its spans run DOWNWARD against stored order. A reader that assumes spans ascend fails here. The declared Decoder is INHERITED (http/1.1, the layer's), so its params_digest describes a stage further up the chain; this stage's own config lives in the File Header transform_params_digest. Since 0.15 the seam between the two records carries a Discontinuity: the stage withholds nothing, but stored neighbours assert that they join and these two never did. No width -- what lies between two records that were never adjacent is not a hole to count, so the output offsets are unchanged at [0,50) and [50,150).",
+      "summary": "A stage that reorders a participant's decoded records without decoding them. It is a decode stage -- stored order defines the offsets, so reordering changes them -- and its spans run DOWNWARD against stored order. A reader that assumes spans ascend fails here. The declared Decoder is INHERITED (http/1.1, the layer's), so its params_digest describes a stage further up the chain; this stage's own config lives in the File Header transform_params_digest. Since 0.15 the seam between the two records carries a Discontinuity: the stage withholds nothing, but stored neighbours assert that they join and these two never did. No width -- what lies between two records that were never adjacent is not a hole to count, so the output offsets are unchanged at [0,50) and [50,150). Since 0.21 a reordering stage has a second form -- declare the participant a unit sequence with adjacency = units and emit no block at all (unit-sequence-reversed) -- and this vector keeps the first: one seam in a stream that otherwise joins is what the per-seam block is for.",
       "spec_section": "Layers -- filtering and reordering a decoded stream",
       "expect": "Accept. The .jsonl file is the expected projection.",
       "has_jsonl": true,
@@ -1041,7 +1041,7 @@
       ],
       "summary": "The COMMONER unplaceable shape, on its own: a record with no seq_start on a stream whose earlier record has one, so the offset space cannot say where it belongs. 0.17 stated a placement rule for a below-origin record and left this shape silent; 0.18 stated one rule for both and pinned this half inside partially-hinted-sequenced, which 0.19 removed with the sequencing basis. The shape has nothing to do with SEQUENCED -- placement keys on whether a stream is sequence-anchored, not on the flag -- so it is carried here by an ordinary session, which is where it always belonged. Its twin is unplaceable-below-origin, the other shape of one rule.",
       "spec_section": "Referencing the source by stream offset",
-      "expect": "Accept. The .jsonl file is the expected projection, and the declared extents are 6 for pid 0 and 5 for pid 1. pid 0's first record is at [0,6) and its second carries no seq_start on a stream whose first record has one, so it is UNPLACEABLE -- it covers no byte of the stream and contributes nothing, so the extent stays 6 and those six bytes are in no offset at all. A reader that appended them at [6,12) is reading an offset the file does not state. Which range a reader reports for the record is not pinned; two readers may differ there while both give extent 6. A reader SHOULD report the record, and the suite does not test that it does -- the file breaks no rule, so silence is conformant, exactly as for unplaceable-below-origin, the other shape of the same sentence. pid 1 is NOT this rule's case: no record of that participant carries a seq_start, so its stream is not sequence-anchored to begin with, and its extent is the accumulation of its payloads.",
+      "expect": "Accept. The .jsonl file is the expected projection, and the declared extents are 6 for pid 0 and 5 for pid 1. pid 0's first record is at [0,6) and its second carries no seq_start on a stream whose first record has one, so it is UNPLACEABLE -- it covers no byte of the stream and contributes nothing, so the extent stays 6 and those six bytes are in no offset at all. A reader that appended them at [6,12) is reading an offset the file does not state. Which range a reader reports for the record is not pinned; two readers may differ there while both give extent 6. A reader SHOULD report the record, and the suite does not test that it does -- the file breaks no rule, so silence is conformant, exactly as for unplaceable-below-origin, the other shape of the same sentence. pid 1 is NOT this rule's case: no record of that participant carries a seq_start, so its stream is not sequence-anchored to begin with, and its extent is the accumulation of its payloads. Since 0.21 the floor is stated against a record's PREDECESSOR rather than the origin, and applies whether or not the participant carries an isn: pid 0 has none, its origin is its first captured byte, and a reader that applied no floor for want of an isn would place the second record somewhere and report more than 6.",
       "has_jsonl": true,
       "extents": [
         {
@@ -1102,7 +1102,7 @@
       "options": [
         "0x0020"
       ],
-      "summary": "version_minor is 21 while major is 0. In the 0.x regime the pair (0, minor) is the compatibility identity, so a 0.20 reader MUST reject it.",
+      "summary": "version_minor is 22 while major is 0. In the 0.x regime the pair (0, minor) is the compatibility identity, so a 0.21 reader MUST reject it.",
       "spec_section": "File Header -- version numbering",
       "expect": "Reject the file. This is the vector that distinguishes a 0.x-aware reader from one that assumes minors are always skippable.",
       "has_jsonl": false
@@ -1581,9 +1581,263 @@
         "0x0063",
         "0x0070"
       ],
-      "summary": "A below-origin record CARRYING PAYLOAD: seq_start 1000 on a stream whose origin is isn + 1 = 1001. Since 0.19 that is not a violation -- the floor stopped being a MUST NOT when the advisory tier stopped pinning repairs -- but the EFFECT survives and is what this vector pins: the record is UNPLACEABLE, so it covers no byte of the stream and its eight bytes are outside the offset space, excluded from the extent and from every coverage answer. What 0.19 dropped is the exact range a reader reports for it; two readers may differ there and still agree on every extent. A reader that trusts the wrapped offset places it near 2**32 and corrupts the extent for every other record, which is the reading this vector exists to fail.",
+      "summary": "A below-origin record CARRYING PAYLOAD: seq_start 1000 on a stream whose origin is isn + 1 = 1001. Since 0.19 that is not a violation -- the floor stopped being a MUST NOT when the advisory tier stopped pinning repairs -- but the EFFECT survives and is what this vector pins: the record is UNPLACEABLE, so it covers no byte of the stream and its eight bytes are outside the offset space, excluded from the extent and from every coverage answer. What 0.19 dropped is the exact range a reader reports for it; two readers may differ there and still agree on every extent. A reader that trusts the wrapped offset places it near 2**32 and corrupts the extent for every other record, which is the reading this vector exists to fail. Since 0.21 the floor binds each record to its PREDECESSOR, the origin being the first record's, and this is the first-record case of that rule. An unplaceable record anchors nothing: the second record measures from the origin, not from seq_start 1000, so it sits at 0 and the extent is 16 -- a reader that let the first record anchor would put it at 1 and report 17.",
       "spec_section": "Referencing the source by stream offset -- unplaceable records",
       "expect": "Accept. The .jsonl file is the expected projection, and the declared extent is 16. The first record is unplaceable: it contributes nothing to the extent and covers no byte, so the participant's stream is [0,16) -- the two later records -- and the eight bytes of the first are in no offset at all. Which range a reader reports for it is not pinned; that it counts for nothing is. It is NOT deleted: a reader still lists it, still reports its timestamp and payload, and a consumer indexing by anything but offset still sees it. A reader SHOULD report the record, and the suite does not test that it does -- the file breaks no rule, so silence is conformant and a harness asserting a clean accept is right to. Two wrong readings diverge visibly here, where the record carries payload, and would not on a zero-length one: one places the record at 4294967295 and reports extent 4294967303, the other drops it and reports two records where the file has three. Rejecting or isolating is NOT conformant.",
+      "has_jsonl": true,
+      "extents": [
+        {
+          "session_id": 7,
+          "pid": 0,
+          "extent": 16
+        }
+      ]
+    },
+    {
+      "name": "stream-past-2gib",
+      "tier": "accept",
+      "violations": 0,
+      "bytes": 352,
+      "blocks": [
+        "0x01",
+        "0x02",
+        "0x10",
+        "0x11",
+        "0x20",
+        "0x41"
+      ],
+      "options": [
+        "0x0020",
+        "0x0050",
+        "0x0060",
+        "0x0061",
+        "0x0063",
+        "0x0070"
+      ],
+      "summary": "A transport stream that passes 2 GiB in one direction: isn 1000, four eight-byte records at offsets 0, 1 GiB, 2 GiB and 3 GiB, every neighbour one serial step of 2**30 from the last. Under 0.20 the third record was BELOW THE ORIGIN: its seq_start is 2**31 past isn + 1, which serial arithmetic cannot tell from 2**31 before it, and the document said so and drew the wrong conclusion. Since 0.21 offsets unwrap along stored order -- each record is its predecessor's offset plus the signed serial delta of their seq_starts, the origin being the first record's predecessor -- so the third record sits at 2**31 and the fourth at 3 * 2**30. The declared extent is 3221225480. A reader that applies the floor against the origin for every record reports two unplaceable records and an extent of 1073741832, which is the reading this vector exists to fail; a reader that trusts the wrapped offset reports 1073741832 as well, for the third record, and something near 2**32 for the fourth.",
+      "spec_section": "Referencing the source by stream offset -- offsets unwrap along stored order",
+      "expect": "Accept. The .jsonl file is the expected projection, and the declared extent is 3221225480: four placeable records at 0, 2**30, 2**31 and 3 * 2**30, the last eight bytes long. No record is unplaceable. A reader that measures each record against the origin under serial arithmetic finds the third and fourth below it and reports an extent of 1073741832; that reading was the document's own until 0.21 and is wrong now. Rejecting or isolating is NOT conformant: every neighbour is within a window's serial distance of the last, so the ordering rule holds throughout.",
+      "has_jsonl": true,
+      "extents": [
+        {
+          "session_id": 7,
+          "pid": 0,
+          "extent": 3221225480
+        }
+      ]
+    },
+    {
+      "name": "stream-wraps-seq",
+      "tier": "accept",
+      "violations": 0,
+      "bytes": 248,
+      "blocks": [
+        "0x01",
+        "0x02",
+        "0x10",
+        "0x11",
+        "0x20",
+        "0x41"
+      ],
+      "options": [
+        "0x0020",
+        "0x0050",
+        "0x0060",
+        "0x0061",
+        "0x0063",
+        "0x0070"
+      ],
+      "summary": "A transport stream whose sequence numbers pass through 2**32: isn is 2**32 - 5, so the origin is 2**32 - 4; the first record starts there with eight bytes and ends, on the wire, at 4; the second starts at 4. The signed serial delta between the two seq_starts is 8, so the second record sits at offset 8 and the extent is 16. This is the COMMONER of the two unwrapping shapes -- any stream wraps with probability length / 2**32 per random isn, so a 2 GiB stream does so one time in two -- and until 0.21 no vector had it and the suite's own extent arithmetic got it wrong: plain seq_start - (isn + 1) gives the second record a range starting at -4294967288 and an extent of 8. A reader that subtracts without the modulus fails here; one that takes the delta unsigned places the second record at 4294967304.",
+      "spec_section": "Referencing the source by stream offset -- offsets unwrap along stored order",
+      "expect": "Accept. The .jsonl file is the expected projection, and the declared extent is 16: the first record at [0,8), the second at [8,16), because the serial delta from seq_start 4294967292 to seq_start 4 is +8. No record is unplaceable. A reader that computes seq_start - (isn + 1) as plain integers places the second record below zero; one that reduces the difference mod 2**32 without treating it as signed places it at 4294967304 and reports an extent of 4294967312. Rejecting or isolating is NOT conformant: under serial-number order seq_start 4 follows 4294967292, which is what the ordering rule means by order.",
+      "has_jsonl": true,
+      "extents": [
+        {
+          "session_id": 7,
+          "pid": 0,
+          "extent": 16
+        }
+      ]
+    },
+    {
+      "name": "session-split-capture-gap",
+      "tier": "accept",
+      "violations": 0,
+      "bytes": 456,
+      "blocks": [
+        "0x01",
+        "0x02",
+        "0x10",
+        "0x11",
+        "0x12",
+        "0x20",
+        "0x41"
+      ],
+      "options": [
+        "0x0020",
+        "0x0050",
+        "0x0051",
+        "0x0060",
+        "0x0061",
+        "0x0063",
+        "0x0070",
+        "0x00C0"
+      ],
+      "summary": "A hole of 2**31 bytes or more between two consecutive records of one participant, which is the one shape the unwrapping rule cannot place: the far side is 2**31 + 8 past the near side, which serial arithmetic reads as 2**31 - 8 BEFORE it, and the ordering rule refuses the pair. The producer knew the hole was real -- it had a clock the sequence number is not -- and this is what the format offers: end session 7 at the hole with reason capture-gap, open session 8 on the same key with no isn, and carry on from the first captured byte. Two sessions where the wire had one conversation, and the reason word plus the repeated key are what say so. Session 7's extent is 8, session 8's is 8; no offset spans the hole because no stream does. A reader that treats the repeated flow_key as a duplicate, or the second session's first record as out of order against the first session's, has misread the split: ids belong to sessions, and the ordering rule is per (session_id, participant_id).",
+      "spec_section": "Referencing the source by stream offset -- the unmeasurable hole",
+      "expect": "Accept. The .jsonl file is the expected projection, and the declared extents are 8 for session 7 and 8 for session 8. Session 7's one record is at [0,8) from its isn; session 8 has no isn, so its one record is at [0,8) from its own first captured byte, whatever its seq_start says about the other session's stream. The two sessions are one wire conversation, which is what reason = capture-gap on session 7 states; a reader is not required to join them and nothing in the file lets it. Rejecting or isolating is NOT conformant: a repeated flow_key is not a duplicate id, and the ordering rule binds within a (session_id, participant_id), so session 8's seq_start is compared with nothing in session 7.",
+      "has_jsonl": true,
+      "extents": [
+        {
+          "session_id": 7,
+          "pid": 0,
+          "extent": 8
+        },
+        {
+          "session_id": 8,
+          "pid": 0,
+          "extent": 8
+        }
+      ]
+    },
+    {
+      "name": "unit-sequence-reversed",
+      "tier": "accept",
+      "violations": 0,
+      "bytes": 728,
+      "blocks": [
+        "0x01",
+        "0x02",
+        "0x03",
+        "0x10",
+        "0x11",
+        "0x12",
+        "0x20",
+        "0x41"
+      ],
+      "options": [
+        "0x0012",
+        "0x0013",
+        "0x0015",
+        "0x0020",
+        "0x0021",
+        "0x0041",
+        "0x0042",
+        "0x0050",
+        "0x0060",
+        "0x0080",
+        "0x0090",
+        "0x00C1"
+      ],
+      "summary": "#80's shape: a stage that REVERSES a participant's four decoded records, and declares the participant a unit sequence instead of emitting a Discontinuity at each of its three seams. Input pid 1 held A = [0,40), B = [40,80), C = [80,120), D = [120,160); the output stores D, C, B, A, so the spans run downward at every step and no two stored neighbours were ever neighbours on the wire. Under the per-seam form that is N-1 blocks saying the same thing; adjacency = units says it once, for the participant, and is the truer statement -- the stream's contiguity claim is void as a whole, not at three points. The offset space is UNCHANGED: D at [0,40), C at [40,80), B at [80,120), A at [120,160), extent 160, every record addressable and citable. What changed is what adjacency asserts, which is nothing. A reader that applies the reordering predicate regardless of the field, or splices any two of these records, has ignored a body field. Like reordered-decoded it is a decode stage with an inherited decoder and its own config in transform_params_digest; unlike it, no block.",
+      "spec_section": "Participant Descriptor -- adjacency",
+      "expect": "Accept. The .jsonl file is the expected projection, and the declared extent is 160: four 40-byte records at [0,40), [40,80), [80,120) and [120,160) in stored order, the same arithmetic as any decoded stream. The participant is a unit sequence, so a consumer MUST NOT treat any two of its records as contiguous, and the file owes no Discontinuity at any seam. A reader that raises the reordering predicate here has not read the body field; one that reports the file as missing three blocks has applied the per-seam form to a participant that took the other. Coverage is complete -- four spans, [0,160), meeting the declared extent -- and descending spans are no finding, as reordered-decoded already shows.",
+      "has_jsonl": true,
+      "extents": [
+        {
+          "session_id": 7,
+          "pid": 1,
+          "extent": 160
+        }
+      ]
+    },
+    {
+      "name": "unit-sequence-nested",
+      "tier": "accept",
+      "violations": 0,
+      "bytes": 796,
+      "blocks": [
+        "0x01",
+        "0x02",
+        "0x03",
+        "0x10",
+        "0x11",
+        "0x12",
+        "0x20",
+        "0x41"
+      ],
+      "options": [
+        "0x0012",
+        "0x0013",
+        "0x0020",
+        "0x0021",
+        "0x0041",
+        "0x0042",
+        "0x0050",
+        "0x0060",
+        "0x0080",
+        "0x0090",
+        "0x0091",
+        "0x0092",
+        "0x00C1"
+      ],
+      "summary": "#106's shape: a decoder whose units DECOMPOSE one another. A 12-byte DNS header is emitted whole, then its flags word, then three sub-fields of the flags word -- so input bytes [2,4) appear at FIVE different offsets of the output stream, and the stream is a pre-order flattening of a tree with the tree removed. The seam duty asks whether two adjacent units JOIN, and here the question does not apply: `flags.qr` is not continuous with `flags`, it is INSIDE it, and adjacency was never a claim about continuity. Before 0.21 such a file was untested rather than conformant -- the seam predicate declines every A >= B pair, and this file is built entirely out of them. Now it says what it is: adjacency = units, no block owed, the offset space still the concatenation (12 + 2 + 1 + 1 + 1 = 17) so every field is citable by a downstream stage. kober's DNS output in miniature, and the first vector in the suite whose spans overlap by containment. Coverage: the header's span covers [0,12) of the input, which is at-least-once; the sub-field spans overlap it, which is permitted.",
+      "spec_section": "Participant Descriptor -- adjacency",
+      "expect": "Accept. The .jsonl file is the expected projection, and the declared extent is 17: five records at [0,12), [12,14), [14,15), [15,16) and [16,17), the stored-order concatenation, exactly as for any decoded stream. The participant is a unit sequence, so no two of these records may be treated as contiguous -- which is right, since the third is inside the second -- and the seam predicate does not apply to it. A reader that owes this file a Discontinuity between any pair has misread the field; one that rejects the overlapping spans has misread the coverage rule, which requires at least once and forbids only spanned-and-Undecoded. Rejecting or isolating is NOT conformant.",
+      "has_jsonl": true,
+      "extents": [
+        {
+          "session_id": 31,
+          "pid": 0,
+          "extent": 17
+        }
+      ]
+    },
+    {
+      "name": "isolate-unknown-adjacency",
+      "tier": "isolate",
+      "violations": 1,
+      "bytes": 308,
+      "blocks": [
+        "0x01",
+        "0x02",
+        "0x03",
+        "0x10",
+        "0x11",
+        "0x20",
+        "0x41"
+      ],
+      "options": [
+        "0x0012",
+        "0x0013",
+        "0x0020",
+        "0x0021",
+        "0x0041",
+        "0x0042",
+        "0x0050",
+        "0x0060",
+        "0x0080",
+        "0x0090"
+      ],
+      "summary": "A Participant declaring an adjacency this version does not define. The third load-bearing enum, and the load-bearing twin of isolate-unknown-output-layer for the same reason: the value decides whether any two of this participant's records may be spliced, so a reader that does not recognise it cannot say what a single pair of them asserts. Contrast escape-unknown-enum, where an unknown tcp_role is advisory. The file is otherwise conformant -- a decoded stream with one record -- and the failure is entirely in what the reader cannot conclude.",
+      "spec_section": "Enums -- load-bearing values",
+      "expect": "MAY reject the file, or discard participant 0 of session 7 together with everything referencing it. MUST NOT guess a value, and MUST NOT fall back to contiguous -- 0 and an unrecognised value are different statements, and treating them alike would splice records the writer may have declared unjoinable. This is the same condition as an unknown Source kind or output_layer and is handled the same way.",
+      "has_jsonl": false
+    },
+    {
+      "name": "advisory-transport-adjacency",
+      "tier": "accept",
+      "violations": 1,
+      "advisory": true,
+      "bytes": 236,
+      "blocks": [
+        "0x01",
+        "0x02",
+        "0x10",
+        "0x11",
+        "0x20",
+        "0x41"
+      ],
+      "options": [
+        "0x0020",
+        "0x0050",
+        "0x0060",
+        "0x0061",
+        "0x0070"
+      ],
+      "summary": "adjacency = units on a TRANSPORT-layer participant: a capture-sourced TCP stream whose offsets come from its sequence numbers, where stored order defines nothing and the field says nothing. A writer MUST NOT set it there, and the violation is ADVISORY in the shape of a transport-layer label: the reader ignores the field, reports it, and accepts the file, because ignoring it loses nothing -- every offset is still exactly where seq_start puts it. Not the isolate shape of isolate-discontinuity-in-raw: that block contradicts the offsets, this field is merely inert. The extent is 16 by seq_start arithmetic, and a reader that changed it on account of the field has read a body field the layer told it to ignore.",
+      "spec_section": "Participant Descriptor -- adjacency on a transport-layer participant",
+      "expect": "Accept, having reported the field: adjacency = units on a transport-layer participant breaks a MUST NOT whose violation is advisory. The reader ignores the field and reads the stream as any sequence-anchored transport stream -- two records at [0,8) and [8,16), extent 16. The .jsonl file is the expected projection and carries the field as written, since a projection preserves what it does not act on. Rejecting or isolating this file is NOT conformant: the advisory strength is stated in Participant Descriptor, by reference to the treatment a transport-layer label gets.",
       "has_jsonl": true,
       "extents": [
         {
@@ -1659,7 +1913,7 @@
         "0x0080",
         "0x0090"
       ],
-      "summary": "A Decoder declaring an output_layer this version does not define. The load-bearing twin of isolate-unknown-source-kind, and the second enum of which that is true: the value decides whether this stream's offsets are hole-inclusive positions or a payload concatenation, so a reader that does not recognise it cannot compute a single record's range. Contrast escape-unknown-enum, where an unknown tcp_role is advisory and carrying the raw number forward loses nothing. Note the file is otherwise conformant -- the failure is entirely in what the reader cannot conclude.",
+      "summary": "A Decoder declaring an output_layer this version does not define. The load-bearing twin of isolate-unknown-source-kind, and the second enum of which that is true (adjacency, since 0.21, is the third -- see isolate-unknown-adjacency): the value decides whether this stream's offsets are hole-inclusive positions or a payload concatenation, so a reader that does not recognise it cannot compute a single record's range. Contrast escape-unknown-enum, where an unknown tcp_role is advisory and carrying the raw number forward loses nothing. Note the file is otherwise conformant -- the failure is entirely in what the reader cannot conclude.",
       "spec_section": "Enums -- load-bearing values",
       "expect": "MAY reject the file, or discard the streams whose records reference decoder 1. MUST NOT guess a layer, and MUST NOT fall back to the absent-means-decoded default -- absence and an unrecognised value are different statements, and treating them alike would read a transport stream's offsets as a payload concatenation. This is the same condition as an unknown Source kind and is handled the same way.",
       "has_jsonl": false

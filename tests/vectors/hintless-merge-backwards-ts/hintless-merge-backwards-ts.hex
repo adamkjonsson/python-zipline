@@ -8,7 +8,7 @@
 0004  10 00 00 00              length = 16
 0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
 000C  00 00                    version_major = 0
-000E  14 00                    version_minor = 20
+000E  15 00                    version_minor = 21
 0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
 
 0018  02 00                    type   = 0x0002  Source Descriptor
@@ -35,7 +35,8 @@
 0050  18 00 00 00              length = 24
 0054  08 00 00 00 00 00 00 00  session_id = 8  (u64)
 005C  00 00                    participant_id = 0
-005E  00 00                    _reserved
+005E  00                       adjacency = 0  (contiguous)
+005F  00                       _reserved
 0060  60 00 05 00              option 0x0060 endpoint, len = 5
 0064  61 6C 69 63 65           "alice"
 0069  00 00 00                 value padding
@@ -45,7 +46,8 @@
 0070  14 00 00 00              length = 20
 0074  08 00 00 00 00 00 00 00  session_id = 8  (u64)
 007C  01 00                    participant_id = 1
-007E  00 00                    _reserved
+007E  00                       adjacency = 0  (contiguous)
+007F  00                       _reserved
 0080  60 00 03 00              option 0x0060 endpoint, len = 3
 0084  62 6F 62                 "bob"
 0087  00                       value padding

@@ -1,0 +1,12 @@
+{"type":"file","format":"zipline-payload/0.21","tick_hz":1000000,"produced_by":"zpf-dnsfields 0.1","produced_at":1719810000}
+{"type":"source","source_id":1,"kind":"zpf-input","uri":"frames.zpf","digest":"sha256:6a1c"}
+{"type":"decoder","decoder_id":1,"output_layer":"decoded","name":"dns-fields","version":"0.1"}
+{"type":"session","session_id":31,"proto":"dns"}
+{"type":"participant","session_id":31,"pid":0,"adjacency":"units","endpoint":["10.0.0.1:53000"]}
+{"type":"record","session_id":31,"sender_pid":0,"source_id":1,"ts":1000,"payload":"EjSBgAABAAEAAAAA","decoder_id":1,"spans":[{"source_id":1,"session_id":30,"pid":0,"off_start":0,"off_end":12}],"content_type":"prim:bytes","role":"header"}
+{"type":"record","session_id":31,"sender_pid":0,"source_id":1,"ts":1000,"payload":"gIE=","decoder_id":1,"spans":[{"source_id":1,"session_id":30,"pid":0,"off_start":2,"off_end":4}],"content_type":"prim:u16","role":"flags"}
+{"type":"record","session_id":31,"sender_pid":0,"source_id":1,"ts":1000,"payload":"AQ==","decoder_id":1,"spans":[{"source_id":1,"session_id":30,"pid":0,"off_start":2,"off_end":3}],"content_type":"prim:u8","role":"flags.qr"}
+{"type":"record","session_id":31,"sender_pid":0,"source_id":1,"ts":1000,"payload":"AA==","decoder_id":1,"spans":[{"source_id":1,"session_id":30,"pid":0,"off_start":2,"off_end":3}],"content_type":"prim:u8","role":"flags.opcode"}
+{"type":"record","session_id":31,"sender_pid":0,"source_id":1,"ts":1000,"payload":"AA==","decoder_id":1,"spans":[{"source_id":1,"session_id":30,"pid":0,"off_start":3,"off_end":4}],"content_type":"prim:u8","role":"flags.rcode"}
+{"type":"session_end","session_id":31,"input_extents":[{"source_id":1,"session_id":30,"pid":0,"extent":12}]}
+{"type":"end"}

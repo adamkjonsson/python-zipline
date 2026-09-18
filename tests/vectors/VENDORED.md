@@ -7,14 +7,14 @@ specification repository. They are not ours to edit.
 |---|---|
 | Source | <https://github.com/adamkjonsson/zipline> |
 | Path | `vectors/` |
-| Tag | `v0.20` |
-| Commit | `55d49936fd6c90142cdca380c8a5205d2a3d82e6` |
-| Vendored | 2026-09-14 |
+| Tag | `v0.21` |
+| Commit | `4964deed795bb8b60b2596d1bb3ae7281414ff0e` |
+| Vendored | 2026-09-18 |
 
 ## What was and was not copied
 
-Copied: `manifest.json`, `README.md`, and all 55 vector directories — verified
-byte-identical to the tag with `diff -r`. 55 entries expand to 63 files, because
+Copied: `manifest.json`, `README.md`, and all 62 vector directories — verified
+byte-identical to the tag with `diff -r`. 62 entries expand to 70 files, because
 `chain` and `merge` ship three each, `splice` two and `tunnel` four.
 
 **Not** copied: `build.py` and `check.py`. Those are the upstream *generator* and
@@ -36,8 +36,9 @@ to run.
 declares **1** violation rather than 0. It is a key rather than a fourth tier
 because a tier names what a *reader does*, and a reader accepts these files
 completely. Our harness needs a path for it that neither `accept` nor `isolate`
-provides. There are two at `0.20`: `advisory-transport-content-type` and
-`advisory-transport-role`, one per label the transport-layer bar names.
+provides. There are three at `0.21`: `advisory-transport-content-type` and
+`advisory-transport-role`, one per label the transport-layer bar names, and
+`advisory-transport-adjacency`, for the body field that bar was extended to.
 
 `0.20` adds **`extents`** on every single-file `accept` entry: a list of
 `{session_id, pid, extent}` per participant stream, in the `input_extents`
@@ -47,7 +48,16 @@ computes the wrong offset in silence — which is what this library did to
 `unplaceable-below-origin` at the `0.19` re-vendor, and reported as
 [zipline#140](https://github.com/adamkjonsson/zipline/issues/140). The harness
 reads the key directly (`test_an_accept_vector_puts_its_bytes_where_it_says`),
-so the hand-transcribed table it replaced is gone. 31 entries, 37 streams.
+so the hand-transcribed table it replaced is gone. 37 entries, 44 streams at
+`0.21`.
+
+`0.21` changes no manifest key, but **every participant `.jsonl` line gains
+`"adjacency"`** — a Participant Descriptor body field, and body fields always
+project — so 55 projections changed while no `.zpf` byte did beyond the version
+stamp. The seven vectors added are `stream-past-2gib`, `stream-wraps-seq` and
+`session-split-capture-gap` for the unwrapping rule and the one hole it cannot
+place; `unit-sequence-reversed`, `unit-sequence-nested`,
+`isolate-unknown-adjacency` and `advisory-transport-adjacency` for the field.
 
 The same issue's other half — a SHOULD-report on a `violations: 0` vector — got
 a README sentence rather than a key: a manifest key asserting the report would
@@ -69,7 +79,7 @@ vector that seems wrong is a question for the spec repository, not a local patch
 
 ## Known defects
 
-**None open at `v0.20`.** Defects 5 and 6 — three vectors whose `.zpf`
+**None open at `v0.21`.** Defects 5 and 6 — three vectors whose `.zpf`
 disagreed with their own `.jsonl`, found at the `0.19` re-vendor by projecting
 every file and diffing — were fixed upstream in `0.20`
 ([zipline#141](https://github.com/adamkjonsson/zipline/issues/141)), which also
@@ -81,8 +91,10 @@ implementation must be kept away from.
 Six have been found in all — two against `v0.12`, one against `v0.15`, one
 against `v0.16` and two against `v0.19` — and every one was fixed upstream;
 [`VECTOR-DEFECTS.md`](../../VECTOR-DEFECTS.md) is the closed record of them.
-The projection sweep was repeated at this re-vendor: 43 files carry both faces,
-and none disagree.
+The projection sweep was repeated at this re-vendor: 49 files carry both faces,
+and none disagree on any key this library projects. The new key was checked the
+other way, since no projection of it existed yet: the `adjacency` byte of all
+61 Participant blocks read directly against the `.jsonl` line, 0 mismatches.
 
 The third is worth knowing about while reading these files, because it is the one
 whose fix changed a vector's **bytes**: `undecoded-in-capture` shipped at `v0.15`
