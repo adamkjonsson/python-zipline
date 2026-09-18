@@ -513,14 +513,14 @@ def test_manifest_covers_the_tree() -> None:
 
 
 def test_every_case_has_a_file() -> None:
-    """The manifest expands to exactly the files `v0.20` ships.
+    """The manifest expands to exactly the files `v0.21` ships.
 
     The count is exact rather than a floor, so a half-copied re-vendoring
-    fails here instead of quietly shrinking the suite: 55 manifest entries,
+    fails here instead of quietly shrinking the suite: 62 manifest entries,
     of which ``chain`` and ``merge`` expand to three files each, ``splice``
     to two and ``tunnel`` — the largest fixture the suite has — to four.
     """
-    assert len(CASES) == 63
+    assert len(CASES) == 70
     for case in CASES:
         assert case.path.exists(), case.name
 

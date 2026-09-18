@@ -6,13 +6,17 @@ its [CHANGELOG](https://github.com/adamkjonsson/zipline/blob/v0.21/CHANGELOG.md)
 and the 62 vectors at tag `v0.21` (commit `4964dee`, cut 2026-09-18). We ship
 `0.4.0` (2026-09-17) on `0.20`; this is a one-release jump.
 
-> **Status, 2026-09-18: Phase 0 done**, on branch `spec-0.21-plan`. The tree
-> is byte-identical to the tag; the projection sweep found no new defect (49
-> two-faced files, 0 disagreements on projected keys; the `adjacency` byte of
-> all 61 Participant blocks checked against the `.jsonl` directly, 0
-> mismatches). The suite is red at the gate — 343 failures, every one
-> "reads 20" or the 63→70 count — which is the state Phase 1 clears.
-> Every number below comes from the scratch run, not from the changelog.
+> **Status, 2026-09-18: Phases 0–1 done.** Phase 0 is on `main` (PR #73):
+> the tree is byte-identical to the tag; the projection sweep found no new
+> defect (49 two-faced files, 0 disagreements on projected keys; the
+> `adjacency` byte of all 61 Participant blocks checked against the `.jsonl`
+> directly, 0 mismatches). Phase 1 is on branch `spec-0.21-port`: gate at
+> `(0, 21)`, `0.5.0.dev0`, every literal moved; the golden test needed
+> nothing, asserting through `SPEC_VERSION` since `0.20`. Suite: 931 passed,
+> 40 failed, 7 xfailed — the 40 are 39 `test_accept` projection diffs on the
+> participant line and `stream-past-2gib`'s extent, exactly the red Phase 1
+> predicts. Every number below comes from the scratch run, not from the
+> changelog.
 
 ---
 
@@ -98,11 +102,15 @@ measured against the manifest's `extents`. Result:
 - **`adjacency = units` is lost on re-encode.** `Participant._encode` packs
   the reserved half-word as `0`, so `dataclasses.replace(p).to_bytes()` on
   `unit-sequence-reversed`'s participant differs from the original at byte 10
-  (`01` → `00`). `test_a_vector_survives_a_canonical_re_encode` would fail on
-  both `unit-sequence-*` files — and a pass-through built on this library
-  would silently turn a unit sequence into a stream that splices, which is
-  the exact failure the field was put in the body to prevent. **This is the
-  item with teeth.**
+  (`01` → `00`). A pass-through built on this library would silently turn
+  a unit sequence into a stream that splices, which is the exact failure the
+  field was put in the body to prevent. **This is the item with teeth** — and,
+  Phase 1 found, the one the harness is *blind* to until Phase 2: the
+  re-encode, JSONL → binary and own-writer tests all compare dataclasses, and
+  a dataclass with no field for the byte compares equal on both sides. Only
+  `test_accept`'s projection half sees it (`units` projects as `contiguous`).
+  All three become sensitive the moment the field exists, which is the
+  argument for adding it before anything else.
 - **`stream-past-2gib` measures 1073741832 against a declared 3221225480** —
   the reading the vector's summary names as wrong. `_offset_of` in
   `reassembly.py` tests every record against the origin, so records 3 and 4
