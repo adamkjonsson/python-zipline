@@ -825,6 +825,62 @@ def test_a_stream_resolving_to_an_undefined_layer_is_isolated():
     )
 
 
+def test_a_participant_declaring_an_undefined_adjacency_is_isolated():
+    """``isolate-unknown-adjacency``: the third load-bearing enum.
+
+    The value decides whether any two of the participant's records may be
+    spliced, so a reader that does not recognise it cannot say what a single
+    pair asserts. It MUST NOT guess and MUST NOT fall back to ``contiguous``
+    — ``0`` and an unrecognised value are different statements. Decidable
+    at the block, unlike ``output_layer``, so it is ruled there: isolating
+    the block discards the participant with everything referencing it.
+    """
+    reject(
+        DERIVED_HEADER, INP, DEC, SESS,
+        zpf.Participant(session_id=5, participant_id=0, adjacency=2),
+        match="adjacency 2, which this version does not define",
+    )
+    # ...and its records then reference an undeclared participant, which is
+    # the cascade the specification names.
+    reject(
+        DERIVED_HEADER, INP, DEC, SESS,
+        zpf.Participant(session_id=5, participant_id=0, adjacency=2),
+        raw_record(source_id=2, decoder_id=3, spans=(IDENTITY,)),
+        match="does not define",
+    )
+
+
+UNITS = zpf.Participant(session_id=5, participant_id=0, adjacency=zpf.Adjacency.UNITS)
+
+
+def test_units_on_a_transport_participant_is_advisory():
+    """``advisory-transport-adjacency``: the field is inert there, so it is ignored.
+
+    A transport stream's offsets come from its sequence numbers and stored
+    order defines nothing, so ``units`` says nothing. A writer MUST NOT set
+    it; a reader gives it the transport-layer-label treatment — ignore,
+    report, accept. Once per participant, at the first record that settles
+    the layer, and not again for the second.
+    """
+    with pytest.raises(zpf.AdvisoryError, match="MUST NOT set units there"):
+        accept(HEADER, CAP, SESS, UNITS, raw_record(seq_start=1001))
+    checker = zpf.ConformanceChecker()
+    checker.check([HEADER, CAP, SESS, UNITS])
+    with pytest.raises(zpf.AdvisoryError):
+        checker.observe(raw_record(seq_start=1001, payload=b"AAAA"))
+    checker.observe(raw_record(seq_start=1005, payload=b"BBBB"))  # reported already
+    checker.finish()
+
+
+def test_units_on_a_decoded_participant_is_what_the_field_is_for():
+    """``unit-sequence-reversed``: spans descending at every seam, no block owed."""
+    finished(
+        DERIVED_HEADER, INP, DEC, SESS, UNITS,
+        _unit(_range(120, 160)), _unit(_range(80, 120), ts=1),
+        _unit(_range(40, 80), ts=2), _unit(_range(0, 40), ts=3),
+    )
+
+
 def test_two_decoders_in_one_session_are_ordinary():
     """What is NOT wrong: the rule is per participant, not per session."""
     other = zpf.Decoder(decoder_id=4, name="tls")
@@ -927,6 +983,35 @@ def test_a_bytes_class_region_between_two_units_owes_nothing():
         _unit(_range(0, 100)),
         zpf.Undecoded(source_id=2, session_id=9, participant_id=0,
                       off_start=100, off_end=139, reason="skipped"),
+        _unit(_range(139, 200), ts=1),
+    )
+
+
+def test_the_predicate_does_not_reach_a_unit_sequence():
+    """The predicate's first clause, second half: a ``units`` participant asserts no join.
+
+    No vector ships this shape — both ``unit-sequence-*`` vectors are built of
+    ``A ≥ B`` pairs the predicate declines anyway — so this is the test that
+    the exclusion does work: the same hole between the same two ascending
+    units fires on a ``contiguous`` participant and is silent on a ``units``
+    one, because there is nothing for a missing block to contradict.
+    """
+    shape = (_unit(_range(0, 100)), _hole(100, 139), _unit(_range(139, 200), ts=1))
+    reject(*DECODE_PRELUDE, *shape, match="a Discontinuity between them is required")
+    finished(DERIVED_HEADER, INP, DEC, SESS, UNITS, *shape)
+
+
+def test_a_discontinuity_in_a_unit_sequence_is_permitted():
+    """The block stays permitted there: a ``width`` is a term in the arithmetic either way.
+
+    ``filtered-decoded``'s shape on a ``units`` participant. The no-join
+    claim beside the width is redundant, and redundant is not wrong.
+    """
+    finished(
+        DERIVED_HEADER, INP, DEC, SESS, UNITS,
+        _unit(_range(0, 100)),
+        _hole(100, 139),
+        zpf.Discontinuity(session_id=5, participant_id=0, width=39),
         _unit(_range(139, 200), ts=1),
     )
 

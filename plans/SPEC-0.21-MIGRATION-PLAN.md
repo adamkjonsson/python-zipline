@@ -22,8 +22,15 @@ and the 62 vectors at tag `v0.21` (commit `4964dee`, cut 2026-09-18). We ship
 > `first_seq`), the two #70 tests inverted. One shape in the plan needed
 > restating: with no `isn`, below-the-first-byte *is* below-the-predecessor,
 > so through the reader the ordering rule isolates it first; the test drives
-> `record_ranges` directly for the placer's own answer. Suite: 989 passed,
-> 0 failed, 5 xpassed (the five accept vectors, promoted in Phase 6).
+> `record_ranges` directly for the placer's own answer. **Phase 4 done**,
+> with two departures from the text below: an unknown `adjacency` is ruled
+> at the **Participant block**, not at close, because it is decidable
+> there and a checked writer should refuse it at the point of writing;
+> and `units` on a transport participant is reported at the **first
+> record** that settles the layer, because advisory findings can only be
+> raised from `observe` — which also makes the checked writer refuse it,
+> so D4's writer-side MUST NOT is already met. Suite: 994 passed, 0
+> failed, 7 xpassed — all seven new vectors, promoted in Phase 6.
 > Every number below comes from the scratch run, not from the changelog.
 
 ---

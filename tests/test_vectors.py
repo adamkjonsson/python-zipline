@@ -260,6 +260,7 @@ _ISOLATE_REASONS: dict[str, str] = {
     "isolate-self-derived": "which is this file",
     "isolate-unbound-zpf-stream": "carries no spans",
     "isolate-unknown-output-layer": "does not define",
+    "isolate-unknown-adjacency": "does not define",
     "isolate-undeclared-session": "undeclared session",
     "isolate-unmarked-break": "a Discontinuity between them is required",
     "isolate-unmarked-drop": "a Discontinuity between them is required",

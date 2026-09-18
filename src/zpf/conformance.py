@@ -87,6 +87,7 @@ from zpf._intervals import complement
 from zpf.blocks import (
     REASON_CLASSES,
     UNDECODED_REASONS,
+    Adjacency,
     Block,
     Decoder,
     Discontinuity,
@@ -131,6 +132,13 @@ class _ParticipantState:
 
     Attributes:
         described: The Participant block, for diagnostics.
+        adjacency: What it declares its stored neighbours assert. Decides
+            whether the seam predicate applies to it at all, and — once the
+            layer is known — whether the declaration was one a transport
+            participant may carry.
+        adjacency_reported: Whether ``units`` on a transport-layer stream
+            has been reported yet; the field is per participant, so it is
+            reported once, at the first record that settles the layer.
         isn: Its declared ``isn``, which fixes the stream's origin at
             ``isn + 1``. Kept because two questions need it and neither can
             be answered from a record alone: whether a handshake record sits
@@ -165,6 +173,8 @@ class _ParticipantState:
     """
 
     described: str
+    adjacency: Adjacency | int = Adjacency.CONTIGUOUS
+    adjacency_reported: bool = False
     isn: int | None = None
     provenances: set[SourceKind | int] = field(default_factory=set)
     layers: set[OutputLayer | int] = field(default_factory=set)
@@ -593,10 +603,26 @@ class ConformanceChecker:
                 "declared twice"
             )
             raise SemanticError(msg)
+        if not isinstance(block.adjacency, Adjacency):
+            # The third load-bearing enum, and the one decidable at the
+            # block: the value says whether any two of this participant's
+            # records may be spliced, so a reader that does not recognise
+            # it cannot say what a single pair of them asserts. It MUST NOT
+            # guess, and MUST NOT fall back to contiguous -- 0 and an
+            # unrecognised value are different statements. Isolating the
+            # block discards the participant together with everything that
+            # references it, which is the treatment the specification names.
+            msg = (
+                f"{described} declares adjacency {int(block.adjacency)}, which this "
+                f"version does not define; whether any two of its records may be "
+                f"spliced cannot be decided and MUST NOT be guessed"
+            )
+            raise SemanticError(msg)
         # Registration last: a raised violation leaves the checker
         # consistent, so a lenient reader can isolate the block and go on.
         state.participants[block.participant_id] = _ParticipantState(
             described=described,
+            adjacency=block.adjacency,
             isn=block.isn,
             anchor_seq=None if block.isn is None else (block.isn + 1) % SEQ_SPACE,
         )
@@ -785,6 +811,7 @@ class ConformanceChecker:
                 raise SemanticError(msg)
             layer = declared
         self._note(_transport_label(block, layer, described))
+        self._note(_transport_adjacency(stream, layer, described))
         self._check_spans(block.spans, described=described)
         if source_kind == SourceKind.ZPF_INPUT:
             # **Every `zpf`-sourced record carries `spans`.** One sentence,
@@ -1053,11 +1080,14 @@ class ConformanceChecker:
                 f"the break is already expressible as the space no payload covers"
             )
             raise SemanticError(msg)
-        # The predicate's first clause: decoded-layer output streams only.
-        # A transport stream expresses the same break in its offsets and is
-        # forbidden the block, so a checker without this rejects a conformant
-        # sessionization stage.
-        if OutputLayer.DECODED in stream.layers:
+        # The predicate's first clause: decoded-layer output streams whose
+        # participant is not declared units. A transport stream expresses the
+        # same break in its offsets and is forbidden the block, so a checker
+        # without the layer test rejects a conformant sessionization stage;
+        # a unit sequence asserts no join anywhere, so there is nothing for a
+        # missing block to contradict, and a checker without that test
+        # rejects a conformant reordering or decomposing stage.
+        if OutputLayer.DECODED in stream.layers and stream.adjacency is not Adjacency.UNITS:
             self._breaks.extend(stream.candidates)
 
     def _require_derived_header(self, reason: str) -> None:
@@ -1068,6 +1098,48 @@ class ConformanceChecker:
                 "produced_by and produced_at"
             )
             raise SemanticError(msg)
+
+
+def _transport_adjacency(
+    stream: _ParticipantState, layer: OutputLayer | int, described: str
+) -> str | None:
+    """Return the advisory finding for ``units`` on a transport-layer participant.
+
+    On a transport-layer participant ``adjacency`` says nothing: the
+    stream's offsets come from its sequence numbers, and stored order
+    defines nothing there. A writer **MUST NOT** set ``units`` on one, and a
+    reader that finds it gives it the treatment a transport-layer
+    :func:`label <_transport_label>` gets — ignores the field, reports it,
+    and accepts the file — for the same reason: ignoring it loses nothing,
+    every offset being exactly where ``seq_start`` puts it. Not the isolate
+    shape of a Discontinuity in a transport stream, which contradicts the
+    offsets; this field is merely inert.
+
+    The field is per participant and the layer is per stream, so this fires
+    once, at the first record that settles the layer, rather than once per
+    record as the label check does.
+
+    Args:
+        stream: The participant's state, carrying its declared adjacency.
+        layer: The layer the record resolves to, already resolved.
+        described: The record, for the message.
+
+    Returns:
+        The finding, or ``None`` where there is nothing to report.
+
+    """
+    if layer is not OutputLayer.TRANSPORT or stream.adjacency is not Adjacency.UNITS:
+        return None
+    if stream.adjacency_reported:
+        return None
+    stream.adjacency_reported = True
+    return (
+        f"{stream.described} declares adjacency = units, but {described} resolves it "
+        f"to the transport layer, where offsets come from sequence numbers and "
+        f"stored order defines nothing; a writer MUST NOT set units there. The "
+        f"field is ignored and the stream is read as any sequence-anchored "
+        f"transport stream"
+    )
 
 
 def _transport_label(
