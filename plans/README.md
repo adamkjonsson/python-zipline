@@ -43,6 +43,7 @@ the test suite.
 
 | Document | What it is |
 | --- | --- |
+| [`V0.6.0-RELEASE-PLAN.md`](V0.6.0-RELEASE-PLAN.md) | The three issues on the `0.6.0` milestone (#75, #76, #77), and why they are two releases: #77 as a `0.5.1` patch, then `0.6.0` as the fan-out stage plus the `0.22` port — if `0.22` is cut. **Live.** |
 | [`V0.3.0-RELEASE-PLAN.md`](V0.3.0-RELEASE-PLAN.md) | The `0.16` → `0.19` port and the four issues open at `0.2.0` (#58, #59, #62, #63), including the API break that makes `0.3.0` a minor. Shipped in `0.3.0` on 2026-09-06; historical. |
 | [`SIMPLIFICATION-IMPACT.md`](SIMPLIFICATION-IMPACT.md) | What the spec repository's simplification analysis would remove from this library, and what it would cost. `0.19` answered it by taking the three packages it supports; historical, and its header says what it missed. |
 | [`V0.2.0-ISSUES-PLAN.md`](V0.2.0-ISSUES-PLAN.md) | The four issues on the `v0.2.0` milestone (#47, #48, #49, #50). Shipped in `0.2.0`; historical. |
