@@ -1145,3 +1145,73 @@ def test_role_survives_the_jsonl_round_trip():
     obj = json.loads(zpf.dumps_block(record))
     assert obj["role"] == "checksum"
     assert zpf.loads_block(json.dumps(obj)) == record
+
+
+# --- the decoder's run configuration --------------------------------------------------
+
+
+def test_params_digest_lands_on_the_stage_decoder():
+    """#77: a stage built from a name can state what configuration produced it."""
+    sink = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw_file()),
+        sink,
+        decoder=("tunnel", "1"),
+        produced_by="t 1.0",
+        produced_at=1,
+        params_digest="sha256:2f60",
+    ) as dec:
+        stream = dec.streams()[0]
+        dec.record(stream, REQUEST, ts=1, cites=(0, len(REQUEST)))
+
+    with zpf.open(io.BytesIO(sink.getvalue())) as out:
+        (decoder,) = out.decoders.values()
+        assert (decoder.name, decoder.version) == ("tunnel", "1")
+        assert decoder.params_digest == "sha256:2f60"
+
+
+def test_params_digest_reaches_a_bare_name_and_a_transport_stage():
+    """The other two shapes: no version, and a sessionization stage's policy."""
+    sink = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw_file()),
+        sink,
+        decoder="tcp-reassembly",
+        produced_by="t 1.0",
+        produced_at=1,
+        output_layer=zpf.OutputLayer.TRANSPORT,
+        params_digest="sha256:favor-old",
+    ) as dec:
+        dec.record(dec.streams()[0], REQUEST, ts=1, cites=(0, len(REQUEST)))
+
+    with zpf.open(io.BytesIO(sink.getvalue())) as out:
+        (decoder,) = out.decoders.values()
+        assert decoder.output_layer == zpf.OutputLayer.TRANSPORT
+        assert decoder.params_digest == "sha256:favor-old"
+
+
+def test_params_digest_is_refused_with_an_already_declared_handle():
+    """A handle's descriptor is written; a digest for it would be dropped."""
+    other = io.BytesIO()
+    with zpf.create(other, tick_hz=1_000_000, produced_by="t 1.0", produced_at=1) as writer:
+        handle = writer.add_decoder("http/1.1")
+
+    with pytest.raises(ValueError, match="already-declared DecoderHandle"):
+        zpf.decode_stage(
+            io.BytesIO(raw_file()),
+            io.BytesIO(),
+            decoder=handle,
+            produced_by="t 1.0",
+            produced_at=1,
+            params_digest="sha256:2f60",
+        )
+
+
+def test_params_digest_survives_the_jsonl_round_trip():
+    decoder = zpf.Decoder(
+        decoder_id=1, output_layer=zpf.OutputLayer.DECODED, name="tunnel",
+        version="1", params_digest="sha256:2f60",
+    )
+    obj = json.loads(zpf.dumps_block(decoder))
+    assert obj["params_digest"] == "sha256:2f60"
+    assert zpf.loads_block(json.dumps(obj)) == decoder
