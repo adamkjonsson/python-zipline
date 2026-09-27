@@ -40,7 +40,7 @@ from zpf.blocks import Adjacency, InputExtent, OutputLayer, Span
 from zpf.errors import SemanticError, ZpfError
 from zpf.reader import FileReader
 from zpf.reassembly import Gap
-from zpf.writer import Decoded, Hints, InputRef, create
+from zpf.writer import Decoded, DecoderHandle, Hints, InputRef, create
 
 if TYPE_CHECKING:
     import os
@@ -52,7 +52,6 @@ if TYPE_CHECKING:
     from zpf.blocks import Participant, RecordFlags
     from zpf.reassembly import Datagram, Segment, StreamView
     from zpf.writer import (
-        DecoderHandle,
         DerivedInput,
         FileWriter,
         ParticipantHandle,
@@ -662,6 +661,7 @@ def decode_stage(  # noqa: PLR0913
     produced_by: str,
     produced_at: int | datetime,
     output_layer: OutputLayer | int = OutputLayer.DECODED,
+    params_digest: str | None = None,
     proto: str | None = None,
     sequenced: bool = False,
     adjacency: Adjacency | int | None = None,
@@ -693,6 +693,17 @@ def decode_stage(  # noqa: PLR0913
             characterised by the *absence* of a ``decoder_id``, so its
             overlap policy and timeout had nowhere to be recorded. Ignored
             when ``decoder`` is a handle, which was declared already.
+        params_digest: Hash of the configuration this stage's decoder ran
+            with — the reproducibility contract the Decoder Descriptor
+            states. The same decoder at the same version decodes differently
+            under a different configuration (a cipher key, a document
+            parameter, a reassembler's overlap policy), and this is where
+            that difference is recorded. Unlike ``output_layer`` it is
+            **refused** rather than ignored alongside a
+            :class:`~zpf.DecoderHandle`: a digest names the run, so a caller
+            passing one is stating something about a descriptor this stage
+            did not write, and quietly dropping it would lose exactly the
+            fact it was passed to record.
         produced_by: Tool + version doing the decoding (required of a
             derived file).
         produced_at: Build time (required of a derived file); Unix seconds,
@@ -742,9 +753,18 @@ def decode_stage(  # noqa: PLR0913
         An open :class:`DecodeStage`, also a context manager.
 
     Raises:
+        ValueError: If ``params_digest`` is given with an already-declared
+            :class:`~zpf.DecoderHandle`.
         ZpfError: If the input has no File Header.
 
     """
+    if params_digest is not None and isinstance(decoder, DecoderHandle):
+        msg = (
+            "params_digest cannot be applied to an already-declared DecoderHandle; "
+            "pass it to add_decoder() where the descriptor is written, or give "
+            "decode_stage a decoder name instead"
+        )
+        raise ValueError(msg)
     reader, owns_reader = _open_input(source)
     try:
         header = reader.header
@@ -773,7 +793,7 @@ def decode_stage(  # noqa: PLR0913
             sequenced=sequenced,
             adjacency=adjacency,
         )
-        handle = _declare_decoder(writer, decoder, output_layer)
+        handle = _declare_decoder(writer, decoder, output_layer, params_digest)
     except BaseException:
         writer.close(end=False)
         if owns_reader:
@@ -797,13 +817,18 @@ def _declare_decoder(
     writer: FileWriter,
     decoder: str | tuple[str, str | None] | DecoderHandle,
     output_layer: OutputLayer | int,
+    params_digest: str | None,
 ) -> DecoderHandle:
     """Declare the stage's decoder from a name, a (name, version) pair, or a handle."""
     if isinstance(decoder, str):
-        return writer.add_decoder(decoder, output_layer=output_layer)
+        return writer.add_decoder(
+            decoder, output_layer=output_layer, params_digest=params_digest
+        )
     if isinstance(decoder, tuple):
         name, version = decoder
-        return writer.add_decoder(name, version=version, output_layer=output_layer)
+        return writer.add_decoder(
+            name, version=version, output_layer=output_layer, params_digest=params_digest
+        )
     return decoder
 
 

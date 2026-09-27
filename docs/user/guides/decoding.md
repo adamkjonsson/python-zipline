@@ -118,6 +118,32 @@ To keep your own {func}`zpf.create` call instead of the orchestrator, use
 {meth}`zpf.FileWriter.derive_from`, which builds the same source + participant
 scaffolding and returns it, without owning the loop.
 
+### Saying what the decoder was configured with
+
+A decoder's name and version do not always identify the run. The same decoder
+decodes differently under a different configuration — a cipher key, a document
+parameter, a reassembler's overlap policy — and the Decoder Descriptor's
+`params_digest` is where that difference is recorded. It is what
+[re-deriving a transformed region](provenance.md#following-the-chain) needs,
+so a stage that omits it can be followed but not reproduced.
+
+```python
+with zpf.decode_stage(
+    "outer.zpf", "packets.zpf",
+    decoder=("wireguard-decrypt", "1.0"),
+    produced_by="wg-decrypt 1.0", produced_at=1719700100,
+    params_digest="sha256:2f60…",    # over the spec and its parameter values
+) as dec:
+    ...
+```
+
+It applies to a decoder this stage declares — a name or a `(name, version)`
+pair. Passing it with a {class}`~zpf.DecoderHandle` raises `ValueError`: that
+descriptor was written on another writer's terms, so the digest has nowhere to
+land, and dropping it silently would lose the one fact it was passed to record.
+Declare the handle with `params_digest=` on
+{meth}`zpf.FileWriter.add_decoder` instead.
+
 ### Output order: two monologues, or the conversation
 
 The loop above walks one stream to exhaustion before starting the next, so the

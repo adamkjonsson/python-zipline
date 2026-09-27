@@ -22,6 +22,40 @@ it back from the installed distribution metadata.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-27
+
+Implements spec **v0.21** (`SPEC_VERSION == (0, 21)`), unchanged from `0.5.0`.
+A patch release: one additive keyword, no behaviour change to any existing
+call, and no change to the bytes of any file this library already wrote.
+
+### Added
+
+**`decode_stage(params_digest=…)`**
+([#77](https://github.com/adamkjonsson/python-zipline/issues/77)). A decode
+stage built through the orchestrator can now state the configuration its
+decoder ran with — the reproducibility contract the Decoder Descriptor
+carries. `FileWriter.add_decoder` has taken `params_digest` all along, but
+`decode_stage` declares the Decoder itself and gave a caller no way to pass
+one: a `DecoderHandle` is accepted as `decoder=`, and cannot be built
+beforehand, because the writer it would come from is created inside the call.
+So the documented entry point could not say what produced its output, and the
+only way round it was to declare a second Decoder through `stage.writer` and
+pass it on every record and region, leaving an unused descriptor in the file.
+
+The keyword applies to a decoder the stage declares — a name or a
+`(name, version)` pair — and is **refused with `ValueError`** alongside a
+`DecoderHandle`, whose descriptor is already written. That is deliberately
+stricter than `output_layer`, which is documented as *ignored* in the same
+position: a digest names the run, so dropping it silently would lose exactly
+the fact it was passed to record, while a layer that is already fixed on the
+descriptor loses nothing. The refusal happens before the output file is
+opened, so a rejected call leaves nothing behind.
+
+Prompted by zipline-kober `0.5.0`, whose byte transforms (decompression, and
+decryption with a caller's cipher) take document parameters such as a key: the
+same spec with a different key decodes differently, and the digest is where
+the specification puts that.
+
 ## [0.5.0] - 2026-09-18
 
 Implements spec **v0.21** (`SPEC_VERSION == (0, 21)`), up from `0.20`. Files
@@ -496,7 +530,8 @@ as "1.0" and renumbered without rewriting its bytes.
 - The streaming causal merge and `SEQUENCED` verification.
 - The merge transform, the coverage validator, and the `zpf` CLI.
 
-[Unreleased]: https://github.com/adamkjonsson/python-zipline/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/python-zipline/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/adamkjonsson/python-zipline/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/adamkjonsson/python-zipline/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/adamkjonsson/python-zipline/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/adamkjonsson/python-zipline/compare/v0.2.0...v0.3.0
