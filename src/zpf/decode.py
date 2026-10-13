@@ -392,12 +392,10 @@ class DecodeStage:
             raise SemanticError(msg)
         if ts is None:
             ts = self._derive_ts(stream, all_spans)
-        self._track(self._cited, all_spans)
         if seam is not None and stream.pid in self._emitted:
             stream.session.discontinuity(
                 stream.handle, width=seam.width, reason=seam.reason
             )
-        self._emitted.add(stream.pid)
         stream.session.record(
             stream.handle,
             ts=ts,
@@ -412,6 +410,9 @@ class DecodeStage:
             ),
             comment=comment,
         )
+        # As in `undecoded`: a refused record cites nothing.
+        self._track(self._cited, all_spans)
+        self._emitted.add(stream.pid)
 
     def _derive_ts(self, stream: DecodeStream, spans: tuple[Span, ...]) -> int:
         """Work out a record's timestamp from the input ranges it cites.
@@ -462,6 +463,7 @@ class DecodeStage:
         off_end: int,
         *,
         reason: str | None = None,
+        reason_class: str | None = None,
         decoder: DecoderHandle | None = None,
         comment: str | None = None,
     ) -> None:
@@ -471,19 +473,27 @@ class DecodeStage:
             stream: The input stream the range belongs to.
             off_start: First logical offset left undecoded.
             off_end: One past the last offset left undecoded.
-            reason: Why, e.g. ``"undecodable"``, ``"gap"``,
-                ``"truncated"``.
+            reason: Why: one of the canonical four (``"undecodable"``,
+                ``"skipped"``, ``"gap"``, ``"truncated"``), or a more
+                specific value of the stage's own, such as
+                ``"decrypt-failed"``.
+            reason_class: ``"bytes"`` (the region's bytes exist and were not
+                decoded) or ``"hole"`` (they never reached the input).
+                **Required** with a reason outside the canonical four, and
+                must agree with a canonical one if given alongside it; the
+                writer refuses the block otherwise.
             decoder: The decoder that declined the region — for a session
                 with more than one decoder. Defaults to the stage's decoder,
                 like :meth:`record`. (The ``fill_undecoded`` auto-fill has no
                 basis to pick, so it always uses the stage's decoder.)
             comment: Free-text note.
 
+        Raises:
+            SemanticError: If the writer refuses the block, e.g. a
+                non-canonical ``reason`` without ``reason_class``. The range
+                is then not counted as marked, so auto-fill still covers it.
+
         """
-        if off_start < off_end:
-            self._marked.setdefault((stream.session_id, stream.pid), []).append(
-                (off_start, off_end)
-            )
         self.writer.undecoded(
             self.derived.source,
             stream.session_id,
@@ -491,9 +501,16 @@ class DecodeStage:
             off_start,
             off_end,
             reason=reason,
+            reason_class=reason_class,
             decoder=decoder if decoder is not None else self._decoder,
             comment=comment,
         )
+        # Only after the write: a refused block marked nothing, and counting
+        # it would let auto-fill skip bytes the file never accounts for.
+        if off_start < off_end:
+            self._marked.setdefault((stream.session_id, stream.pid), []).append(
+                (off_start, off_end)
+            )
 
     def discontinuity(
         self,

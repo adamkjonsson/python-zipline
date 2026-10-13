@@ -94,6 +94,14 @@ dec.undecoded(stream, 48, 77, reason="undecodable")
 #                     ^off_start/off_end (logical offsets of this stream)
 ```
 
+A reason of your own, more specific than the canonical four, must say which
+class it is — whether the bytes exist (`"bytes"`) or never arrived (`"hole"`)
+([why](../guides/provenance.md#coverage-nothing-silently-dropped)):
+
+```python
+dec.undecoded(stream, 48, 77, reason="decrypt-failed", reason_class="bytes")
+```
+
 Auto-fill covers only what's left, and raises rather than overriding an
 explicit marker. Pass `fill_undecoded=False` to opt out entirely and mark
 everything yourself.
