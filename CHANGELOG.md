@@ -22,6 +22,8 @@ it back from the installed distribution metadata.
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-13
+
 Implements spec **v0.21** (`SPEC_VERSION == (0, 21)`), unchanged from `0.5.1`.
 A patch release: one additive keyword and one fix, no change to the bytes of
 any file this library already wrote.
@@ -562,7 +564,8 @@ as "1.0" and renumbered without rewriting its bytes.
 - The streaming causal merge and `SEQUENCED` verification.
 - The merge transform, the coverage validator, and the `zpf` CLI.
 
-[Unreleased]: https://github.com/adamkjonsson/python-zipline/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/adamkjonsson/python-zipline/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/adamkjonsson/python-zipline/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/adamkjonsson/python-zipline/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/adamkjonsson/python-zipline/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/adamkjonsson/python-zipline/compare/v0.3.0...v0.4.0
