@@ -1215,3 +1215,91 @@ def test_params_digest_survives_the_jsonl_round_trip():
     obj = json.loads(zpf.dumps_block(decoder))
     assert obj["params_digest"] == "sha256:2f60"
     assert zpf.loads_block(json.dumps(obj)) == decoder
+
+
+# --- an Undecoded reason outside the canonical four -----------------------------------
+
+
+def stage_marking(raw: bytes, **mark: str) -> bytes:
+    """Run a stage that leaves the client stream's first 4 bytes to ``undecoded``."""
+    sink = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw), sink, decoder="tunnel", produced_by="t 1.0", produced_at=1
+    ) as dec:
+        dec.undecoded(dec.streams()[0], 0, 4, **mark)
+    return sink.getvalue()
+
+
+def test_a_specific_reason_writes_with_its_class():
+    """#79: the stage can write a reason the canonical four do not name."""
+    raw = raw_file()
+    out = stage_marking(raw, reason="decrypt-failed", reason_class="bytes")
+
+    mark = undecoded_by_stream(out)[7, 0, 0, 4]
+    assert (mark.reason, mark.reason_class) == ("decrypt-failed", "bytes")
+    with zpf.open(io.BytesIO(out)) as reader:
+        assert reader.complete
+        assert reader.diagnostics == []
+    assert zpf.check_coverage(io.BytesIO(out), io.BytesIO(raw)) == []
+
+
+def test_a_specific_reason_without_its_class_is_refused():
+    with pytest.raises(zpf.SemanticError, match="must carry reason_class"):
+        stage_marking(raw_file(), reason="decrypt-failed")
+
+
+def test_a_class_disagreeing_with_a_canonical_reason_is_refused():
+    with pytest.raises(zpf.SemanticError, match="reason_class says 'bytes'"):
+        stage_marking(raw_file(), reason="gap", reason_class="bytes")
+
+
+def test_a_specific_hole_class_reason_covers_an_input_break():
+    """A stage's own name for a hole stands in for auto-fill's ``gap``."""
+    raw = raw_file(gap=True)
+    hole = (len(REQUEST), len(REQUEST) + 4)
+    sink = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw), sink, decoder="tunnel", produced_by="t 1.0", produced_at=1
+    ) as dec:
+        client = dec.streams()[0]
+        dec.undecoded(client, *hole, reason="tap-overrun", reason_class="hole")
+
+    marks = undecoded_by_stream(sink.getvalue())
+    assert marks[(7, 0, *hole)].reason == "tap-overrun"
+    assert all(u.reason != "gap" for u in marks.values())
+    assert zpf.check_coverage(io.BytesIO(sink.getvalue()), io.BytesIO(raw)) == []
+
+
+def test_a_refused_marker_is_not_counted_as_coverage():
+    """A caller who catches the refusal must not be left with a coverage gap.
+
+    The stage used to count the range as marked before the writer saw it, so
+    auto-fill skipped bytes that no block in the file accounts for.
+    """
+    raw = raw_file()
+    sink = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw), sink, decoder="tunnel", produced_by="t 1.0", produced_at=1
+    ) as dec, pytest.raises(zpf.SemanticError):
+        dec.undecoded(dec.streams()[0], 0, 4, reason="decrypt-failed")
+
+    assert undecoded_by_stream(sink.getvalue())[7, 0, 0, len(REQUEST)].reason == "skipped"
+    assert zpf.check_coverage(io.BytesIO(sink.getvalue()), io.BytesIO(raw)) == []
+
+
+def test_a_refused_record_is_not_counted_as_coverage():
+    """The same for a record: what the writer refused cites nothing."""
+    other = io.BytesIO()
+    with zpf.create(other, tick_hz=1_000_000, produced_by="t 1.0", produced_at=1) as writer:
+        writer.add_decoder("first")
+        stranger = writer.add_decoder("second")  # an id the stage never declared
+
+    raw = raw_file()
+    sink = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw), sink, decoder="tunnel", produced_by="t 1.0", produced_at=1
+    ) as dec, pytest.raises(zpf.SemanticError):
+        dec.record(dec.streams()[0], REQUEST, ts=1, cites=(0, 4), decoder=stranger)
+
+    assert undecoded_by_stream(sink.getvalue())[7, 0, 0, len(REQUEST)].reason == "skipped"
+    assert zpf.check_coverage(io.BytesIO(sink.getvalue()), io.BytesIO(raw)) == []

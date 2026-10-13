@@ -22,6 +22,38 @@ it back from the installed distribution metadata.
 
 ## [Unreleased]
 
+Implements spec **v0.21** (`SPEC_VERSION == (0, 21)`), unchanged from `0.5.1`.
+A patch release: one additive keyword and one fix, no change to the bytes of
+any file this library already wrote.
+
+### Added
+
+**`DecodeStage.undecoded(reason_class=…)`**
+([#79](https://github.com/adamkjonsson/python-zipline/issues/79)). A decode
+stage can now name a region with a reason of its own — `"decrypt-failed"`,
+say, as the tunnel vector does — rather than only the canonical four.
+`Writer.undecoded` has taken `reason_class` all along, and the specification
+requires it with any reason outside the canonical vocabulary, but the stage
+wrapper did not pass it on, so the writer's checker refused every specific
+reason a stage wrote. Going around the stage to `stage.writer.undecoded` was
+no answer: it skips the stage's coverage accounting, so auto-fill would name
+the same bytes a second time. Validation stays with the writer, which owns
+the canonical table and refuses a class that disagrees with a canonical
+reason.
+
+Prompted by zipline-kober's `fails_as`, which lets a spec name a failed
+decryption.
+
+### Fixed
+
+**A refused `record()` or `undecoded()` no longer leaves a coverage gap.**
+Both methods counted their ranges as covered *before* the writer saw the
+block. A caller that caught the writer's refusal and carried on — the natural
+way to retry with a `reason_class` — left those bytes counted but never
+written, so auto-fill skipped them and the stage closed cleanly on a file
+that failed `check_coverage`. The stage now counts a range only once its
+block is written.
+
 ## [0.5.1] - 2026-09-27
 
 Implements spec **v0.21** (`SPEC_VERSION == (0, 21)`), unchanged from `0.5.0`.
