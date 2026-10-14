@@ -1204,6 +1204,38 @@ def test_params_digest_is_refused_with_an_already_declared_handle():
         )
 
 
+@pytest.mark.parametrize("layer", [zpf.OutputLayer.TRANSPORT, zpf.OutputLayer.DECODED])
+def test_output_layer_is_refused_with_an_already_declared_handle(layer: zpf.OutputLayer):
+    """#85: the handle's descriptor fixes the layer; asking for one is refused.
+
+    Through 0.5.x it was ignored, so a caller asking for a sessionization
+    stage could silently get a decode stage. Even DECODED is refused when
+    passed: it states something about a descriptor this stage did not write.
+    """
+    other = io.BytesIO()
+    with zpf.create(other, tick_hz=1_000_000, produced_by="t 1.0", produced_at=1) as writer:
+        handle = writer.add_decoder("http/1.1")
+
+    sink = io.BytesIO()
+    with pytest.raises(ValueError, match="output_layer cannot be applied"):
+        zpf.decode_stage(
+            io.BytesIO(raw_file()), sink, decoder=handle,
+            produced_by="t 1.0", produced_at=1, output_layer=layer,
+        )
+    assert sink.getvalue() == b""
+
+
+def test_a_named_decoder_is_decoded_unless_told_otherwise():
+    sink = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw_file()), sink, decoder="http/1.1", produced_by="t 1.0", produced_at=1
+    ) as dec:
+        dec.record(dec.streams()[0], REQUEST, ts=1, cites=(0, len(REQUEST)))
+    with zpf.open(io.BytesIO(sink.getvalue())) as out:
+        (decoder,) = out.decoders.values()
+        assert decoder.output_layer == zpf.OutputLayer.DECODED
+
+
 def test_params_digest_survives_the_jsonl_round_trip():
     decoder = zpf.Decoder(
         decoder_id=1, output_layer=zpf.OutputLayer.DECODED, name="tunnel",

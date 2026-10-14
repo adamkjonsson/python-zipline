@@ -56,6 +56,17 @@ participant missing from it is anchored at its first captured byte.
 `SessionReader.verify()`, `SessionReader.timeline()`, the writer and
 `merge_files` pass their participants' values.
 
+**`decode_stage` refuses `output_layer` alongside a `DecoderHandle`**
+([#85](https://github.com/adamkjonsson/python-zipline/issues/85)). The handle's
+descriptor already fixes the layer, and `output_layer` was silently ignored
+there, so a caller who asked for a sessionization stage with a handle got
+whatever layer the handle had declared. It is now a `ValueError` before the
+output is opened, as `params_digest` has been since `0.5.1`. Its default is
+`None` rather than `DECODED`, so that an explicit `DECODED` is refused too;
+a stage that declares its own decoder still defaults to the decoded layer. A
+call that passed both now raises: pass the layer to `add_decoder()`, or give
+`decode_stage` a decoder name.
+
 ### Added
 
 **`net:`, the fourth `content_type` scheme**

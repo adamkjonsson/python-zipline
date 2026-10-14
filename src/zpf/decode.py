@@ -702,7 +702,7 @@ def decode_stage(  # noqa: PLR0913
     decoder: str | tuple[str, str | None] | DecoderHandle,
     produced_by: str,
     produced_at: int | datetime,
-    output_layer: OutputLayer | int = OutputLayer.DECODED,
+    output_layer: OutputLayer | int | None = None,
     params_digest: str | None = None,
     proto: str | None = None,
     sequenced: bool = False,
@@ -726,15 +726,19 @@ def decode_stage(  # noqa: PLR0913
         sink: Where to write the decode-stage file.
         decoder: The decoder to declare: a name, a ``(name, version)``
             pair, or a handle already declared on another writer's terms.
-        output_layer: The layer this stage's decoder emits. Leave it at
-            :attr:`~zpf.OutputLayer.DECODED` for an app decoder. Pass
+        output_layer: The layer this stage's decoder emits. Leave it out
+            for an app decoder, which is :attr:`~zpf.OutputLayer.DECODED`. Pass
             :attr:`~zpf.OutputLayer.TRANSPORT` to build a **sessionization
             stage** — a reassembler run over a ``.zpf`` rather than over a
             capture, whose output is ``zpf``-sourced and transport-shaped.
             0.14 could not express that at all: a reassembler had to be
             characterised by the *absence* of a ``decoder_id``, so its
-            overlap policy and timeout had nowhere to be recorded. Ignored
-            when ``decoder`` is a handle, which was declared already.
+            overlap policy and timeout had nowhere to be recorded.
+            **Refused** alongside a :class:`~zpf.DecoderHandle`, whose
+            descriptor already fixes the layer
+            (`#85 <https://github.com/adamkjonsson/python-zipline/issues/85>`_):
+            through ``0.5.x`` it was silently ignored there, so a caller who
+            asked for a sessionization stage could get a decode stage.
 
             This is the **one-to-one** case: each input stream becomes one
             output participant under the same ids. A stage whose input
@@ -746,12 +750,11 @@ def decode_stage(  # noqa: PLR0913
             states. The same decoder at the same version decodes differently
             under a different configuration (a cipher key, a document
             parameter, a reassembler's overlap policy), and this is where
-            that difference is recorded. Unlike ``output_layer`` it is
-            **refused** rather than ignored alongside a
-            :class:`~zpf.DecoderHandle`: a digest names the run, so a caller
-            passing one is stating something about a descriptor this stage
-            did not write, and quietly dropping it would lose exactly the
-            fact it was passed to record.
+            that difference is recorded. Like ``output_layer`` it is
+            **refused** alongside a :class:`~zpf.DecoderHandle`: a digest
+            names the run, so a caller passing one is stating something
+            about a descriptor this stage did not write, and quietly
+            dropping it would lose exactly the fact it was passed to record.
         produced_by: Tool + version doing the decoding (required of a
             derived file).
         produced_at: Build time (required of a derived file); Unix seconds,
@@ -810,21 +813,25 @@ def decode_stage(  # noqa: PLR0913
         An open :class:`DecodeStage`, also a context manager.
 
     Raises:
-        ValueError: If ``params_digest`` is given with an already-declared
-            :class:`~zpf.DecoderHandle`, or a transport-layer stage is given
-            an ``adjacency`` other than ``contiguous``. Both are refused
-            before the output is opened, so nothing is left behind.
+        ValueError: If ``output_layer`` or ``params_digest`` is given with an
+            already-declared :class:`~zpf.DecoderHandle`, or a
+            transport-layer stage is given an ``adjacency`` other than
+            ``contiguous``. All are refused before the output is opened, so
+            nothing is left behind.
         ZpfError: If the input has no File Header.
 
     """
-    if params_digest is not None and isinstance(decoder, DecoderHandle):
-        msg = (
-            "params_digest cannot be applied to an already-declared DecoderHandle; "
-            "pass it to add_decoder() where the descriptor is written, or give "
-            "decode_stage a decoder name instead"
-        )
-        raise ValueError(msg)
-    adjacency = _stage_adjacency(decoder, output_layer, adjacency)
+    if isinstance(decoder, DecoderHandle):
+        for name, value in (("output_layer", output_layer), ("params_digest", params_digest)):
+            if value is not None:
+                msg = (
+                    f"{name} cannot be applied to an already-declared DecoderHandle; "
+                    "pass it to add_decoder() where the descriptor is written, or give "
+                    "decode_stage a decoder name instead"
+                )
+                raise ValueError(msg)
+    layer = OutputLayer.DECODED if output_layer is None else output_layer
+    adjacency = _stage_adjacency(decoder, layer, adjacency)
     reader, owns_reader = _open_input(source)
     try:
         header = reader.header
@@ -853,7 +860,7 @@ def decode_stage(  # noqa: PLR0913
             sequenced=sequenced,
             adjacency=adjacency,
         )
-        handle = _declare_decoder(writer, decoder, output_layer, params_digest)
+        handle = _declare_decoder(writer, decoder, layer, params_digest)
     except BaseException:
         writer.close(end=False)
         if owns_reader:
