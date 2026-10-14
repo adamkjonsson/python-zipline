@@ -148,7 +148,7 @@ class _ParticipantState:
             has been placed: ``isn + 1``, or the first captured byte where
             there is no ``isn``, fixed by the first record carrying a hint.
             ``None`` until either fixes it. The predecessor in the unwrapping
-            walk :class:`zpf.reassembly._Placer` performs, kept here so the
+            walk :class:`zpf.order._Placer` performs, kept here so the
             checker and the reader agree on which records are unplaceable.
         placed_any: Whether any record has been placed yet — which decides
             whether an unplaceable record's note names the origin or a

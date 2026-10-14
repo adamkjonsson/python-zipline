@@ -35,14 +35,19 @@ Four traps worth naming, because each looks like a bug and is not:
   rules that policed which of the two a stream was. A pass-through therefore
   cites its inputs, which makes it answerable for their coverage the way a
   decode stage is.
-- **Offsets unwrap along stored order** (since `0.21`). A transport record's
-  offset is its *predecessor's* plus the signed serial delta of their
-  `seq_start`s — never `seq_start − origin` under serial arithmetic, which
-  read every record more than 2³¹ bytes into a stream as below the origin. The
-  origin is the first record's predecessor, and an unplaceable record anchors
-  nothing. `_Placer` in `reassembly.py` is the single definition; the checker
-  and the writer's guard use the same anchor. A stream past 2 GiB, or one
-  whose sequence numbers pass through 2³², is conformant and places.
+- **Offsets unwrap along stored order** (since `0.21`), **and so do acks**
+  (since `0.22`). A transport record's offset is its *predecessor's* plus the
+  signed serial delta of their `seq_start`s — never `seq_start − origin` under
+  serial arithmetic, which read every record more than 2³¹ bytes into a stream
+  as below the origin. The origin is the first record's predecessor, and an
+  unplaceable record anchors nothing. An `ack` is a **signed position in the
+  peer's offset space**, walked the same way along the acker's records, the
+  first measured from the peer's origin; the merge and the sequenced check
+  compare it with record *ends* as plain integers, never serially. Both walks
+  are `_Walk` in `order.py` (`_Placer` for offsets, `_AckWalk` for acks), and
+  the checker and the writer's guard use the same anchor. A stream past
+  2 GiB, or one whose sequence numbers pass through 2³², is conformant,
+  places, and orders.
 - **`adjacency` is a Participant body field, and the third load-bearing enum.**
   `contiguous` (`0`) is what every file ever written holds there; `units` (`1`)
   declares a *unit sequence* — offsets unchanged, no two adjacent records may

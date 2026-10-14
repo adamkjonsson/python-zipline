@@ -223,3 +223,124 @@ def test_merge_output_always_verifies(streams: tuple[list[zpf.Record], list[zpf.
     out = list(causal_merge({0: streams[0], 1: streams[1]}))
     assert sorted(out, key=id) == sorted(streams[0] + streams[1], key=id)
     verify_sequenced(out, participant_count=2)
+
+
+# --- Acks are positions in the peer's offset space (0.22, #75) --------------------
+
+GIB = 1 << 30
+
+
+def upload_past_2gib(*, sequenced: bool) -> bytes:
+    """#75's repro: stream-past-2gib's client, a server that only acks its SYN."""
+    import io
+
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1_000_000, produced_by="repro") as w:
+        w.add_source("capture", uri="upload.pcap", link_type=1)
+        dec = w.add_decoder("repro", output_layer=zpf.OutputLayer.TRANSPORT)
+        s = w.begin_session(proto="tcp", key="10.0.0.1:51000 <-> 10.0.0.2:80",
+                            sequenced=sequenced, linearize=sequenced)
+        a = s.participant("10.0.0.1:51000", isn=1000, tcp_role=zpf.TcpRole.INITIATOR)
+        b = s.participant("10.0.0.2:80", isn=5000, tcp_role=zpf.TcpRole.RESPONDER)
+        s.record(a, ts=0, payload=b"", flags=zpf.RecordFlags.SYN,
+                 hints=zpf.Hints(seq_start=1001), decoded=zpf.Decoded(decoder=dec))
+        s.record(b, ts=1, payload=b"", flags=zpf.RecordFlags.SYN,
+                 hints=zpf.Hints(seq_start=5001, ack=1001), decoded=zpf.Decoded(decoder=dec))
+        for k in range(4):  # 0, 1, 2, 3 GiB
+            s.record(a, ts=2 + k, payload=b"kkkk", flags=zpf.RecordFlags.PSH,
+                     hints=zpf.Hints(seq_start=1001 + k * GIB, ack=5001),
+                     decoded=zpf.Decoded(decoder=dec))
+        s.end(reason="capture-end")
+    return sink.getvalue()
+
+
+def test_a_sequenced_upload_past_2gib_with_a_pure_ack_peer_writes_and_verifies():
+    """#75, verbatim: refused at the 2 GiB record by 0.5.x, at write and at read."""
+    import io
+
+    with zpf.open(io.BytesIO(upload_past_2gib(sequenced=True))) as reader:
+        (session,) = reader.sessions()
+        session.verify()
+        records = list(session.records())
+    assert [r.seq_start for r in records[2:]] == [1001 + k * GIB for k in range(4)]
+
+
+def test_a_real_violation_past_2gib_is_still_caught():
+    # The server's acks keep up, so its last one is a position 2 GiB + 8 into
+    # the client's stream; the client record ending there is stored after it.
+    # (The client sends no ack: a zero-length server record at the offset a
+    # client ack names would draw an edge of its own, which is not the
+    # subject here.)
+    isns = {0: 1000, 1: 5000}
+    syn = rec(0, ts=0, seq=1001)
+    syn_ack = rec(1, ts=1, seq=5001, ack=1001)
+    data = [rec(0, ts=2 + k, payload=b"kkkkkkkk", seq=1001 + k * GIB) for k in range(3)]
+    acks = [rec(1, ts=10 + k, seq=5001, ack=1001 + k * GIB + 8) for k in (1, 2)]
+    verify_sequenced([syn, syn_ack, *data, *acks], participant_count=2, isns=isns)
+    with pytest.raises(zpf.SemanticError, match="already acknowledged") as info:
+        verify_sequenced([syn, syn_ack, data[0], data[1], *acks, data[2]],
+                         participant_count=2, isns=isns)
+    assert f"offset {2 * GIB + 8}" in str(info.value)
+
+
+def test_acks_that_retreat_in_stored_order_are_walked_not_refused():
+    # Stored order is seq_start order: the retransmitted segment A, stored
+    # first, was sent last and acks more than B. Positions step back, and the
+    # check still holds the highest one against what follows.
+    s1 = rec(1, ts=1, payload=b"s" * 50, seq=5001)
+    s2 = rec(1, ts=2, payload=b"t" * 50, seq=5051)
+    a = rec(0, ts=4, payload=b"a" * 10, seq=1001, ack=5101)  # all of s1 and s2
+    b = rec(0, ts=3, payload=b"b" * 10, seq=1011, ack=5051)  # s1 only
+    isns = {0: 1000, 1: 5000}
+    verify_sequenced([s1, s2, a, b], participant_count=2, isns=isns)
+    with pytest.raises(zpf.SemanticError, match="already acknowledged"):
+        verify_sequenced([s1, a, b, s2], participant_count=2, isns=isns)
+
+
+def test_an_ack_below_the_peers_first_captured_byte_is_a_negative_position():
+    # Mid-stream, no isn: the response acks 8 client bytes sent before the
+    # capture began. Its position is -8, below every client record's end;
+    # stored unsigned it would wrap and refuse this correct order.
+    response = rec(1, ts=1000, payload=b"HTTP/1.1 200", seq=5001, ack=993)
+    request = rec(0, ts=1100, payload=b"GET /two", seq=1001, ack=5013)
+    verify_sequenced([response, request], participant_count=2)
+    with pytest.raises(zpf.SemanticError, match="already acknowledged"):
+        verify_sequenced([request, response], participant_count=2)
+
+
+def test_an_unplaceable_record_is_still_placed_by_its_ack():
+    # No seq_start, so no end and no edge runs from it; its ack still
+    # places it after the peer bytes that ack covers.
+    acker = rec(0, ts=1, ack=5011)
+    server = rec(1, ts=2, payload=b"0123456789", seq=5001)
+    verify_sequenced([server, acker], participant_count=2)
+    with pytest.raises(zpf.SemanticError, match="already acknowledged"):
+        verify_sequenced([acker, server], participant_count=2)
+
+
+def test_the_merge_compares_positions_past_2gib():
+    # The SYN-ACK acks only the client's SYN, so nothing holds it back and
+    # its timestamp places it between the 2 GiB and 3 GiB records. Read
+    # serially, the 3 GiB record's end looked *below* ack 1001, so the merge
+    # held the SYN-ACK back until the client stream was exhausted.
+    client = [rec(0, ts=1, seq=1001)] + [
+        rec(0, ts=2 + k + (k == 3), payload=b"kkkkkkkk", seq=1001 + k * GIB)
+        for k in range(4)
+    ]
+    server = [rec(1, ts=5, seq=5001, ack=1001)]
+    out = list(causal_merge({0: client, 1: server}, isns={0: 1000, 1: 5000}))
+    assert [(r.sender_pid, r.timestamp) for r in out] == [
+        (0, 1), (0, 2), (0, 3), (0, 4), (1, 5), (0, 6),
+    ]
+
+
+def test_the_merge_holds_a_record_behind_an_unplaceable_peer_head():
+    # The server's first record has no seq_start, so it bounds nothing, but
+    # the record behind it ends inside the client's ack; the client record
+    # must wait for both rather than overtake them on its timestamp.
+    # Through 0.5.x an unplaceable head held nothing back, and the client
+    # record's earlier timestamp put it first.
+    server = [rec(1, ts=3), rec(1, ts=4, payload=b"0123456789", seq=5001)]
+    client = [rec(0, ts=2, payload=b"x", seq=1001, ack=5011)]
+    out = list(causal_merge({0: client, 1: server}, isns={0: 1000, 1: 5000}))
+    assert [(r.sender_pid, r.timestamp) for r in out] == [(1, 3), (1, 4), (0, 2)]

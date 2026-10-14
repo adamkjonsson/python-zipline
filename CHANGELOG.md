@@ -22,6 +22,40 @@ it back from the installed distribution metadata.
 
 ## [Unreleased]
 
+Implements spec **v0.22** (`SPEC_VERSION == (0, 22)`), up from `0.21`. Files
+written by `0.5.x` are refused at the version gate, and files written by this
+release are unreadable by `0.5.x` — the `0.x` rule, as before.
+
+### Changed
+
+**Acks are positions, so a sequenced stream past 2 GiB orders and verifies**
+([#75](https://github.com/adamkjonsson/python-zipline/issues/75),
+[zipline#151](https://github.com/adamkjonsson/zipline/issues/151)). The causal
+merge and the stored-order check compared a record's `ack` with peer record
+ends by serial arithmetic, which is only defined within 2³¹. A peer whose last
+stored ack is far behind — a server that sends its SYN-ACK and then only pure
+ACKs, which are not records — read every client record 2 GiB past it as
+*below* the ack. So `verify()` and the writer's linearize guard refused a
+correct upload at its 2 GiB record, and the merge could hold a record back
+past where it belongs. Since `0.22` an ack is unwrapped along its sender's
+records into the peer's offset space, the way offsets have been since `0.21`,
+and compared with record ends as a plain integer:
+
+- Positions are **signed**: in a mid-stream capture an ack can lie below the
+  peer's first captured byte, and acknowledges no captured byte.
+- An **unplaceable** record has no end, so no edge runs from it; its own ack
+  still orders it.
+- In the merge, a record whose peer's next record is unplaceable now waits for
+  the placeable records behind it, where it used to overtake them.
+- Every file that verified before still verifies; every merge under 2 GiB is
+  unchanged except for that last case.
+
+`verify_sequenced` and `causal_merge` take a new keyword, `isns`: each
+participant's declared `isn`, which anchors its offsets at `isn + 1`. A
+participant missing from it is anchored at its first captured byte.
+`SessionReader.verify()`, `SessionReader.timeline()`, the writer and
+`merge_files` pass their participants' values.
+
 ## [0.5.2] - 2026-10-13
 
 Implements spec **v0.21** (`SPEC_VERSION == (0, 21)`), unchanged from `0.5.1`.

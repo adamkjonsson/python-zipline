@@ -60,7 +60,7 @@ VECTORS = Path(__file__).parent / "vectors"
 #: Vector cases that MUST pass. Grow it as phases land; never remove a name
 #: while its vector exists, because that is the regression guard.
 #:
-#: **65 of 66 names at the ``0.22`` re-vendor (74 files).** The arithmetic
+#: **66 names, 74 files, and every case in this set at the ``0.22`` port.** The arithmetic
 #: from ``0.21``'s 62: four vectors are new and nothing was deleted. Three
 #: joined on arrival, because they passed the moment the gate moved:
 #: ``decap-ethernet`` (a ``net:`` label is opaque to a reader that does not
@@ -71,11 +71,12 @@ VECTORS = Path(__file__).parent / "vectors"
 #: against happens to accept it, and it starts guarding something once Phase 3
 #: unwraps acks into signed positions.
 #:
-#: The fourth, ``sequenced-past-2gib-pure-ack``, is **out**, held by the
-#: ordering checks ``test_accept`` gained for
-#: `#83 <https://github.com/adamkjonsson/python-zipline/issues/83>`_. Before
-#: them it passed while ``verify()`` refused it. It joins with the ack unwrap
-#: (Phase 3, `#75 <https://github.com/adamkjonsson/python-zipline/issues/75>`_).
+#: The fourth, ``sequenced-past-2gib-pure-ack``, was **earned**. The ordering
+#: checks ``test_accept`` gained for
+#: `#83 <https://github.com/adamkjonsson/python-zipline/issues/83>`_ held it
+#: out at the re-vendor (before them it passed while ``verify()`` refused it),
+#: and it joined when the ack unwrap landed (Phase 3,
+#: `#75 <https://github.com/adamkjonsson/python-zipline/issues/75>`_).
 #:
 #: (73 case names against 66 manifest entries: ``chain`` and ``merge`` expand
 #: to three files each, ``tunnel`` to four, and ``splice`` is one name for
@@ -140,6 +141,7 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "reject-unknown-minor",
         "reordered-decoded",
         "sequenced-ack-below-origin",
+        "sequenced-past-2gib-pure-ack",
         "sequenced-session",
         "session-fan-out",
         "session-split-capture-gap",

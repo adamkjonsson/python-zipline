@@ -793,7 +793,7 @@ class SessionWriter:
         self._ended = False
         # Only a sequenced session has an order to keep, so only a sequenced
         # session carries the state; None is both "off" and "nothing to do".
-        self._order = _StoredOrder() if verify_order else None
+        self._order = _StoredOrder(isns=self._isn) if verify_order else None
         self._pending: dict[int, list[Record]] | None = {} if linearize else None
         if linearize and register_flush is not None:
             register_flush(self._flush_pending)
@@ -1055,7 +1055,7 @@ class SessionWriter:
             return
         pending, self._pending = self._pending, None
         try:
-            for block in causal_merge(pending):
+            for block in causal_merge(pending, isns=self._isn):
                 self._emit_record(block)
         finally:
             self._pending = {}

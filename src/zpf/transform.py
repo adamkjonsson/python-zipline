@@ -154,7 +154,11 @@ def merge_files(
                 out_b.pid: _reissued(session_b, session.session_id, out_b.pid,
                                      source_b.source_id),
             }
-            for record in causal_merge(streams):
+            isns = {
+                out_a.pid: session_a.participants[0].isn,
+                out_b.pid: session_b.participants[0].isn,
+            }
+            for record in causal_merge(streams, isns=isns):
                 writer.write_block(record)
             # The output cites both inputs, so it is answerable for them.
             extents = [

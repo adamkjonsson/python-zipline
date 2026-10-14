@@ -410,7 +410,7 @@ class SessionReader:
             participant.participant_id: self.stream(participant.participant_id)
             for participant in self._index.participants
         }
-        return causal_merge(streams)
+        return causal_merge(streams, isns=self._isns())
 
     def verify(self) -> None:
         """Verify this SEQUENCED session's stored order is causally valid.
@@ -429,7 +429,15 @@ class SessionReader:
         if not self.sequenced:
             msg = f"session {self.session_id} is not sequenced; there is nothing to verify"
             raise ZpfError(msg)
-        verify_sequenced(self.records(), participant_count=len(self._index.participants))
+        verify_sequenced(
+            self.records(),
+            participant_count=len(self._index.participants),
+            isns=self._isns(),
+        )
+
+    def _isns(self) -> dict[int, int | None]:
+        """Each participant's declared ``isn``: the origin the ordering code anchors at."""
+        return {p.participant_id: p.isn for p in self._index.participants}
 
 
 class FileReader:
