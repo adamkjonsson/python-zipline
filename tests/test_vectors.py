@@ -473,7 +473,7 @@ def _params(tier: str) -> list[Any]:
             marks: tuple[Any, ...] = ()
         else:
             reason = DEFECTIVE.get(case.name) or UNIMPLEMENTED.get(
-                case.name, "not yet ported to 0.22"
+                case.name, "not yet ported to 0.23"
             )
             marks = (pytest.mark.xfail(reason=reason, strict=False),)
         params.append(pytest.param(case, id=case.name, marks=marks))
@@ -541,14 +541,14 @@ def test_manifest_covers_the_tree() -> None:
 
 
 def test_every_case_has_a_file() -> None:
-    """The manifest expands to exactly the files `v0.22` ships.
+    """The manifest expands to exactly the files `v0.23` ships.
 
     The count is exact rather than a floor, so a half-copied re-vendoring
-    fails here instead of quietly shrinking the suite: 66 manifest entries,
+    fails here instead of quietly shrinking the suite: 68 manifest entries,
     of which ``chain`` and ``merge`` expand to three files each, ``splice``
     to two and ``tunnel`` — the largest fixture the suite has — to four.
     """
-    assert len(CASES) == 74
+    assert len(CASES) == 76
     for case in CASES:
         assert case.path.exists(), case.name
 
@@ -731,6 +731,65 @@ def test_an_accept_vector_puts_its_bytes_where_it_says(
             )
 
 
+def _merged_params() -> list[Any]:
+    """Build one param per manifest ``merged`` entry, ratchet-gated.
+
+    Since ``0.23`` every single-file accept vector with an unsequenced
+    session in which two or more participants send records declares that
+    session's merged order, as 1-based positions among the session's records
+    in stored order (`zipline#162
+    <https://github.com/adamkjonsson/zipline/issues/162>`_). Like ``extents``,
+    the manifest checker upstream requires the key on exactly the entries that
+    owe it. Gated by :data:`KNOWN_PASSING`, like the tiers, because a vector
+    whose merge is the point is one a port can be behind on.
+
+    Returns:
+        One param per declared vector, carrying its ``merged`` list.
+
+    """
+    manifest = json.loads((VECTORS / "manifest.json").read_text())
+    params = []
+    for entry in manifest["vectors"]:
+        if "merged" not in entry:
+            continue
+        name = entry["name"]
+        marks: tuple[Any, ...] = ()
+        if name not in KNOWN_PASSING:
+            marks = (pytest.mark.xfail(reason="not yet ported to 0.23", strict=False),)
+        params.append(pytest.param(name, entry["merged"], id=name, marks=marks))
+    return params
+
+
+@pytest.mark.parametrize(("name", "merged"), _merged_params())
+def test_an_accept_vector_merges_in_the_order_it_states(
+    name: str, merged: list[dict[str, Any]]
+) -> None:
+    """An unsequenced session's merged order is the one the manifest declares.
+
+    :func:`test_accept` drains :meth:`~zpf.SessionReader.timeline`, so it sees
+    a merge that stalls and nothing else. A merge that drops an edge, or
+    returns stored order unmerged, yields a plausible order without an error.
+    ``merge-pure-ack-and-fin`` was built so that each wrong reading of a
+    record's end gives its own wrong order, which only a comparison sees.
+
+    Positions are matched per participant: the merge never reorders one
+    participant's records, so the *k*-th record a participant contributes to
+    the merge is that participant's *k*-th record in stored order.
+    """
+    case = next(c for c in CASES if c.name == name)
+    with zpf.open(case.path) as reader:
+        for declared in merged:
+            session = reader.session(declared["session_id"])
+            positions: dict[int, list[int]] = {}
+            for index, record in enumerate(session.records(), start=1):
+                positions.setdefault(record.sender_pid, []).append(index)
+            got = [positions[record.sender_pid].pop(0) for record in session.timeline()]
+            assert got == declared["order"], (
+                f"{name}: session {declared['session_id']} merges as {got}, but the "
+                f"manifest declares {declared['order']}"
+            )
+
+
 @pytest.mark.parametrize("case", _params("reject"))
 def test_reject(case: Case) -> None:
     """Structural corruption is refused, and refused for the right reason.
@@ -782,7 +841,7 @@ def _pairwise_params() -> list[Any]:
     for name in PAIRWISE:
         marks: tuple[Any, ...] = ()
         if name not in KNOWN_PASSING:
-            marks = (pytest.mark.xfail(reason="not yet ported to 0.22", strict=False),)
+            marks = (pytest.mark.xfail(reason="not yet ported to 0.23", strict=False),)
         params.append(pytest.param(name, id=name, marks=marks))
     return params
 

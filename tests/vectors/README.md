@@ -2,7 +2,7 @@
 
 Small `.zpf` files, each with its expected JSON-Lines projection or its expected
 failure, for testing an implementation of the
-[Zipline Payload Format](../docs/zipline-payload-format.md) `0.22`.
+[Zipline Payload Format](../docs/zipline-payload-format.md) `0.23`.
 
 Run `python3 check.py` to verify the tree is self-consistent.
 Run `python3 build.py` to regenerate it.
@@ -122,6 +122,23 @@ mandatory so that every stream's number is one somebody confronted — and
 nothing else does. A wrong number is caught by the first implementation that
 disagrees, which is the loop the suite lacked. Multi-file fixtures declare none;
 their extents are verified against their inputs by the bespoke checks.
+
+**Every single-file `accept` entry with a session a reader must merge declares
+`merged`**, since `0.23` (#162). That is a session not marked `sequenced` in
+which two or more participants send records. The key is a list of
+`{"session_id", "order"}`, where the order is the session's records by 1-based
+position in stored order, as the [merge](../docs/zipline-payload-format.md#merge-algorithm)
+emits them. It is the same assertion as `extents`, about a different computation.
+`merge-pure-ack-and-fin` carried its lesson in the merged order alone, and a
+harness could see only the one wrong reading that stalls. A plausible wrong order
+passed, and so did stored order returned unmerged. Six vectors owe the key:
+`merge-pure-ack-and-fin`, `merge-timestamp-tie`, `hintless-merge-backwards-ts`,
+`handshake-at-origin`, `unplaceable-no-seq-start` and `decoded-basic`.
+A sequenced session owes none, because its answer is stored order. As with
+`extents`, the values are the author's and are never computed here, since the
+merge is semantics. `check.py` checks their shape: exactly the owed sessions are
+named, and each order is a permutation of the session's records that keeps each
+participant's own order.
 
 **Every capability the format defines is exercised by some vector**, and since
 `0.14` that is enforced too. `check.py` parses the option-id registry and the
@@ -360,6 +377,26 @@ is true. This vector carries the other value.
 | `sequenced-ack-below-origin` | *(accept)* A mid-stream **SEQUENCED** session with no `isn` on either side. The server's response is stored first and acks `993`, eight bytes below the client's first captured byte, so its position is **−8**. That is signed, acknowledges no captured byte, and no edge reaches it. A reader that keeps ack positions in an offset's unsigned type wraps it to near 2⁶⁴, draws `request → response`, and refuses a correct order (#157). Extents 8 and 12. |
 | `sessionized-across-units` | *(accept)* `tunnel`'s inner hop with nothing lost, over a `units` input as `kober`'s WireGuard output is: flow A's packets at `[0,80)` and `[140,210)` join in A's sequence space, so session 10 emits **one** 70-byte record with **two** spans, crossing two declared breaks; flow B's packet between them is session 11's. Coverage of the input closes over `[0,210)` across both sessions. A reader that reports a no-splice violation has applied the decoded layer's duty to a stream whose offsets carry every break. Nothing can catch a *wrong* coalesce here: the sequence numbers are the producer's assertion. Extents 70 and 20. |
 | `decap-ethernet` | *(accept)* A VXLAN decapsulation stage emitting one record per inner **Ethernet frame**, typed `net:ethernet`: Ethernet II, IPv4 and UDP headers all real, checksums included, as a `LINKTYPE_ETHERNET` capture stores it. The suite's one non-TCP packet. Each record spans its whole datagram, VXLAN header included, since the VNI fed the decapsulation. The participant is `units`, and the endpoint list runs from the VNI to the inner MAC. A reader that does not know `net:` treats the label as opaque, as it would any unknown scheme. Checking the label against the payload is not conformant, because `net:` binds no length. Extent 110. |
+
+### Added in `0.23`
+
+An `ack` acknowledges **sequence numbers**: each byte of data, plus the one number
+that a SYN and a FIN each consume. Through `0.22`, merge step 2 gave every record
+an end, including a pure ACK, which occupies none. An ack reaching its offset
+then drew an edge from it, backwards to the peer data that ack acknowledged. The
+ordinary trace (handshake, data, pure ACK) made a cycle. Since `0.23` a record's
+end is one past the last sequence number it occupies. Data is unchanged, a
+zero-length SYN ends at its offset, a zero-length FIN ends one past it, and a
+pure ACK has no end, so no edge runs from it (#160). The vectors come as a pair.
+A sequenced file is read in stored order, so it can only catch a reading that
+*adds* an edge. Its unsequenced twin is merged, so it catches a dropped edge and
+a merge that stalls (#161). `check.py` draws no causal edges, so both test
+implementations only.
+
+| Vector | What it carries |
+|--------|-----------------|
+| `sequenced-pure-ack-and-fin` | *(accept)* A **SEQUENCED** session: handshake, eight bytes of data, the server's pure ACK, the client's zero-length FIN, and the server's pure ACK of the FIN. Pure ACKs are stored as zero-length records, as *Caveats* advises. Ends: SYN 0, SYN-ACK 0, data 8, FIN **9**, pure ACKs **none**. Every edge runs forward in stored order. A reader that gives a pure ACK an end at its offset draws `pure ACK → data` against `data → pure ACK`, a cycle, and refuses the order or stalls. One that ends the FIN at its offset draws `FIN → pure ACK` against the stored order. Extents 8 and 0. |
+| `merge-pure-ack-and-fin` | *(accept)* The same six records, **unsequenced**, stored server first, with the server's clock 50 ticks behind, so the timestamp tie-break pulls a server record too early wherever an edge is missing. Merged: client SYN, SYN-ACK, data, pure ACK, FIN, pure ACK. Each wrong reading gives its own answer: a SYN given no end puts the SYN-ACK first, a pure ACK ended at its offset **stalls**, and a FIN ended at its offset overtakes the pure ACK that acknowledged only the data. A reader returning stored order has not merged. Extents 8 and 0. |
 
 ## Multi-file fixtures
 

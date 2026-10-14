@@ -42,7 +42,7 @@ _SWAPPED_MAGIC = 0x4650495A
 #: ``(version_major, version_minor)``. A writer stamps the version it
 #: implements; there is no obligation to compute the lowest version whose
 #: features a file happens to use.
-SPEC_VERSION: tuple[int, int] = (0, 22)
+SPEC_VERSION: tuple[int, int] = (0, 23)
 
 
 #: The canonical :class:`Undecoded` ``reason`` values, mapped to their

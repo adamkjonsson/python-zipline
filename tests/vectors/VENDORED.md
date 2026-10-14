@@ -7,15 +7,15 @@ specification repository. They are not ours to edit.
 |---|---|
 | Source | <https://github.com/adamkjonsson/zipline> |
 | Path | `vectors/` |
-| Tag | `v0.22` |
-| Commit | `c907bebc07768b94f9b8a251bdbfaa0eaf39813b` |
+| Tag | `v0.23` |
+| Commit | `38084399c3913e7d13b286d4e88c0a1871c0d995` |
 | Vendored | 2026-10-14 |
 
 ## What was and was not copied
 
-Copied: `manifest.json`, `README.md`, and all 66 vector directories — verified
+Copied: `manifest.json`, `README.md`, and all 68 vector directories — verified
 byte-identical to the tag with `diff -r`, extracted with `git archive` from the
-tag rather than copied from a working tree. 66 entries expand to 74 files, because
+tag rather than copied from a working tree. 68 entries expand to 76 files, because
 `chain` and `merge` ship three each, `splice` two and `tunnel` four.
 
 **Not** copied: `build.py` and `check.py`. Those are the upstream *generator* and
@@ -76,6 +76,18 @@ was regenerated: its packets became real IPv4 + TCP, which moved
 by this library against the release candidate). Every other file changed only
 its version stamp.
 
+`0.23` adds one manifest key and two vectors. **`merged`** gives, for every
+unsequenced session in which two or more participants send records, the order
+a reader must merge it into, as 1-based stored positions
+([zipline#162](https://github.com/adamkjonsson/zipline/issues/162), asked for
+by this library because the tiers could see a merge that stalled and nothing
+else). Six vectors carry it, and the harness compares `timeline()` against it
+(`test_an_accept_vector_merges_in_the_order_it_states`). The vectors are
+`sequenced-pure-ack-and-fin` and its unsequenced twin `merge-pure-ack-and-fin`
+(zipline#160, #161), for the rule that a record's end is one past the last
+sequence number it occupies. Every other file changed only its version stamp
+and the input digests that follow from it.
+
 ## Why they are checked in rather than fetched
 
 Fetching by tag at test time would keep them authoritative, but makes the suite
@@ -90,7 +102,7 @@ vector that seems wrong is a question for the spec repository, not a local patch
 
 ## Known defects
 
-**None open at `v0.22`.** Defects 5 and 6 — three vectors whose `.zpf`
+**None open at `v0.23`.** Defects 5 and 6 — three vectors whose `.zpf`
 disagreed with their own `.jsonl`, found at the `0.19` re-vendor by projecting
 every file and diffing — were fixed upstream in `0.20`
 ([zipline#141](https://github.com/adamkjonsson/zipline/issues/141)), which also
@@ -103,7 +115,7 @@ Seven have been found in all — two against `v0.12`, one against `v0.15`, one
 against `v0.16`, two against `v0.19` and one against the `0.22` release
 candidate — and every one was fixed upstream;
 [`VECTOR-DEFECTS.md`](../../VECTOR-DEFECTS.md) is the closed record of them.
-The projection sweep was repeated at this re-vendor: 53 files carry both faces,
+The projection sweep was repeated at this re-vendor: 55 files carry both faces,
 and none disagree on any key this library projects. (At `0.21`, 49 files; the
 new `adjacency` key was then also checked the other way, its byte in all 61
 Participant blocks against the `.jsonl` line, 0 mismatches.)
