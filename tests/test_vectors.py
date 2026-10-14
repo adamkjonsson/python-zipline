@@ -60,8 +60,16 @@ VECTORS = Path(__file__).parent / "vectors"
 #: Vector cases that MUST pass. Grow it as phases land; never remove a name
 #: while its vector exists, because that is the regression guard.
 #:
-#: **66 names, 74 files, and every case in this set at the ``0.22`` port.** The arithmetic
-#: from ``0.21``'s 62: four vectors are new and nothing was deleted. Three
+#: **68 names, 76 files, and every case in this set at the ``0.23`` port.**
+#: ``0.23`` added two, both earned by its one rule (a record's end is one past
+#: the last sequence number it occupies, so a pure ACK has none):
+#: ``sequenced-pure-ack-and-fin``, refused by the old reading at its first
+#: pure ACK, and ``merge-pure-ack-and-fin``, its unsequenced twin, on which the
+#: Phase 3 merge stalled until its bound for a peer record with no end was
+#: tightened. The second is also the first vector whose merged order the
+#: harness checks (``merged``, :func:`_merged_params`).
+#:
+#: ``0.22``'s arithmetic, from ``0.21``'s 62: four vectors were new and nothing was deleted. Three
 #: joined on arrival, because they passed the moment the gate moved:
 #: ``decap-ethernet`` (a ``net:`` label is opaque to a reader that does not
 #: interpret it, so it reads and projects already), ``sessionized-across-units``
@@ -78,12 +86,12 @@ VECTORS = Path(__file__).parent / "vectors"
 #: and it joined when the ack unwrap landed (Phase 3,
 #: `#75 <https://github.com/adamkjonsson/python-zipline/issues/75>`_).
 #:
-#: (73 case names against 66 manifest entries: ``chain`` and ``merge`` expand
+#: (75 case names against 68 manifest entries: ``chain`` and ``merge`` expand
 #: to three files each, ``tunnel`` to four, and ``splice`` is one name for
 #: two.)
 #:
 #: ``splice`` is one name for two files, because its violation belongs to
-#: neither of them, which is why 66 names cover 74 files. :data:`PAIRWISE`
+#: neither of them, which is why 68 names cover 76 files. :data:`PAIRWISE`
 #: routes it to :func:`test_a_pairwise_vector_is_caught`, and the per-file
 #: tiers skip it.
 KNOWN_PASSING: frozenset[str] = frozenset(
@@ -129,6 +137,7 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "merge/a",
         "merge/b",
         "merge/merged",
+        "merge-pure-ack-and-fin",
         "merge-timestamp-tie",
         "mixed-derivation",
         "proxy-decoded",
@@ -142,6 +151,7 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "reordered-decoded",
         "sequenced-ack-below-origin",
         "sequenced-past-2gib-pure-ack",
+        "sequenced-pure-ack-and-fin",
         "sequenced-session",
         "session-fan-out",
         "session-split-capture-gap",
@@ -169,10 +179,10 @@ KNOWN_PASSING: frozenset[str] = frozenset(
 #: that nobody bends this implementation to match a broken fixture: if one of
 #: these starts passing, the vector was fixed — or we got it wrong.
 #:
-#: **Empty at ``v0.22``, as at ``v0.21`` and ``v0.20``.** The projection sweep
-#: at this re-vendor compared all 53 files that ship a ``.jsonl`` and found
-#: nothing; four of this release's defects were reported against its release
-#: candidate and fixed before the tag (`zipline#154–#157
+#: **Empty at ``v0.23``, as at every release since ``v0.20``.** The projection
+#: sweep at the ``0.23`` re-vendor compared all 55 files that ship a ``.jsonl``
+#: and found nothing, as the ``0.22`` one did over 53; four of ``0.22``'s
+#: defects were reported against its release candidate and fixed before the tag (`zipline#154–#157
 #: <https://github.com/adamkjonsson/zipline/issues/154>`_). At the ``0.21``
 #: re-vendor the new key was checked byte-against-``.jsonl`` on every
 #: Participant block. The three entries it held at ``v0.19`` —

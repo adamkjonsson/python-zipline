@@ -52,10 +52,10 @@ def test_seq_geq():
 
 
 def rec(pid: int, ts: int, payload: bytes = b"", seq: int | None = None,
-        ack: int | None = None) -> zpf.Record:
+        ack: int | None = None, flags: int = 0) -> zpf.Record:
     return zpf.Record(
         session_id=7, sender_pid=pid, source_id=0, timestamp=ts,
-        payload=payload, seq_start=seq, ack=ack,
+        payload=payload, seq_start=seq, ack=ack, flags=flags,
     )
 
 
@@ -268,9 +268,6 @@ def test_a_sequenced_upload_past_2gib_with_a_pure_ack_peer_writes_and_verifies()
 def test_a_real_violation_past_2gib_is_still_caught():
     # The server's acks keep up, so its last one is a position 2 GiB + 8 into
     # the client's stream; the client record ending there is stored after it.
-    # (The client sends no ack: a zero-length server record at the offset a
-    # client ack names would draw an edge of its own, which is not the
-    # subject here.)
     isns = {0: 1000, 1: 5000}
     syn = rec(0, ts=0, seq=1001)
     syn_ack = rec(1, ts=1, seq=5001, ack=1001)
@@ -344,3 +341,77 @@ def test_the_merge_holds_a_record_behind_an_unplaceable_peer_head():
     client = [rec(0, ts=2, payload=b"x", seq=1001, ack=5011)]
     out = list(causal_merge({0: client, 1: server}, isns={0: 1000, 1: 5000}))
     assert [(r.sender_pid, r.timestamp) for r in out] == [(1, 3), (1, 4), (0, 2)]
+
+
+
+# --- A record's end is the sequence numbers it occupies (0.23, zipline#160) --------
+
+
+def handshake_data_pure_ack() -> list[zpf.Record]:
+    """Build the ordinary trace: handshake, client data, a stored server pure ACK."""
+    return [
+        rec(0, ts=1, seq=1001, flags=zpf.RecordFlags.SYN),
+        rec(1, ts=2, seq=5001, ack=1001, flags=zpf.RecordFlags.SYN),
+        rec(0, ts=3, payload=b"GET /\r\n\r", seq=1001, ack=5001),
+        rec(1, ts=4, seq=5001, ack=1009),  # a pure ACK: no payload, no flag
+    ]
+
+
+def test_a_stored_pure_ack_draws_no_edge():
+    """zipline#160: a pure ACK occupies no sequence number, so it has no end.
+
+    Through 0.22 it ended at its offset, 0, which the client's ack 5001
+    reached, so it drew an edge backwards to the data it answers: a cycle,
+    refused when sequenced and stalled when merged.
+    """
+    trace = handshake_data_pure_ack()
+    isns = {0: 1000, 1: 5000}
+    verify_sequenced(trace, participant_count=2, isns=isns)
+    streams = {0: [trace[0], trace[2]], 1: [trace[1], trace[3]]}
+    out = list(causal_merge(streams, isns=isns))
+    assert [r.timestamp for r in out] == [1, 2, 3, 4]
+
+
+def test_a_pure_ack_is_still_ordered_by_its_own_ack():
+    # The edges *into* a pure ACK stand: it must follow the data it acks.
+    syn, syn_ack, data, pure_ack = handshake_data_pure_ack()
+    with pytest.raises(zpf.SemanticError, match="already acknowledged"):
+        verify_sequenced([syn, syn_ack, pure_ack, data], participant_count=2,
+                         isns={0: 1000, 1: 5000})
+
+
+def test_a_zero_length_fin_ends_one_past_its_offset():
+    # The FIN occupies the number at its offset (8), so an ack of 1009
+    # (position 8) acknowledges the data, not the FIN, and an ack of 1010 does.
+    isns = {0: 1000, 1: 5000}
+    syn, syn_ack, data, _ = handshake_data_pure_ack()
+    fin = rec(0, ts=5, seq=1009, ack=5001, flags=zpf.RecordFlags.FIN)
+    acks_data = rec(1, ts=4, seq=5001, ack=1009)
+    acks_fin = rec(1, ts=6, seq=5001, ack=1010)
+    verify_sequenced([syn, syn_ack, data, acks_data, fin, acks_fin],
+                     participant_count=2, isns=isns)
+    with pytest.raises(zpf.SemanticError, match="already acknowledged"):
+        verify_sequenced([syn, syn_ack, data, acks_fin, fin],
+                         participant_count=2, isns=isns)
+
+
+def test_a_data_record_carrying_fin_keeps_the_end_of_its_data():
+    # An ack covering the data proves the segment was sent, FIN or not.
+    isns = {0: 1000, 1: 5000}
+    syn, syn_ack, _, _ = handshake_data_pure_ack()
+    data_fin = rec(0, ts=3, payload=b"GET /\r\n\r", seq=1001, ack=5001,
+                   flags=zpf.RecordFlags.FIN)
+    acks_data = rec(1, ts=4, seq=5001, ack=1009)
+    with pytest.raises(zpf.SemanticError, match="already acknowledged"):
+        verify_sequenced([syn, syn_ack, acks_data, data_fin], participant_count=2, isns=isns)
+
+
+def test_the_merge_does_not_wait_on_a_pure_ack_for_an_edge_it_cannot_draw():
+    # The data acks position 0 of the server's stream; the server's next
+    # record is a pure ACK at offset 0, which has no end and so cannot be
+    # what that ack covers. Phase 3 read it as ending at 0 and held the data
+    # back for it, while the pure ACK waited for the data: a stall.
+    trace = handshake_data_pure_ack()
+    streams = {0: [trace[0], trace[2]], 1: [trace[1], trace[3]]}
+    out = list(causal_merge(streams, isns={0: 1000, 1: 5000}))
+    assert [(r.sender_pid, r.timestamp) for r in out] == [(0, 1), (1, 2), (0, 3), (1, 4)]

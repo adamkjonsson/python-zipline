@@ -55,6 +55,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from zpf.blocks import RecordFlags
 from zpf.errors import SemanticError
 
 if TYPE_CHECKING:
@@ -123,10 +124,49 @@ def seq_geq(a: int, b: int) -> bool:
 def record_end(seq_start: int, payload_len: int) -> int:
     """Return one past a record's last byte: ``seq_start + payload_len`` mod 2**32.
 
-    This is the value a peer's cumulative ``ack`` is compared against; it is
-    never stored in a file. A zero-length record's end is its ``seq_start``.
+    The raw wire value, for display and for the per-participant ordering
+    rule. It is **not** what an ``ack`` is compared against: since ``0.22``
+    that is a position in the stream's offset space, and since ``0.23`` a
+    zero-length record's end depends on the sequence numbers it occupies, so
+    a pure ACK has none (see :func:`zpf.causal_merge`).
     """
     return (seq_start + payload_len) % SEQ_SPACE
+
+
+def _sequence_end(record: Record, offset: int | None) -> int | None:
+    """Return the record's end for merge step 2, or None if it has none.
+
+    Since ``0.23`` (`zipline#160
+    <https://github.com/adamkjonsson/zipline/issues/160>`_) a record's end is
+    one past the last **sequence number** it occupies, because that is what an
+    ``ack`` acknowledges: each byte of data, and the one number a SYN and a FIN
+    each consume.
+
+    * **Data**: ``offset + payload_len``, whether or not it carries FIN. An ack
+      covering the data proves the segment was sent.
+    * **Zero-length SYN**: its offset. The SYN occupies ``isn``, one below the
+      origin a handshake record is stored at, so an ack of ``isn + 1`` covers
+      it.
+    * **Zero-length FIN**: ``offset + 1``. The FIN occupies the number at its
+      offset, so an ack of that offset does not cover it.
+    * **Anything else zero-length** — a pure ACK, a bare RST — has **no end**:
+      it occupies no sequence number, so an ack reaching its offset says
+      nothing about it, and no edge runs from it. Through ``0.22`` it ended
+      at its offset, so a stored pure ACK drew edges backwards and the
+      ordinary handshake, data, pure-ACK trace made a cycle.
+
+    An unplaceable record (``offset`` None) has no end either. Either kind is
+    still ordered by an ``ack`` it carries.
+    """
+    if offset is None:
+        return None
+    if record.payload:
+        return offset + len(record.payload)
+    if record.flags & RecordFlags.SYN:
+        return offset
+    if record.flags & RecordFlags.FIN:
+        return offset + 1
+    return None
 
 
 class _Walk:
@@ -384,7 +424,9 @@ class _Frontier:
         self.last_seq: int | None = None
         self.placer = _StreamPlacer(isn)
         self.acks = _AckWalk()
-        #: The head's end offset, or ``None`` if it is unplaceable.
+        #: The head's offset, or ``None`` if it is unplaceable.
+        self.head_offset: int | None = None
+        #: The head's end (see :func:`_sequence_end`), or ``None`` if it has none.
         self.head_end: int | None = None
         #: The head's ack, relative to this participant's first, if it has one.
         self.head_ack: int | None = None
@@ -402,6 +444,7 @@ class _Frontier:
             self.reached = max(self.reached, self.head_end)
         record = next(self.stream, None)
         self.head = record
+        self.head_offset = None
         self.head_end = None
         self.head_ack = None
         if record is None:
@@ -415,9 +458,8 @@ class _Frontier:
                 )
                 raise SemanticError(msg)
             self.last_seq = record.seq_start
-        offset = self.placer.place(record)
-        if offset is not None:
-            self.head_end = offset + len(record.payload)
+        self.head_offset = self.placer.place(record)
+        self.head_end = _sequence_end(record, self.head_offset)
         if record.ack is not None:
             self.head_ack = self.acks.observe(record.ack)
 
@@ -431,10 +473,19 @@ def _pair_ready(frontier: _Frontier, peer: _Frontier) -> bool:
     are positions in the peer's offset space, compared as plain integers, so
     the answer holds at any stream length.
 
-    An **unplaceable** peer head has no end and draws no edge, but the
-    placeable records behind it may; it is read as ending where the stream
-    has already reached, which is what holds the record back for them. A
-    peer whose origin is not known yet — no ``isn``, and nothing placed — has
+    A peer head with **no end** draws no edge itself, but the records behind
+    it may, so the question is the lowest end any of them could have:
+
+    * **Placed** (a pure ACK, a bare RST): every later record sits at its
+      offset *x* or beyond, and every one with an end ends past it (data and a
+      FIN at *x* + 1 or more; a SYN only at the origin, before any data), so
+      the bound is *x* + 1. Since ``0.23`` this is the common case, and the
+      looser bound below stalled the merge on it: a pure ACK at 0 held back
+      the data whose ack, position 0, it does not answer.
+    * **Unplaceable**: no offset to bound with, so where the stream has
+      already reached.
+
+    A peer whose origin is not known yet — no ``isn``, and nothing placed — has
     no position to compare with, so it holds nothing back.
     """
     head = frontier.head
@@ -445,7 +496,12 @@ def _pair_ready(frontier: _Frontier, peer: _Frontier) -> bool:
     if peer.head is None or peer.placer.origin is None:
         return True
     acked = frontier.acks.position(frontier.head_ack, peer.placer.origin)
-    peer_end = peer.head_end if peer.head_end is not None else peer.reached
+    if peer.head_end is not None:
+        peer_end = peer.head_end
+    elif peer.head_offset is not None:
+        peer_end = max(peer.reached, peer.head_offset + 1)
+    else:
+        peer_end = peer.reached
     return acked < peer_end
 
 
@@ -604,9 +660,9 @@ class _StoredOrder:
         placer = self._placers.get(pid)
         if placer is None:
             placer = self._placers[pid] = _StreamPlacer(self._isns.get(pid))
-        offset = placer.place(record)
-        if self._ack_checks and offset is not None and placer.origin is not None:
-            self._check_not_already_acked(record, offset + len(record.payload), placer.origin)
+        end = _sequence_end(record, placer.place(record))
+        if self._ack_checks and end is not None and placer.origin is not None:
+            self._check_not_already_acked(record, end, placer.origin)
         if self._ack_checks and record.ack is not None:
             walk = self._acks.get(pid)
             if walk is None:
@@ -616,9 +672,10 @@ class _StoredOrder:
     def _check_not_already_acked(self, record: Record, end: int, origin: int) -> None:
         """Raise if an earlier peer record already acknowledged this record's bytes.
 
-        An unplaceable record never reaches here: it has no end, so no edge
-        runs from it. Its own ``ack`` is still walked by :meth:`observe`, so it
-        is placed after the peer bytes that ack covers (`zipline#157
+        A record with no end never reaches here — a pure ACK, a bare RST, or
+        an unplaceable record — since no edge runs from it. Its own ``ack`` is
+        still walked by :meth:`observe`, so it is placed after the peer bytes
+        that ack covers (`zipline#157
         <https://github.com/adamkjonsson/zipline/issues/157>`_).
         """
         for other_pid, walk in self._acks.items():

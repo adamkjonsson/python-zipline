@@ -22,9 +22,11 @@ it back from the installed distribution metadata.
 
 ## [Unreleased]
 
-Implements spec **v0.22** (`SPEC_VERSION == (0, 22)`), up from `0.21`. Files
+Implements spec **v0.23** (`SPEC_VERSION == (0, 23)`), up from `0.21`. Files
 written by `0.5.x` are refused at the version gate, and files written by this
-release are unreadable by `0.5.x` — the `0.x` rule, as before.
+release are unreadable by `0.5.x` — the `0.x` rule, as before. No release of
+this library implements `0.22`: `0.23` followed it within days, to fix the
+pure-ACK edge this port found, and this release takes both.
 
 ### Changed
 
@@ -66,6 +68,27 @@ output is opened, as `params_digest` has been since `0.5.1`. Its default is
 a stage that declares its own decoder still defaults to the decoded layer. A
 call that passed both now raises: pass the layer to `add_decoder()`, or give
 `decode_stage` a decoder name.
+
+**A pure ACK draws no edge, so a flow with stored pure ACKs merges and
+verifies** ([zipline#160](https://github.com/adamkjonsson/zipline/issues/160)).
+Through `0.22` every record had an end, its offset plus its length, so a
+zero-length pure ACK ended at its offset. An ack reaching that offset drew an
+edge from the pure ACK backwards to the data it answered, and the ordinary
+handshake, data, pure-ACK trace made a cycle: `verify()` and the writer's
+linearize guard refused a correct order, and `timeline()` stalled. `0.21` did
+the same; nothing had met it because no producer stored pure ACKs. Since
+`0.23` a record's end is one past the last sequence number it occupies:
+
+- data: its offset plus its length, FIN or not;
+- a zero-length SYN: its offset (the SYN occupies `isn`, one below);
+- a zero-length FIN: its offset plus one;
+- a pure ACK or bare RST: **none**, so no edge runs from it. Its own `ack`
+  still orders it.
+
+The merge also waits less: a peer record with no end now holds a record back
+only for what could follow it, where it held back records whose ack it could
+not answer. A merge that worked before gives the same order, except where it
+stalled.
 
 ### Added
 

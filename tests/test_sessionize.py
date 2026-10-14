@@ -283,3 +283,68 @@ def test_the_decoder_is_always_declared_at_the_transport_layer():
         assert (decoder.name, decoder.version, decoder.params_digest) == (
             "tcp-reassembly", "2", "sha256:aa",
         )
+
+
+# --- Inner pure ACKs (zipline#160, 0.23) ------------------------------------------
+
+
+def packet_stream(*sizes: int) -> bytes:
+    """Build a packet stream of the given sizes; the test knows what each one is."""
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1_000_000, produced_by="t", produced_at=1) as writer:
+        outer = writer.add_source("zpf-input", uri="outer.zpf", digest="sha256:00")
+        decrypt = writer.add_decoder("wireguard-decrypt", output_layer=zpf.OutputLayer.DECODED)
+        session = writer.begin_session(proto="ip", session_id=5)
+        tunnel = session.participant("10.8.0.2", adjacency=zpf.Adjacency.UNITS)
+        for k, size in enumerate(sizes):
+            session.record(
+                tunnel, ts=1000 + 100 * k, payload=bytes([0x45]) * size,
+                decoded=zpf.Decoded(
+                    decoder=decrypt, content_type=zpf.NET_IP,
+                    spans=[zpf.Span(source_id=outer.source_id, session_id=1,
+                                    participant_id=0, off_start=80 * k, off_end=80 * k + 80)],
+                ),
+            )
+    return sink.getvalue()
+
+
+@pytest.mark.parametrize("sequenced", [True, False])
+def test_an_inner_pure_ack_is_a_zero_length_record_citing_its_packet(sequenced: bool):
+    """Every input packet is covered, and the flow still orders.
+
+    A pure-ACK packet carries no payload, but its bytes in the input still owe
+    coverage, and its ack is ordering information. A zero-length record citing
+    the packet keeps both. Through 0.22 that record ended at its offset, so
+    the handshake, data, pure-ACK flow below was refused when sequenced and
+    stalled when merged (zipline#160).
+    """
+    # SYN, SYN-ACK, 8 bytes of client data, and the server's pure ACK, as
+    # 40-, 40-, 48- and 40-byte packets.
+    raw = packet_stream(40, 40, 48, 40)
+    sink = io.BytesIO()
+    with zpf.sessionize_stage(
+        io.BytesIO(raw), sink, decoder="tcp-reassembly", produced_by="t", produced_at=2
+    ) as stage:
+        (stream,) = stage.streams()
+        packets = [(d.off_start, d.off_end) for d in stream.datagrams()]
+        flow = stage.session("c -> s", proto="tcp", sequenced=sequenced)
+        client = flow.participant("10.0.0.1:51000", isn=1000)
+        server = flow.participant("10.0.0.2:80", isn=5000)
+        syn = zpf.RecordFlags.SYN
+        for sender, payload, seq, ack, flags, packet in (
+            (client, b"", 1001, None, syn, packets[0]),
+            (server, b"", 5001, 1001, syn, packets[1]),
+            (client, b"GET /\r\n\r", 1001, 5001, zpf.RecordFlags.PSH, packets[2]),
+            (server, b"", 5001, 1009, 0, packets[3]),  # the pure ACK
+        ):
+            flow.record(sender, payload, cites=stream.cite(*packet),
+                        hints=zpf.Hints(seq_start=seq, ack=ack), flags=flags)
+
+    with zpf.open(io.BytesIO(sink.getvalue())) as out:
+        assert out.diagnostics == []
+        (session,) = out.sessions()
+        assert session.sequenced is sequenced
+        if sequenced:
+            session.verify()
+        assert [r.timestamp for r in session.timeline()] == [1000, 1100, 1200, 1300]
+    assert zpf.check_coverage(io.BytesIO(sink.getvalue()), io.BytesIO(raw)) == []

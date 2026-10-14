@@ -489,6 +489,22 @@ sequence numbers assert that the bytes join and a break between them would be
 a range no record covers. The stage takes your word for them. A record without
 `seq_start` cites one range only.
 
+**A pure ACK is a zero-length record citing its packet.** Its packet's bytes
+in the input owe coverage like any other, and its `ack` is ordering
+information, so record it rather than leave it to auto-fill:
+
+```python
+session.record(sender, b"", cites=stream.cite(dg.off_start, dg.off_end),
+               hints=zpf.Hints(seq_start=flow.seq, ack=flow.ack))
+```
+
+Since `0.23` it orders the way TCP does: its `ack` places it after the peer
+bytes it acknowledges, and it occupies no sequence number, so nothing is
+ordered after it on its account. (Through `0.22` a zero-length record ended at
+its offset, so the ordinary handshake, data, pure-ACK flow could not be merged.
+A SYN and a FIN each occupy one sequence number, and still order what
+acknowledges them.)
+
 Use `decode_stage(..., output_layer=zpf.OutputLayer.TRANSPORT)` when the
 mapping *is* one to one — a reassembler over an input whose streams are already
 the flows.

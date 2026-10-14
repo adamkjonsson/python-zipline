@@ -43,7 +43,11 @@ Four traps worth naming, because each looks like a bug and is not:
   unplaceable record anchors nothing. An `ack` is a **signed position in the
   peer's offset space**, walked the same way along the acker's records, the
   first measured from the peer's origin; the merge and the sequenced check
-  compare it with record *ends* as plain integers, never serially. Both walks
+  compare it with record *ends* as plain integers, never serially. Since
+  `0.23` a record's end is one past the last **sequence number** it occupies:
+  data ends at offset + length, a zero-length SYN at its offset, a zero-length
+  FIN at offset + 1, and a pure ACK or bare RST has **no end**, so no edge runs
+  from it (`_sequence_end` in `order.py`). Both walks
   are `_Walk` in `order.py` (`_Placer` for offsets, `_AckWalk` for acks), and
   the checker and the writer's guard use the same anchor. A stream past
   2 GiB, or one whose sequence numbers pass through 2³², is conformant,

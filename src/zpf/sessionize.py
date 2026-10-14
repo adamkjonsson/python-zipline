@@ -52,6 +52,12 @@ transport record that carries ``seq_start`` MAY cite several input units, or
 cross a break its input declares — its sequence numbers say the bytes join,
 and a break between them would be a range no record covers, which cannot be
 lost.
+
+A **pure ACK** is a zero-length record citing its packet, with its ``ack``:
+the packet owes coverage, and the ack orders it. Since ``0.23``
+(`zipline#160 <https://github.com/adamkjonsson/zipline/issues/160>`_) it
+occupies no sequence number, so it orders nothing after it — which is what
+lets a flow with stored pure ACKs be merged and verified.
 """
 
 from __future__ import annotations
