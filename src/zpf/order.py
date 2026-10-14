@@ -21,8 +21,9 @@ record end can be arbitrarily far apart. So since ``0.22`` neither is
 compared raw (`zipline#151 <https://github.com/adamkjonsson/zipline/issues/151>`_):
 both are **unwrapped** into the peer's offset space by ``_Walk``, which
 steps from one value to the next by :func:`serial_delta`, and compared as
-plain integers. A record's end is its offset plus its length
-(``_Placer``); an ack's position is walked along its sender's records
+plain integers. A record's end is one past the last sequence number it
+occupies, from its offset (``_Placer``) and since ``0.23`` its flags
+(``_sequence_end``); an ack's position is walked along its sender's records
 (``_AckWalk``). Serial comparison survives only between consecutive
 ``seq_start`` values, for the per-participant ordering rule.
 

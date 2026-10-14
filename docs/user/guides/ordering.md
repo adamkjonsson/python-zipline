@@ -111,6 +111,40 @@ If the two directions' hints are inconsistent — each acknowledging bytes the
 other never sent — the merge stalls and `end()` raises rather than inventing an
 order.
 
+## What an ack orders, and what it does not
+
+An `ack` orders a record after the peer's bytes it acknowledges. Two things
+about that comparison are worth knowing, because each was once wrong and each
+changes what a file may hold.
+
+**It holds at any stream length.** An ack and the end of the record it covers
+can be gigabytes apart, so neither is compared as a raw 32-bit sequence number.
+Both are unwrapped into the peer's offset space, the way offsets are, and
+compared as integers. A sequenced upload past 2 GiB whose server only sends
+pure ACKs verifies, and merges. (Since `0.22`; through `0.21` it was refused at
+its 2 GiB record.)
+
+**An ack covers sequence numbers, not records.** A record's end, the value an
+ack must reach to cover it, is one past the last sequence number it occupies:
+
+| Record | End |
+| ------ | --- |
+| carries data, FIN or not | its offset plus its length |
+| zero-length SYN | its offset — the SYN occupies `isn`, one below the origin |
+| zero-length FIN | its offset plus one |
+| pure ACK, bare RST | **none** — it occupies no sequence number |
+
+So **store pure ACKs as zero-length records**, as the specification advises:
+each one's `ack` orders it after the data it answers, and nothing is ordered
+after it on its account. (Since `0.23`; through `0.22` a pure ACK ended at its
+offset, so the ordinary handshake, data, pure-ACK flow was refused when
+sequenced and stalled when merged.)
+
+```python
+session.record(server, ts=t, payload=b"",
+               hints=zpf.Hints(seq_start=server_next_seq, ack=client_bytes_seen))
+```
+
 ## Timestamps are not an ordering invariant
 
 Worth stating plainly, because it is the rule most readers get wrong: stored

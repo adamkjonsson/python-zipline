@@ -163,13 +163,13 @@ subject, from the reader's side.
 ## Going beyond the standard
 
 Per `CLAUDE.md`, support must stay complete *and* must not silently exceed the
-v0.21 spec: any behavior beyond the standard has to be flagged to the user with
+v0.23 spec: any behavior beyond the standard has to be flagged to the user with
 an explicit callout. The checker's rules are the spec's, and the two out-of-band
 checks (sequenced order, coverage) are spec requirements enforced elsewhere,
-not extensions. A new rule that isn't in v0.21 does not belong in the
+not extensions. A new rule that isn't in v0.23 does not belong in the
 `ConformanceChecker`.
 
-**Two things exceed the standard.** One is on the write side:
+**Three things exceed the standard.** Two are on the write side. The first:
 {meth}`~zpf.SessionWriter.record` refuses a payload-carrying record whose
 `seq_start` is below the stream origin. The format permits that file — the record
 is unplaceable, its bytes are in no offset, and a reader accepts and reports —
@@ -186,6 +186,15 @@ a file, places the record at zero width, and reports it under `unplaceable`.
 Being stricter than the format about what we *write* costs a producer nothing
 it wants; being stricter about what we *read* would refuse files the format
 says are fine.
+
+The second is the sessionization stage's: {meth}`FlowSession.record
+<zpf.sessionize.FlowSession.record>` refuses a record citing more than one
+input range unless it carries `seq_start`. Since `0.22` a sequence-anchored
+transport record MAY cross its input's seams, and one without sequence numbers
+owes both duties — it may not cross a break. The format would still allow two
+*adjacent* ranges where the input joins there; the stage cannot tell, so it
+refuses both, and splitting the citation into one record per range loses
+nothing. The docstring names it as stricter than the format.
 
 The other is on the read side, and it is a *reading* rather than a rule:
 {meth}`StreamView.units <zpf.reassembly.StreamView.units>` reports a unit
@@ -267,7 +276,7 @@ silently).
 `advisory` declares **one** violation instead of none, and the reader must
 both accept the file completely *and* report it. It is a key because a tier
 names what a reader *does*, and a reader accepts these files. It was the
-format's first violation that accepts — there are three at `0.21`, two labels
+format's first violation that accepts — there are three, unchanged since `0.21`: two labels
 and `units` on a transport participant — and the harness asserts both halves:
 silence fails the case as loudly as rejecting it would.
 

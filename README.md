@@ -5,13 +5,13 @@
 The Zipline Payload Format (`.zpf`) stores the payload of network traffic —
 the bytes exchanged between endpoints once packets have been reassembled into
 sessions, plus the metadata needed to consume them. This library implements
-[version 0.21](https://github.com/adamkjonsson/zipline/blob/v0.21/docs/zipline-payload-format.md)
+[version 0.23](https://github.com/adamkjonsson/zipline/blob/v0.23/docs/zipline-payload-format.md)
 of the format, specified in the
 [zipline repository](https://github.com/adamkjonsson/zipline).
 
 > ⚠️ **Not ready for production — neither the format nor this library.**
 >
-> The specification is at `0.21` and says so itself: it is *a design in
+> The specification is at `0.23` and says so itself: it is *a design in
 > progress*, `1.0` is reserved for a version that has survived implementation,
 > and any minor release may change anything, including in ways that break
 > existing readers. Several already have. This library is pre-1.0 in its own
@@ -30,18 +30,22 @@ belongs to an unrelated project.
 
 ## Features
 
-- Complete 0.21 support: the binary container and the JSON-Lines projection,
+- Complete 0.23 support: the binary container and the JSON-Lines projection,
   captured and derived streams at the transport and decoded layers, with
   lossless converters.
-- Verified against the specification's own 62 conformance vectors, vendored in
+- Verified against the specification's own 68 conformance vectors, vendored in
   [`tests/vectors/`](tests/vectors/) and run by the test suite — every one of
-  them passing, negative tiers included. Six vector defects have been found
+  them passing, negative tiers included. Seven vector defects have been found
   from here and fixed upstream ([`VECTOR-DEFECTS.md`](VECTOR-DEFECTS.md)).
 - An ergonomic writer (`zpf.create`) that makes non-conformant files hard to
   write, and a session-first reader (`zpf.open`) with lazy record access.
 - Causal ordering: `session.timeline()` orders records by TCP seq/ack
   happens-before, so directions captured with skewed clocks interleave
   correctly; the merge transform bakes that order into a sequenced file.
+- Decode stages and sessionization stages, with coverage, extents and
+  timestamps kept for you: `zpf.decode_stage` maps each input stream to an
+  output one, and `zpf.sessionize_stage` fans a packet stream (a decrypted
+  tunnel's, labelled `net:ip`) out into one session per flow.
 - Conformance checking against the specification's semantic rules, plus a
   decode-stage coverage validator.
 - Zero runtime dependencies; fully type-annotated.
