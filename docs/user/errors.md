@@ -50,9 +50,9 @@ A few of the format's MUSTs bind the *writer* alone, because they leave a
 reader nothing it could act on. Two exist today:
 
 - **A `prim:` content type the payload contradicts** — an illegal token, or a
-  width that disagrees with `payload_len`. The reader "MUST NOT pad,
-  truncate, or reinterpret", so it keeps the payload untouched and treats the
-  label as unknown.
+  width that disagrees with `payload_len` — **or a `net:` token outside the
+  vocabulary**. The reader "MUST NOT pad, truncate, or reinterpret", so it
+  keeps the payload untouched and treats the label as unknown.
 - **A `content_type` at the transport layer.** A transport record's
   boundaries are wherever the reassembler chunked the stream, so a label
   asserting what the unit *is* asserts a unit where there is a slice. Dropping
@@ -90,8 +90,8 @@ with zpf.open("suspect.zpf") as reader:
 {meth}`zpf.Record.content` reads a payload as its `content_type` says, and
 {meth}`zpf.FileReader.content` does the same with your
 {class}`~zpf.ContentRegistry` handlers for the advisory schemes. When the
-label can't be honoured — an unusable `prim:` width, a `mime:`/`dec:` label
-with no handler registered, or no label at all — the format's answer is the
+label can't be honoured — an unusable `prim:` width, an undefined `net:`
+token, a `mime:`/`dec:` label with no handler registered, or no label at all — the format's answer is the
 raw payload, so `content()` returns bytes and raises nothing. Pass
 `strict=True` when that ambiguity matters (bytes as *the value* versus bytes
 as *the fallback*) and the same case raises {class}`~zpf.ContentError`

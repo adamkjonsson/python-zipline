@@ -254,12 +254,13 @@ same file → file mechanism applied twice.
 
 A record may label what its payload *is*, as `scheme:value`. The label is
 metadata *about* the bytes, never a replacement for them — the format's rule
-is that **the bytes always stay the source of truth**. Three schemes exist,
+is that **the bytes always stay the source of truth**. Four schemes exist,
 and the format defines them to very different depths:
 
 | Scheme | What the format settles |
 | ------ | ----------------------- |
 | `prim:<token>` | **Everything.** A closed vocabulary (`u8`…`u64`, `i8`…`i64`, `bytes`), little-endian byte order, signedness from the token's `u`/`i`, and a width that MUST equal `payload_len`. |
+| `net:<token>` | **What the unit is**, not its fields. A closed vocabulary (`net:ip`, `net:ethernet`): the payload is exactly one packet or frame, meaning what the pcap link type means — `LINKTYPE_RAW` and `LINKTYPE_ETHERNET` (without the FCS). No length binds, and nothing checks the payload: whether it is an IP packet is protocol parsing, which the format does not do. Since `0.22`. |
 | `mime:<type>` | Only that the value is an IANA media type. Nothing about turning the bytes into a value. |
 | `dec:<token>` | Nothing: a type **private to the record's decoder**, meaning whatever that decoder documents. |
 
@@ -273,6 +274,14 @@ enough to interpret a record: {meth}`Record.content
 `dec:` needs the file — {meth}`FileReader.content
 <zpf.reader.FileReader.content>`, which can do that lookup.
 
+`net:` exists for the opposite reason. A packet-preserving stage — a tunnel
+decryptor emitting one inner packet per record — used to label its records
+with a `dec:` token, which only that decoder's documentation defines. A
+generic stage downstream, such as a sessionizer that should work over any
+tunnel's packets, then had to be told each producer's token. `net:ip` means
+the same thing whoever wrote it, so a consumer can match it
+({data}`zpf.NET_IP`) without knowing the decoder.
+
 Two fallback rules follow from bytes-as-truth, and both are normative:
 
 - **An unknown scheme is opaque** — not an error. The payload is simply bytes.
@@ -280,10 +289,13 @@ Two fallback rules follow from bytes-as-truth, and both are normative:
   unknown**, and the reader "MUST NOT pad, truncate, or reinterpret". Emitting
   such a record is a *writer* violation, so `zpf` refuses to write one; on
   read it is reported as a diagnostic and the record is kept intact (see
-  [`AdvisoryError`](errors.md#advisoryerror-a-writer-only-must)).
+  [`AdvisoryError`](errors.md#advisoryerror-a-writer-only-must)). A `net:`
+  token outside the vocabulary is the same: opaque to a reader, refused to a
+  writer.
 
-Because `mime:` and `dec:` mean nothing the format defines, interpreting them
-is a **caller-supplied** claim: you register handlers in a
+Because `mime:` and `dec:` mean nothing the format defines, and `net:`
+defines the unit but not how to parse it, interpreting any of them is a
+**caller-supplied** claim: you register handlers in a
 {class}`~zpf.ContentRegistry`. The [decoding guide](guides/decoding.md#reading-payload-content)
 shows both halves — labelling on write, interpreting on read.
 

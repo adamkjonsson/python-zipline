@@ -49,7 +49,15 @@ from zpf.blocks import (
     parse_block,
 )
 from zpf.conformance import ConformanceChecker
-from zpf.content import PRIM_WIDTHS, ContentRegistry, ContentType, decode_prim
+from zpf.content import (
+    NET_ETHERNET,
+    NET_IP,
+    NET_LINK_TYPES,
+    PRIM_WIDTHS,
+    ContentRegistry,
+    ContentType,
+    decode_prim,
+)
 from zpf.decode import DecodeStage, DecodeStream, Seam, decode_stage
 from zpf.errors import (
     AdvisoryError,
@@ -151,6 +159,9 @@ __all__ = [
     "InputRef",
     "JsonlReader",
     "JsonlWriter",
+    "NET_ETHERNET",
+    "NET_IP",
+    "NET_LINK_TYPES",
     "NameResolution",
     "PRIM_WIDTHS",
     "Participant",

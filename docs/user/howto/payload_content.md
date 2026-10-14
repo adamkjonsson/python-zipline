@@ -1,7 +1,7 @@
 # Read payloads as typed values
 
 A record's `content_type` says what its payload is — `prim:u32`,
-`mime:application/json`, `dec:request`. This is the recipe for reading
+`net:ip`, `mime:application/json`, `dec:request`. This is the recipe for reading
 payloads *through* that label instead of by hand; the feature behind it, and
 what the format does and does not define, is in the
 [decoding guide](../guides/decoding.md#reading-payload-content).
@@ -23,12 +23,33 @@ with zpf.open("metrics.zpf") as reader:
 
 Anything the label can't honour returns the payload bytes unchanged.
 
-## `mime:` and `dec:` need a registry
+## `net:` says what the unit is
+
+`net:ip` and `net:ethernet` say a payload is exactly one IP packet or one
+Ethernet frame (without the FCS), meaning what pcap's `LINKTYPE_RAW` and
+`LINKTYPE_ETHERNET` mean. The label *is* the meaning, so `content()` returns
+the packet, and `strict=True` has nothing to refuse:
+
+```python
+with zpf.open("packets.zpf") as reader:
+    for record in reader.session(5).records():
+        if record.content_type == zpf.NET_IP:
+            packet = record.content(strict=True)   # one whole IP packet
+            version = packet[0] >> 4               # 4 or 6, from the version nibble
+```
+
+The format parses no packets, so neither does `zpf`: reading the packet's
+fields is your code's job, registered like any other handler below. The
+match is on the token alone — a `net:ip` record means the same thing
+whichever decoder wrote it, which is what lets one consumer serve any
+producer's packets.
+
+## `mime:`, `dec:` and `net:` need a registry
 
 ```{warning}
 **Beyond the standard.** The format calls these labels advisory: it defines no
-decoding for either. A handler's answer is *your* claim about the bytes, not
-the format's — which is why nothing here is on by default.
+decoding for any of them. A handler's answer is *your* claim about the bytes,
+not the format's — which is why nothing here is on by default.
 ```
 
 Register handlers, pass the registry to {func}`zpf.open`, and read through
@@ -45,6 +66,7 @@ def parse_request(payload: bytes) -> dict[str, str]:
 registry = zpf.ContentRegistry()
 registry.register_mime("application/json", json.loads)
 registry.register_dec("http/1.1", "request", parse_request)   # decoder NAME, token
+registry.register_net("ip", lambda packet: packet[0] >> 4)      # token alone
 
 with zpf.open("rest_decoded.zpf", content=registry) as reader:
     for record in reader.session(0).records():
@@ -58,12 +80,13 @@ mime:application/json dict {'status': 200}
 prim:u32 int 1234
 ```
 
-Three rules to register by:
+Four rules to register by:
 
 | Scheme | Key | Matching |
 | ------ | --- | -------- |
 | `mime:` | the media type | case-insensitive, parameters ignored — one `text/plain` handler serves `mime:text/plain; charset=utf-8` |
 | `dec:` | the producing decoder's **`name`** plus the token | exact; `dec:request` from `http/1.1` and from `smtp` are different types |
+| `net:` | the token | exact; only `ip` and `ethernet` can be registered, since any other token is opaque |
 | `prim:` | — | built in and not overridable |
 
 ## Fail instead of falling back

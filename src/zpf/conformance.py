@@ -104,7 +104,7 @@ from zpf.blocks import (
     SourceKind,
     Undecoded,
 )
-from zpf.content import ContentType, prim_fault
+from zpf.content import ContentType, net_fault, prim_fault
 from zpf.errors import AdvisoryError, SemanticError
 from zpf.order import SEQ_SPACE, seq_leq, serial_delta
 from zpf.reassembly import layer_name
@@ -646,7 +646,7 @@ class ConformanceChecker:
             raise SemanticError(msg)
         # Isolating checks before any state mutation, so a raised violation
         # leaves the checker consistent (block isolation).
-        self._note(_prim_finding(block, described))
+        self._note(_content_type_finding(block, described))
         self._note(_handshake_placement(block, stream, described))
         self._check_placement(block, stream, described)
         self._check_record_order(block, stream, described)
@@ -1279,24 +1279,31 @@ def _reason_class(block: Undecoded) -> str | None:
     return UNDECODED_REASONS.get(block.reason or "")
 
 
-def _prim_finding(block: Record, described: str) -> str | None:
-    """Return the record's advisory ``prim:`` finding, or None if it has none.
+def _content_type_finding(block: Record, described: str) -> str | None:
+    """Return the record's advisory ``content_type`` finding, or None.
 
-    The specification closes the ``prim:`` vocabulary and binds each token's
-    width to ``payload_len``, but it also tells a reader meeting an illegal
-    token or a width mismatch to treat the label as unknown and keep the
-    payload — it "MUST NOT pad, truncate, or reinterpret". So this is a
-    writer obligation whose breach costs a reader nothing: reported, never
-    isolating. It is the exact complement of
-    :func:`~zpf.content.decode_prim` returning None on a ``prim:`` label.
+    Two schemes have closed vocabularies. The specification closes ``prim:``
+    and binds each token's width to ``payload_len``, and closes ``net:`` to
+    the link types it names (``0.22``). For both it also tells a reader
+    meeting a label it cannot honour to treat it as unknown and keep the
+    payload — for ``prim:`` it "MUST NOT pad, truncate, or reinterpret". So
+    this is a writer obligation whose breach costs a reader nothing:
+    reported, never isolating. It is the exact complement of
+    :func:`~zpf.content.decode_prim` returning None on a ``prim:`` label,
+    and of :attr:`~zpf.content.ContentType.link_type` returning None on a
+    ``net:`` one. A ``net:`` payload is never checked against its label: the
+    format parses no packets.
     """
     content_type = block.content_type
     if content_type is None:
         return None
     parsed = ContentType.parse(content_type)
-    if not parsed.is_prim:
+    if parsed.is_prim:
+        fault = prim_fault(block.payload, parsed.value)
+    elif parsed.is_net:
+        fault = net_fault(parsed.value)
+    else:
         return None
-    fault = prim_fault(block.payload, parsed.value)
     if fault is None:
         return None
     return f"{described} content_type {content_type!r} {fault}"

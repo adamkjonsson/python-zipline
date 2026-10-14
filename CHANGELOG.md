@@ -56,6 +56,29 @@ participant missing from it is anchored at its first captured byte.
 `SessionReader.verify()`, `SessionReader.timeline()`, the writer and
 `merge_files` pass their participants' values.
 
+### Added
+
+**`net:`, the fourth `content_type` scheme**
+([zipline#153](https://github.com/adamkjonsson/zipline/issues/153),
+[#156](https://github.com/adamkjonsson/zipline/issues/156)). A record labelled
+`net:ip` or `net:ethernet` is exactly one IP packet or one Ethernet frame
+(without the FCS), meaning what pcap's `LINKTYPE_RAW` and `LINKTYPE_ETHERNET`
+mean. It is the label a packet-preserving stage gives its records, and the one
+a generic consumer matches, whichever decoder wrote them; through `0.21` such
+a stage could only use a decoder-private `dec:` token.
+
+- `zpf.NET_IP` and `zpf.NET_ETHERNET` are the two labels, and
+  `zpf.NET_LINK_TYPES` maps each token to its link type.
+  `ContentType.is_net` and `ContentType.link_type` read a parsed label.
+- `Record.content()` returns a `net:` payload as the label's meaning, so
+  `strict=True` does not raise for it.
+- `ContentRegistry.register_net(token, handler)` dispatches by token alone.
+  Parsing a packet is beyond the format, so a handler's answer is the caller's
+  claim, as for `mime:` and `dec:`.
+- A `net:` token outside the vocabulary is opaque to a reader and refused to a
+  writer, the way an illegal `prim:` token is. Nothing checks a `net:`
+  payload against its label: the format parses no packets.
+
 ## [0.5.2] - 2026-10-13
 
 Implements spec **v0.21** (`SPEC_VERSION == (0, 21)`), unchanged from `0.5.1`.
