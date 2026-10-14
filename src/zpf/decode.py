@@ -754,6 +754,15 @@ def decode_stage(  # noqa: PLR0913
             one, since a stage reading one carries the break at every seam,
             and anything else is ``contiguous`` with :class:`Seam` for the
             seams that do not join.
+
+            **Except at the transport layer**
+            (`#84 <https://github.com/adamkjonsson/python-zipline/issues/84>`_):
+            with ``output_layer=TRANSPORT`` the default is ``contiguous``
+            whatever the input declares, and anything else is refused. A
+            writer MUST NOT set ``units`` on a transport participant, whose
+            offsets come from sequence numbers so that stored order defines
+            nothing; and a sessionization stage reads a unit sequence (a
+            tunnel decryptor's packets) as often as anything.
         input_ref: How to describe the input in the output's Source — see
             :class:`~zpf.InputRef`. Both halves default: the URI to the path
             the input was opened from, the digest to SHA-256 of its bytes.
@@ -771,7 +780,9 @@ def decode_stage(  # noqa: PLR0913
 
     Raises:
         ValueError: If ``params_digest`` is given with an already-declared
-            :class:`~zpf.DecoderHandle`.
+            :class:`~zpf.DecoderHandle`, or a transport-layer stage is given
+            an ``adjacency`` other than ``contiguous``. Both are refused
+            before the output is opened, so nothing is left behind.
         ZpfError: If the input has no File Header.
 
     """
@@ -782,6 +793,7 @@ def decode_stage(  # noqa: PLR0913
             "decode_stage a decoder name instead"
         )
         raise ValueError(msg)
+    adjacency = _stage_adjacency(decoder, output_layer, adjacency)
     reader, owns_reader = _open_input(source)
     try:
         header = reader.header
@@ -828,6 +840,31 @@ def _open_input(
     if isinstance(source, FileReader):
         return source, False
     return FileReader(source), True
+
+
+def _stage_adjacency(
+    decoder: str | tuple[str, str | None] | DecoderHandle,
+    output_layer: OutputLayer | int,
+    adjacency: Adjacency | int | None,
+) -> Adjacency | int | None:
+    """Return the ``adjacency`` the stage's participants declare (#84).
+
+    A stage that declares its own decoder at the transport layer writes
+    ``contiguous``, never the input's ``units``: a writer MUST NOT set
+    ``units`` there. A :class:`~zpf.DecoderHandle` carries no layer, so a
+    handle's stage keeps the caller's value, as before.
+    """
+    transport = not isinstance(decoder, DecoderHandle) and output_layer == OutputLayer.TRANSPORT
+    if not transport:
+        return adjacency
+    if adjacency is not None and adjacency != Adjacency.CONTIGUOUS:
+        msg = (
+            f"a transport-layer stage cannot declare adjacency {adjacency!r}: its "
+            f"offsets come from sequence numbers, so stored order defines nothing, and "
+            f"a writer MUST NOT set units there. Leave adjacency at its default"
+        )
+        raise ValueError(msg)
+    return Adjacency.CONTIGUOUS
 
 
 def _declare_decoder(

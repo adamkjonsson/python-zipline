@@ -79,6 +79,17 @@ a stage could only use a decoder-private `dec:` token.
   writer, the way an illegal `prim:` token is. Nothing checks a `net:`
   payload against its label: the format parses no packets.
 
+### Fixed
+
+**A transport-layer `decode_stage` over a unit sequence wrote nothing**
+([#84](https://github.com/adamkjonsson/python-zipline/issues/84)). Its
+participants inherited the input's `adjacency = units`, which a writer MUST NOT
+set on a transport participant, so the writer refused the stage's first
+record. A unit sequence is what a tunnel decryptor writes, so this was the
+sessionization path's main input. A transport-layer stage now declares
+`contiguous`, and refuses an explicit `adjacency` other than that before the
+output is opened.
+
 ## [0.5.2] - 2026-10-13
 
 Implements spec **v0.21** (`SPEC_VERSION == (0, 21)`), unchanged from `0.5.1`.

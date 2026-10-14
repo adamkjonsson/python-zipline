@@ -5,14 +5,11 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
 import zpf
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 REQUEST = b"GET /a HTTP/1.1\r\n\r\n"
 RESPONSE = b"HTTP/1.1 200 OK\r\n\r\n"
@@ -1303,3 +1300,65 @@ def test_a_refused_record_is_not_counted_as_coverage():
 
     assert undecoded_by_stream(sink.getvalue())[7, 0, 0, len(REQUEST)].reason == "skipped"
     assert zpf.check_coverage(io.BytesIO(sink.getvalue()), io.BytesIO(raw)) == []
+
+
+# --- A transport-layer stage over a unit sequence (#84) -------------------------------
+
+UNITS_INPUT = Path(__file__).parent / "vectors" / "unit-sequence-nested"
+UNITS_INPUT /= "unit-sequence-nested.zpf"
+
+
+def _sessionize_one_record(sink: io.BytesIO, adjacency: zpf.Adjacency | int | None = None) -> None:
+    with zpf.decode_stage(
+        UNITS_INPUT, sink, decoder="tcp-reassembly", produced_by="t 1.0", produced_at=1,
+        output_layer=zpf.OutputLayer.TRANSPORT, adjacency=adjacency,
+    ) as stage:
+        stream = stage.streams()[0]
+        stage.record(stream, b"abcd", ts=1, cites=(0, 4), hints=zpf.Hints(seq_start=1001))
+
+
+def test_a_transport_stage_over_a_unit_sequence_declares_contiguous():
+    """#84: a transport stage no longer inherits its input's ``units``.
+
+    It was carried onto transport participants, and the writer refused the
+    stage's first record for it.
+    """
+    with zpf.open(UNITS_INPUT) as source:
+        assert {p.adjacency for s in source.sessions() for p in s.participants} == {
+            zpf.Adjacency.UNITS
+        }
+    sink = io.BytesIO()
+    _sessionize_one_record(sink)
+    with zpf.open(io.BytesIO(sink.getvalue())) as out:
+        assert out.complete
+        assert out.diagnostics == []
+        assert {p.adjacency for s in out.sessions() for p in s.participants} == {
+            zpf.Adjacency.CONTIGUOUS
+        }
+
+
+def test_a_transport_stage_accepts_an_explicit_contiguous():
+    sink = io.BytesIO()
+    _sessionize_one_record(sink, adjacency=zpf.Adjacency.CONTIGUOUS)
+    with zpf.open(io.BytesIO(sink.getvalue())) as out:
+        assert out.diagnostics == []
+
+
+@pytest.mark.parametrize("adjacency", [zpf.Adjacency.UNITS, 7])
+def test_a_transport_stage_refuses_any_other_adjacency_before_writing(adjacency: int):
+    sink = io.BytesIO()
+    with pytest.raises(ValueError, match="transport-layer stage cannot declare adjacency"):
+        _sessionize_one_record(sink, adjacency=adjacency)
+    assert sink.getvalue() == b""
+
+
+def test_a_decoded_stage_still_carries_a_unit_sequence_forward():
+    sink = io.BytesIO()
+    with zpf.decode_stage(
+        UNITS_INPUT, sink, decoder="fields", produced_by="t 1.0", produced_at=1
+    ):
+        pass
+    with zpf.open(io.BytesIO(sink.getvalue())) as out:
+        assert {p.adjacency for s in out.sessions() for p in s.participants} == {
+            zpf.Adjacency.UNITS
+        }
