@@ -627,10 +627,22 @@ def test_accept(case: Case) -> None:
     survives, because a reader preserves what it does not act on — but a
     diagnostic is owed, so silence fails the case just as loudly as
     rejecting it would.
+
+    **Every session is also put in order**
+    (`#83 <https://github.com/adamkjonsson/python-zipline/issues/83>`_): a
+    SEQUENCED one is verified, every other one is merged. Both are opt-in on
+    the reader, so reading the records alone never reaches the ordering
+    code. Without this, ``sequenced-past-2gib-pure-ack``, a vector whose
+    whole point is ordering, passed while the check it targets still refused
+    it.
     """
     with zpf.open(case.path) as reader:
         for session in reader.sessions():
             list(session.records())
+            if session.sequenced:
+                session.verify()
+            else:
+                list(session.timeline())
         if case.advisory:
             assert reader.diagnostics, (
                 f"{case.name}: accepted silently, but the manifest declares a "
