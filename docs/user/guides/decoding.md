@@ -438,6 +438,61 @@ so an undecoded region can be attributed to the decoder that declined it. Only
 the `fill_undecoded` auto-fill stays on the stage default — it has no basis to
 pick a specific decoder per region.
 
+### Sessionizing a packet stream: fan-out
+
+A decode stage maps each input stream to one output participant under the same
+ids. A **sessionization stage** does not: its input is a stream of packets — a
+decrypted tunnel's, typed `net:ip` — and its output is the conversations inside
+them, one session per flow, each with fresh ids, its own `isn` and its own
+sequence numbers. That is the `packets.zpf → inner.zpf` hop of the
+specification's decrypted-tunnel example, and {func}`zpf.sessionize_stage` is
+its entry point:
+
+```python
+with zpf.sessionize_stage(
+    "packets.zpf", "inner.zpf",
+    decoder=("tcp-reassembly", "1.1"),
+    produced_by="my-sessionizer 1.0",
+    produced_at=datetime.now(tz=timezone.utc),
+) as stage:
+    for stream in stage.streams():
+        for dg in stream.datagrams():               # one inner packet each
+            if dg.record.content_type != zpf.NET_IP:
+                continue                            # left for auto-fill
+            flow = classify(dg.data)                # your packet parsing
+            session = stage.session(flow.key, proto="tcp")
+            sender = session.participant(flow.src, isn=flow.isn)
+            session.record(
+                sender, flow.payload,
+                cites=stream.cite(dg.off_start, dg.off_end),
+                hints=zpf.Hints(seq_start=flow.seq, ack=flow.ack),
+            )
+```
+
+Sessions and participants are created on first use and returned again for the
+same flow key and endpoint. What the stage keeps for you is the same as a
+decode stage, measured the way fan-out needs:
+
+- **Coverage per input stream, across every session.** No single session
+  covers the tunnel; their union does, which is why the guarantee is stated per
+  input participant stream. On a clean close, what no session cited is marked
+  `skipped` (or `gap`).
+- **Extents.** Each session's Session End declares the *whole* extent of every
+  input stream it cited, not its share.
+- **Timestamps**, derived from what each record cites.
+
+Two things it leaves to you. **Parsing**: the format says what a `net:ip`
+payload is, not what is in it, so classifying a packet is your code.
+**Sequence numbers**: since `0.22` a transport record carrying `seq_start` may
+cite several input packets, or cross a break the input declares, because its
+sequence numbers assert that the bytes join and a break between them would be
+a range no record covers. The stage takes your word for them. A record without
+`seq_start` cites one range only.
+
+Use `decode_stage(..., output_layer=zpf.OutputLayer.TRANSPORT)` when the
+mapping *is* one to one — a reassembler over an input whose streams are already
+the flows.
+
 ### Decoder chaining
 
 Chaining is the same file-to-file mechanism applied more than once:

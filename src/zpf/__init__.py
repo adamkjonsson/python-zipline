@@ -58,7 +58,7 @@ from zpf.content import (
     ContentType,
     decode_prim,
 )
-from zpf.decode import DecodeStage, DecodeStream, Seam, decode_stage
+from zpf.decode import DecodeStage, DecodeStream, InputStream, Seam, decode_stage
 from zpf.errors import (
     AdvisoryError,
     ContentError,
@@ -98,6 +98,7 @@ from zpf.reassembly import (
     stream_extent,
     stream_layer,
 )
+from zpf.sessionize import FlowSession, SessionizeStage, sessionize_stage
 from zpf.transform import (
     InputRef,
     check_coverage,
@@ -153,10 +154,12 @@ __all__ = [
     "FileHeader",
     "FileReader",
     "FileWriter",
+    "FlowSession",
     "Gap",
     "Hints",
     "InputExtent",
     "InputRef",
+    "InputStream",
     "JsonlReader",
     "JsonlWriter",
     "NET_ETHERNET",
@@ -172,6 +175,7 @@ __all__ = [
     "Contribution",
     "Segment",
     "Seam",
+    "SessionizeStage",
     "SemanticError",
     "Session",
     "SessionEnd",
@@ -203,6 +207,7 @@ __all__ = [
     "create",
     "decode_prim",
     "decode_stage",
+    "sessionize_stage",
     "detect_face",
     "dumps_block",
     "jsonl_to_binary",

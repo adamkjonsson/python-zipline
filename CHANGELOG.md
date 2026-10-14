@@ -79,6 +79,33 @@ a stage could only use a decoder-private `dec:` token.
   writer, the way an illegal `prim:` token is. Nothing checks a `net:`
   payload against its label: the format parses no packets.
 
+**`sessionize_stage`, a sessionization stage that fans out**
+([#76](https://github.com/adamkjonsson/python-zipline/issues/76)). The hop
+from a stream of packets to the conversations inside them, such as
+`packets.zpf → inner.zpf` in the specification's decrypted-tunnel example.
+`decode_stage` mirrors its input one to one under the same ids, and could not
+express it; the only route was the primitive writer API, with coverage,
+extents and timestamps done by hand.
+
+- `stage.streams()` yields the input streams, and `stage.session(key,
+  proto=…)` creates or returns the output session for a flow, with fresh ids.
+  Its `participant(endpoint, isn=…)` is cached per endpoint, and its
+  `record(participant, payload, cites=…, hints=…)` writes a transport record
+  citing the input.
+- Coverage is kept per input stream across every session, and auto-filled on
+  close. Each session's Session End declares the whole extent of every input
+  stream it cited.
+- Since `0.22` a record carrying `seq_start` may cite several input packets,
+  or cross a break the input declares
+  ([zipline#152](https://github.com/adamkjonsson/zipline/issues/152)). A
+  record without `seq_start` may cite one range only, which is stricter than
+  the format and said so in the docs.
+- `InputStream` is the input side both stages share; `DecodeStream` extends
+  it with its output pairing.
+
+Rebuilt through it, `tunnel/inner.zpf` matches the vendored file block for
+block (Source and Decoder ids aside, which are the writer's to number).
+
 ### Fixed
 
 **A transport-layer `decode_stage` over a unit sequence wrote nothing**
