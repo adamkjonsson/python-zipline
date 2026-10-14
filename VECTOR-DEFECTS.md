@@ -1,9 +1,10 @@
 # Defects in the conformance vectors
 
-**Six found, six closed.** None is live against the vectors currently vendored
-in [`tests/vectors/`](tests/vectors/), which are `v0.21`, so `DEFECTIVE` in
-[`tests/test_vectors.py`](tests/test_vectors.py) is empty. Every one was
-reported upstream and fixed in the release that followed.
+**Seven found, seven closed.** None is live against the vectors currently
+vendored in [`tests/vectors/`](tests/vectors/), which are `v0.22`, so
+`DEFECTIVE` in [`tests/test_vectors.py`](tests/test_vectors.py) is empty. Every
+one was reported upstream and fixed, the first six in the release that followed
+and the seventh before its release was tagged.
 
 | | Defect | Found against | Status |
 |---|---|---|---|
@@ -13,6 +14,7 @@ reported upstream and fixed in the release that followed.
 | 4 | `tunnel/{inner,outer}.jsonl` spell the flow key `flow_key`, not `key` | `v0.16` | Fixed in `0.17` ([#104](https://github.com/adamkjonsson/zipline/issues/104)), with a `check.py` guard building the key vocabulary from the spec's own tables |
 | 5 | `mixed-derivation`'s identity span writes `pid` and `session_id` transposed | `v0.19` | Fixed in `0.20` ([#141](https://github.com/adamkjonsson/zipline/issues/141)) — bytes and `.hex` regenerated; `o_spans` now takes logical order |
 | 6 | `handshake-at-origin` and `unplaceable-below-origin` write `tcp_role` one below the value their `.jsonl` states | `v0.18`, `v0.19` | Fixed in `0.20` ([#141](https://github.com/adamkjonsson/zipline/issues/141)) — bytes and `.hex` regenerated; `build.py` now refuses a vector whose projection is not its `.jsonl` |
+| 7 | `tunnel` and `decap-ethernet` label their payloads `net:` packets, but the IPv4 headers declare TCP and carry no TCP header | `0.22` release candidate | Fixed before `v0.22` was tagged ([#154](https://github.com/adamkjonsson/zipline/issues/154)) — real TCP (`tunnel`) and UDP (`decap-ethernet`) headers, every checksum true; `tunnel`'s offsets moved |
 
 **Defects 5 and 6 share a root**, which is why they were reported as one issue:
 `build.py` authored the `.zpf` and the `.jsonl` faces of each vector
@@ -35,10 +37,22 @@ README and *enforced*: every manifest entry declares a `violations` count, and
 `check.py` requires it to agree with the tier. Declaring it is mandatory, so a
 vector cannot be written without confronting the number.
 
+**Defect 7 is the first caught before a tag.** It came out of this library's
+review of the `0.22` release candidate (`plan_0_22` at `08bc9d7`), which decoded
+every `net:` payload rather than trusting the label. The headers' checksums were
+right, so nothing about the bytes looked wrong until they were parsed as the
+packets they claimed to be. In `tunnel` that mattered beyond the label: with no
+ports or sequence numbers in `packets.zpf`, `inner.zpf`'s two flows could not be
+derived from its input. Upstream added the headers, and its `check_tunnel` now
+derives `packets.zpf`'s extent from the records instead of a hard-coded 150. The
+same review filed three text defects (zipline#155–#157), which are not vector
+defects and are not counted here.
+
 Defects 1 and 2 were found during the 0.9 → 0.12 port, against `vectors/` at tag
 `v0.12` (commit `c291afc`). Defect 3 came out of the `0.15` review, defect 4 out
-of Phase 1 of the 0.14 → 0.16 port, and defects 5 and 6 out of Phase 0 of the
-0.16 → 0.19 port. Each is recorded next; the frozen 0.12 report follows them.
+of Phase 1 of the 0.14 → 0.16 port, defects 5 and 6 out of Phase 0 of the
+0.16 → 0.19 port, and defect 7 out of the `0.22` release-candidate review. Each
+of the first six is recorded next; the frozen 0.12 report follows them.
 
 ---
 

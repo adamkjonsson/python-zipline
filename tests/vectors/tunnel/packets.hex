@@ -8,7 +8,7 @@
 0004  2C 00 00 00              length = 44
 0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
 000C  00 00                    version_major = 0
-000E  15 00                    version_minor = 21
+000E  16 00                    version_minor = 22
 0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
 0018  12 00 0A 00              option 0x0012 produced_by, len = 10
 001C  7A 70 66 2D 77 67 20 30  "zpf-wg 0.3"
@@ -28,15 +28,15 @@
 004C  66
 004D  00 00 00                 value padding
 0050  21 00 47 00              option 0x0021 digest, len = 71
-0054  73 68 61 32 35 36 3A 61  "sha256:a933e1ba975426c82cc1796b34e85547603eb5b27e8c4646bc8de7711699b9f1"
-005C  39 33 33 65 31 62 61 39
-0064  37 35 34 32 36 63 38 32
-006C  63 63 31 37 39 36 62 33
-0074  34 65 38 35 35 34 37 36
-007C  30 33 65 62 35 62 32 37
-0084  65 38 63 34 36 34 36 62
-008C  63 38 64 65 37 37 31 31
-0094  36 39 39 62 39 66 31
+0054  73 68 61 32 35 36 3A 37  "sha256:74fc547a3d7b9f6f06571cce1fd64421f76f73d12a47cda49d06664bc2623da5"
+005C  34 66 63 35 34 37 61 33
+0064  64 37 62 39 66 36 66 30
+006C  36 35 37 31 63 63 65 31
+0074  66 64 36 34 34 32 31 66
+007C  37 36 66 37 33 64 31 32
+0084  61 34 37 63 64 61 34 39
+008C  64 30 36 36 36 34 62 63
+0094  32 36 32 33 64 61 35
 009B  00                       value padding
 
 009C  03 00                    type   = 0x0003  Decoder Descriptor
@@ -78,136 +78,140 @@
 
 0110  20 00                    type   = 0x0020  Record
 0112  00 00                    reserved
-0114  94 00 00 00              length = 148
+0114  A0 00 00 00              length = 160
 0118  05 00 00 00 00 00 00 00  session_id = 5  (u64)
 0120  00 00                    sender_pid = 0
 0122  01 00                    source_id  = 1
 0124  E8 03 00 00 00 00 00 00  timestamp  = 1000
 012C  00 00                    _reserved  (u16 = 0)
 012E  00 00                    flags      = 0x0000
-0130  3C 00 00 00              payload_len = 60
-0134  50 50 50 50 50 50 50 50  "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP"
-013C  50 50 50 50 50 50 50 50
-0144  50 50 50 50 50 50 50 50
-014C  50 50 50 50 50 50 50 50
-0154  50 50 50 50 50 50 50 50
-015C  50 50 50 50 50 50 50 50
-0164  50 50 50 50 50 50 50 50
-016C  50 50 50 50
-0170  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
-0174  01 00
-0176  00 00                    value padding
-0178  80 00 1C 00              option 0x0080 spans, len = 28  (1 entry/entries)
-017C  01 00 00 00 01 00 00 00
-0184  00 00 00 00 00 00 00 00
-018C  00 00 00 00 50 00 00 00
-0194  00 00 00 00
-0198  91 00 0D 00              option 0x0091 content_type, len = 13
-019C  64 65 63 3A 69 70 2D 70  "dec:ip-packet"
-01A4  61 63 6B 65 74
-01A9  00 00 00                 value padding
+0130  50 00 00 00              payload_len = 80
+0134  45 00 00 50 00 00 40 00
+013C  40 06 26 8E 0A 08 00 02
+0144  0A 08 00 09 AD 0C 00 50
+014C  00 00 03 E9 00 00 1B 59
+0154  50 18 FF FF 33 50 00 00
+015C  61 61 61 61 61 61 61 61
+0164  61 61 61 61 61 61 61 61
+016C  61 61 61 61 61 61 61 61
+0174  61 61 61 61 61 61 61 61
+017C  61 61 61 61 61 61 61 61
+0184  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
+0188  01 00
+018A  00 00                    value padding
+018C  80 00 1C 00              option 0x0080 spans, len = 28  (1 entry/entries)
+0190  01 00 00 00 01 00 00 00
+0198  00 00 00 00 00 00 00 00
+01A0  00 00 00 00 50 00 00 00
+01A8  00 00 00 00
+01AC  91 00 06 00              option 0x0091 content_type, len = 6
+01B0  6E 65 74 3A 69 70        "net:ip"
+01B6  00 00                    value padding
 
-01AC  20 00                    type   = 0x0020  Record
-01AE  00 00                    reserved
-01B0  80 00 00 00              length = 128
-01B4  05 00 00 00 00 00 00 00  session_id = 5  (u64)
-01BC  00 00                    sender_pid = 0
-01BE  01 00                    source_id  = 1
-01C0  4C 04 00 00 00 00 00 00  timestamp  = 1100
-01C8  00 00                    _reserved  (u16 = 0)
-01CA  00 00                    flags      = 0x0000
-01CC  28 00 00 00              payload_len = 40
-01D0  51 51 51 51 51 51 51 51  "QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
-01D8  51 51 51 51 51 51 51 51
-01E0  51 51 51 51 51 51 51 51
-01E8  51 51 51 51 51 51 51 51
-01F0  51 51 51 51 51 51 51 51
-01F8  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
-01FC  01 00
-01FE  00 00                    value padding
-0200  80 00 1C 00              option 0x0080 spans, len = 28  (1 entry/entries)
-0204  01 00 00 00 01 00 00 00
-020C  00 00 00 00 50 00 00 00
-0214  00 00 00 00 A0 00 00 00
-021C  00 00 00 00
-0220  91 00 0D 00              option 0x0091 content_type, len = 13
-0224  64 65 63 3A 69 70 2D 70  "dec:ip-packet"
-022C  61 63 6B 65 74
-0231  00 00 00                 value padding
+01B8  20 00                    type   = 0x0020  Record
+01BA  00 00                    reserved
+01BC  8C 00 00 00              length = 140
+01C0  05 00 00 00 00 00 00 00  session_id = 5  (u64)
+01C8  00 00                    sender_pid = 0
+01CA  01 00                    source_id  = 1
+01CC  4C 04 00 00 00 00 00 00  timestamp  = 1100
+01D4  00 00                    _reserved  (u16 = 0)
+01D6  00 00                    flags      = 0x0000
+01D8  3C 00 00 00              payload_len = 60
+01DC  45 00 00 3C 00 00 40 00
+01E4  40 06 26 A2 0A 08 00 02
+01EC  0A 08 00 09 AD 0D 00 35
+01F4  00 00 13 89 00 00 23 29
+01FC  50 18 FF FF D5 C7 00 00
+0204  63 63 63 63 63 63 63 63
+020C  63 63 63 63 63 63 63 63
+0214  63 63 63 63
+0218  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
+021C  01 00
+021E  00 00                    value padding
+0220  80 00 1C 00              option 0x0080 spans, len = 28  (1 entry/entries)
+0224  01 00 00 00 01 00 00 00
+022C  00 00 00 00 50 00 00 00
+0234  00 00 00 00 A0 00 00 00
+023C  00 00 00 00
+0240  91 00 06 00              option 0x0091 content_type, len = 6
+0244  6E 65 74 3A 69 70        "net:ip"
+024A  00 00                    value padding
 
-0234  21 00                    type   = 0x0021  Undecoded
-0236  00 00                    reserved
-0238  44 00 00 00              length = 68
-023C  01 00                    source_id = 1  (in the input's namespace)
-023E  00 00                    participant_id = 0
-0240  01 00 00 00 00 00 00 00  session_id = 1
-0248  A0 00 00 00 00 00 00 00  off_start = 160
-0250  F0 00 00 00 00 00 00 00  off_end   = 240
-0258  A0 00 0E 00              option 0x00A0 reason, len = 14
-025C  64 65 63 72 79 70 74 2D  "decrypt-failed"
-0264  66 61 69 6C 65 64
-026A  00 00                    value padding
-026C  A1 00 05 00              option 0x00A1 reason_class, len = 5
-0270  62 79 74 65 73           "bytes"
-0275  00 00 00                 value padding
-0278  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
-027C  01 00
-027E  00 00                    value padding
+024C  21 00                    type   = 0x0021  Undecoded
+024E  00 00                    reserved
+0250  44 00 00 00              length = 68
+0254  01 00                    source_id = 1  (in the input's namespace)
+0256  00 00                    participant_id = 0
+0258  01 00 00 00 00 00 00 00  session_id = 1
+0260  A0 00 00 00 00 00 00 00  off_start = 160
+0268  F0 00 00 00 00 00 00 00  off_end   = 240
+0270  A0 00 0E 00              option 0x00A0 reason, len = 14
+0274  64 65 63 72 79 70 74 2D  "decrypt-failed"
+027C  66 61 69 6C 65 64
+0282  00 00                    value padding
+0284  A1 00 05 00              option 0x00A1 reason_class, len = 5
+0288  62 79 74 65 73           "bytes"
+028D  00 00 00                 value padding
+0290  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
+0294  01 00
+0296  00 00                    value padding
 
-0280  22 00                    type   = 0x0022  Discontinuity
-0282  00 00                    reserved
-0284  20 00 00 00              length = 32
-0288  05 00 00 00 00 00 00 00  session_id = 5  (in THIS file)
-0290  00 00                    participant_id = 0  (in THIS file)
-0292  00 00                    _reserved
-0294  D1 00 0E 00              option 0x00D1 reason, len = 14
-0298  64 65 63 72 79 70 74 2D  "decrypt-failed"
-02A0  66 61 69 6C 65 64
-02A6  00 00                    value padding
+0298  22 00                    type   = 0x0022  Discontinuity
+029A  00 00                    reserved
+029C  20 00 00 00              length = 32
+02A0  05 00 00 00 00 00 00 00  session_id = 5  (in THIS file)
+02A8  00 00                    participant_id = 0  (in THIS file)
+02AA  00 00                    _reserved
+02AC  D1 00 0E 00              option 0x00D1 reason, len = 14
+02B0  64 65 63 72 79 70 74 2D  "decrypt-failed"
+02B8  66 61 69 6C 65 64
+02BE  00 00                    value padding
 
-02A8  20 00                    type   = 0x0020  Record
-02AA  00 00                    reserved
-02AC  8C 00 00 00              length = 140
-02B0  05 00 00 00 00 00 00 00  session_id = 5  (u64)
-02B8  00 00                    sender_pid = 0
-02BA  01 00                    source_id  = 1
-02BC  14 05 00 00 00 00 00 00  timestamp  = 1300
-02C4  00 00                    _reserved  (u16 = 0)
-02C6  00 00                    flags      = 0x0000
-02C8  32 00 00 00              payload_len = 50
-02CC  52 52 52 52 52 52 52 52  "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR"
-02D4  52 52 52 52 52 52 52 52
-02DC  52 52 52 52 52 52 52 52
-02E4  52 52 52 52 52 52 52 52
-02EC  52 52 52 52 52 52 52 52
-02F4  52 52 52 52 52 52 52 52
-02FC  52 52
-02FE  00 00                    payload padding
-0300  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
-0304  01 00
-0306  00 00                    value padding
-0308  80 00 1C 00              option 0x0080 spans, len = 28  (1 entry/entries)
-030C  01 00 00 00 01 00 00 00
-0314  00 00 00 00 F0 00 00 00
-031C  00 00 00 00 40 01 00 00
-0324  00 00 00 00
-0328  91 00 0D 00              option 0x0091 content_type, len = 13
-032C  64 65 63 3A 69 70 2D 70  "dec:ip-packet"
-0334  61 63 6B 65 74
-0339  00 00 00                 value padding
+02C0  20 00                    type   = 0x0020  Record
+02C2  00 00                    reserved
+02C4  98 00 00 00              length = 152
+02C8  05 00 00 00 00 00 00 00  session_id = 5  (u64)
+02D0  00 00                    sender_pid = 0
+02D2  01 00                    source_id  = 1
+02D4  14 05 00 00 00 00 00 00  timestamp  = 1300
+02DC  00 00                    _reserved  (u16 = 0)
+02DE  00 00                    flags      = 0x0000
+02E0  46 00 00 00              payload_len = 70
+02E4  45 00 00 46 00 00 40 00
+02EC  40 06 26 98 0A 08 00 02
+02F4  0A 08 00 09 AD 0C 00 50
+02FC  00 00 04 39 00 00 1B 59
+0304  50 18 FF FF 0A E2 00 00
+030C  62 62 62 62 62 62 62 62
+0314  62 62 62 62 62 62 62 62
+031C  62 62 62 62 62 62 62 62
+0324  62 62 62 62 62 62
+032A  00 00                    payload padding
+032C  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
+0330  01 00
+0332  00 00                    value padding
+0334  80 00 1C 00              option 0x0080 spans, len = 28  (1 entry/entries)
+0338  01 00 00 00 01 00 00 00
+0340  00 00 00 00 F0 00 00 00
+0348  00 00 00 00 40 01 00 00
+0350  00 00 00 00
+0354  91 00 06 00              option 0x0091 content_type, len = 6
+0358  6E 65 74 3A 69 70        "net:ip"
+035E  00 00                    value padding
 
-033C  12 00                    type   = 0x0012  Session End
-033E  00 00                    reserved
-0340  20 00 00 00              length = 32
-0344  05 00 00 00 00 00 00 00  session_id = 5  (u64)
-034C  C1 00 14 00              option 0x00C1 input_extents, len = 20  (1 entry/entries)
-0350  01 00 00 00 01 00 00 00
-0358  00 00 00 00 40 01 00 00
-0360  00 00 00 00
+0360  12 00                    type   = 0x0012  Session End
+0362  00 00                    reserved
+0364  20 00 00 00              length = 32
+0368  05 00 00 00 00 00 00 00  session_id = 5  (u64)
+0370  C1 00 14 00              option 0x00C1 input_extents, len = 20  (1 entry/entries)
+0374  01 00 00 00 01 00 00 00
+037C  00 00 00 00 40 01 00 00
+0384  00 00 00 00
 
-0364  41 00                    type   = 0x0041  End of file
-0366  00 00                    reserved
-0368  04 00 00 00              length = 4
-036C  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
+0388  41 00                    type   = 0x0041  End of file
+038A  00 00                    reserved
+038C  04 00 00 00              length = 4
+0390  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
 
-0370                           (end of file, 880 bytes)
+0394                           (end of file, 916 bytes)

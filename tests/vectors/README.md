@@ -2,7 +2,7 @@
 
 Small `.zpf` files, each with its expected JSON-Lines projection or its expected
 failure, for testing an implementation of the
-[Zipline Payload Format](../docs/zipline-payload-format.md) `0.21`.
+[Zipline Payload Format](../docs/zipline-payload-format.md) `0.22`.
 
 Run `python3 check.py` to verify the tree is self-consistent.
 Run `python3 build.py` to regenerate it.
@@ -326,6 +326,41 @@ changed.
 | `isolate-unknown-adjacency` | *(isolate)* An `adjacency` value this version does not define — the load-bearing twin of `isolate-unknown-output-layer`: the value decides whether any two of the participant's records may be spliced, so a reader cannot say what a single pair asserts. MUST NOT guess, and MUST NOT fall back to `contiguous`. |
 | `advisory-transport-adjacency` | *(accept, **advisory**)* `units` on a **transport-layer** participant, where offsets come from sequence numbers and the field says nothing. A writer MUST NOT set it there; a reader ignores it, reports it, and accepts — the treatment a transport-layer label gets, and for the same reason. Not the isolate shape of `isolate-discontinuity-in-raw`: that block contradicts the offsets, this field is inert. Extent 16. |
 
+### Added in `0.22`
+
+The first two are the suite's first vectors about **acks**. `0.21` unwrapped offsets so a stream
+could be placed past 2 GiB. The causal edge rule still compared an `ack` with peer
+record ends by serial arithmetic, which is defined only within 2³¹, and an ack
+stored once stays put while the record ends run on past it. Since `0.22` both are
+**positions in the peer's offset space**: the end is the unwrapped offset plus
+`payload_len`, and the ack is unwrapped along the acker's own records, by signed
+delta from the previous ack (#151). A position is signed, because a mid-stream
+first ack can lie below the peer's first captured byte (#157). `check.py` draws
+no causal edges, so these vectors test implementations only.
+
+The third is a reassembler over a **packet stream**. The duty to carry an input
+break has two recourses, a Discontinuity or a `units` output, and a
+transport-layer stream may use neither. Read literally, a sessionizer over a unit
+sequence could therefore never coalesce two packets. Since `0.22` a transport
+output whose records carry `seq_start` **MAY** cross input seams, because its
+sequence numbers carry any break as a hole (#152).
+
+The fourth is a **packet type**. A packet-preserving stage was told to type its
+records with a `dec:` token, which is private to its decoder, so a generic
+sessionizer could recognise packets only by a convention the format declined to
+make. Since `0.22` `content_type` has a fourth scheme, `net:`, closed and
+spec-defined like `prim:`: `net:ip` and `net:ethernet`, each meaning the unit a
+capture of that link type stores (#153). `tunnel`'s decrypt stage now types its
+packets `net:ip`, and they are real IPv4 headers rather than filler, so the label
+is true. This vector carries the other value.
+
+| Vector | What it carries |
+|--------|-----------------|
+| `sequenced-past-2gib-pure-ack` | *(accept)* `stream-past-2gib`'s client after a recorded handshake, in a **SEQUENCED** session whose server sends nothing after its SYN-ACK. That ack, `1001`, is position 0 of the client's stream, and every data record ends above it, so the stored order is causal. Compared serially, the record at 2 GiB ends 2³¹ + 8 past `1001`, which reads as *before* it, so a reader draws `client@2GiB → SYN-ACK` and refuses the order. The ordinary large upload, with a peer that only acks. Extents `3221225480` and 0. |
+| `sequenced-ack-below-origin` | *(accept)* A mid-stream **SEQUENCED** session with no `isn` on either side. The server's response is stored first and acks `993`, eight bytes below the client's first captured byte, so its position is **−8**. That is signed, acknowledges no captured byte, and no edge reaches it. A reader that keeps ack positions in an offset's unsigned type wraps it to near 2⁶⁴, draws `request → response`, and refuses a correct order (#157). Extents 8 and 12. |
+| `sessionized-across-units` | *(accept)* `tunnel`'s inner hop with nothing lost, over a `units` input as `kober`'s WireGuard output is: flow A's packets at `[0,80)` and `[140,210)` join in A's sequence space, so session 10 emits **one** 70-byte record with **two** spans, crossing two declared breaks; flow B's packet between them is session 11's. Coverage of the input closes over `[0,210)` across both sessions. A reader that reports a no-splice violation has applied the decoded layer's duty to a stream whose offsets carry every break. Nothing can catch a *wrong* coalesce here: the sequence numbers are the producer's assertion. Extents 70 and 20. |
+| `decap-ethernet` | *(accept)* A VXLAN decapsulation stage emitting one record per inner **Ethernet frame**, typed `net:ethernet`: Ethernet II, IPv4 and UDP headers all real, checksums included, as a `LINKTYPE_ETHERNET` capture stores it. The suite's one non-TCP packet. Each record spans its whole datagram, VXLAN header included, since the VNI fed the decapsulation. The participant is `units`, and the endpoint list runs from the VNI to the inner MAC. A reader that does not know `net:` treats the label as opaque, as it would any unknown scheme. Checking the label against the payload is not conformant, because `net:` binds no length. Extent 110. |
+
 ## Multi-file fixtures
 
 Four directories are **fixtures** rather than vectors: several files that only
@@ -438,20 +473,26 @@ which was an argument somewhere in `0.13`–`0.15`:
 - **Correspondence, not identity.** An inner packet spans the *whole* outer
   datagram — nonce and tag included, because those fed the computation — so tunnel
   coverage closes with **no `skipped` blocks at all**. The earlier estimate was one
-  per packet for framing; that clarification is what made case D affordable.
+  per packet for framing; that clarification is what made case D affordable. The
+  packets are typed `net:ip` since `0.22`, and are real IPv4 packets carrying
+  real TCP segments (ports, sequence and ack numbers, PSH|ACK, checksums), so the
+  label is true and `inner.zpf` can be rebuilt from `packets.zpf` alone (#154).
+  `outer.zpf`'s datagram sizes are nominal; ciphertext carries no label.
 - **Fan-out.** One input stream (`packets.zpf` session 5, pid 0) feeds **two**
-  output sessions in `inner.zpf`. Neither covers `[0,150)` alone and both Session
-  Ends declare the same extent 150 for the shared input — the rule
+  output sessions in `inner.zpf`. Neither covers `[0,210)` alone and both Session
+  Ends declare the same extent 210 for the shared input — the rule
   `isolate-extents-disagree` polices, here in its legitimate form.
 - **A `zpf`-sourced transport stream.** `inner.zpf`'s Decoder declares
   `output_layer = transport`, so a *decode stage's* output is `isn`-anchored and
   hole-inclusive. Its 40-byte hole shows up as `seq_start 1081` where 1041 would be
   contiguous — no Discontinuity, no `content_type`. **Nothing else in the suite
   shows the F1 cell against a real gap.**
-- **Origination, and the crossing left undone.** `packets.zpf` withholds an inner
-  packet and declares the break. `inner.zpf` reads that break and *cannot* express
-  one, so it does the other legal thing — no record crosses packets offset 100 —
-  and the loss survives as a TCP sequence gap instead. `http.zpf` then meets a
+- **Origination, and the break carried as a hole.** `packets.zpf` withholds an
+  inner packet and declares the break. `inner.zpf` cannot carry a Discontinuity,
+  and does not need one: the lost packet was flow A's, so the loss survives as a
+  TCP sequence gap. Since `0.22` a sequence-anchored transport output may cross
+  an input break where its sequence numbers say the bytes join;
+  `sessionized-across-units` shows that case. `http.zpf` then meets a
   `hole`-class region between two adjacent output units and originates its own
   block. Delete that one block and `http.zpf` **is** `isolate-unmarked-break`.
 

@@ -1,4 +1,4 @@
-"""Conformance-vector harness for the upstream 0.21 vectors.
+"""Conformance-vector harness for the upstream 0.22 vectors.
 
 The vectors in ``tests/vectors/`` are hand-built from the specification's
 normative text (see ``tests/vectors/VENDORED.md``). They are the acceptance
@@ -8,7 +8,7 @@ targets pass.
 **The ratchet.** A vector case is a hard requirement only once its name is added
 to :data:`KNOWN_PASSING`; every other case is ``xfail(strict=False)``. That keeps
 the suite green across a migration that starts with every file unreadable — until
-the version gate moves, a 0.21 file is refused whatever else is implemented. A
+the version gate moves, a 0.22 file is refused whatever else is implemented. A
 case that starts passing shows up as ``XPASS`` — that is the progress signal —
 and is then promoted into :data:`KNOWN_PASSING` so it can never silently
 regress.
@@ -60,27 +60,29 @@ VECTORS = Path(__file__).parent / "vectors"
 #: Vector cases that MUST pass. Grow it as phases land; never remove a name
 #: while its vector exists, because that is the regression guard.
 #:
-#: **62 names, 70 files, and every case in this set at the ``0.21`` port.**
-#: The arithmetic from ``0.20``'s 55: seven joined, one per new vector, and
-#: nothing was deleted. Unlike ``0.20``, where the ratchet was full on
-#: arrival, every one of the seven was *earned* by a phase of the port:
-#: ``stream-past-2gib`` and ``stream-wraps-seq`` by the unwrapping walk
-#: (Phase 3; the second already measured right, the first read two records
-#: as below the origin); ``unit-sequence-reversed``, ``unit-sequence-nested``
-#: and ``session-split-capture-gap`` by the ``adjacency`` field's projection
-#: (Phase 2 — they accepted and measured right from the start, but projected
-#: ``units`` as ``contiguous``, and re-encoded it so); and the two negative
-#: ones, ``isolate-unknown-adjacency`` and ``advisory-transport-adjacency``,
-#: by the checker's two new conditions (Phase 4). Each showed up as ``XPASS``
-#: the moment its phase landed, and this promotion is what turns the signal
-#: into a guard.
+#: **65 of 66 names at the ``0.22`` re-vendor (74 files).** The arithmetic
+#: from ``0.21``'s 62: four vectors are new and nothing was deleted. Three
+#: joined on arrival, because they passed the moment the gate moved:
+#: ``decap-ethernet`` (a ``net:`` label is opaque to a reader that does not
+#: interpret it, so it reads and projects already), ``sessionized-across-units``
+#: (the seam predicate only ever tested decoded layers, so a transport record
+#: crossing input units was never refused), and ``sequenced-ack-below-origin``.
+#: The last one passes only by accident: the serial comparison it was written
+#: against happens to accept it, and it starts guarding something once Phase 3
+#: unwraps acks into signed positions.
 #:
-#: (69 case names against 62 manifest entries: ``chain`` and ``merge`` expand
+#: The fourth, ``sequenced-past-2gib-pure-ack``, is **out**, held by the
+#: ordering checks ``test_accept`` gained for
+#: `#83 <https://github.com/adamkjonsson/python-zipline/issues/83>`_. Before
+#: them it passed while ``verify()`` refused it. It joins with the ack unwrap
+#: (Phase 3, `#75 <https://github.com/adamkjonsson/python-zipline/issues/75>`_).
+#:
+#: (73 case names against 66 manifest entries: ``chain`` and ``merge`` expand
 #: to three files each, ``tunnel`` to four, and ``splice`` is one name for
 #: two.)
 #:
 #: ``splice`` is one name for two files, because its violation belongs to
-#: neither of them, which is why 62 names cover 70 files. :data:`PAIRWISE`
+#: neither of them, which is why 66 names cover 74 files. :data:`PAIRWISE`
 #: routes it to :func:`test_a_pairwise_vector_is_caught`, and the per-file
 #: tiers skip it.
 KNOWN_PASSING: frozenset[str] = frozenset(
@@ -93,6 +95,7 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "chain/decoded",
         "chain/raw",
         "custom-block",
+        "decap-ethernet",
         "decoded-basic",
         "decoded-field-roles",
         "descriptive-metadata",
@@ -136,9 +139,11 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "reject-unknown-major",
         "reject-unknown-minor",
         "reordered-decoded",
+        "sequenced-ack-below-origin",
         "sequenced-session",
         "session-fan-out",
         "session-split-capture-gap",
+        "sessionized-across-units",
         "sessionization-stage",
         "splice",
         "stream-past-2gib",
@@ -162,9 +167,13 @@ KNOWN_PASSING: frozenset[str] = frozenset(
 #: that nobody bends this implementation to match a broken fixture: if one of
 #: these starts passing, the vector was fixed — or we got it wrong.
 #:
-#: **Empty at ``v0.21``, as at ``v0.20``.** The projection sweep at this
-#: re-vendor found nothing, and the new key was checked byte-against-``.jsonl``
-#: on every Participant block. The three entries it held at ``v0.19`` —
+#: **Empty at ``v0.22``, as at ``v0.21`` and ``v0.20``.** The projection sweep
+#: at this re-vendor compared all 53 files that ship a ``.jsonl`` and found
+#: nothing; four of this release's defects were reported against its release
+#: candidate and fixed before the tag (`zipline#154–#157
+#: <https://github.com/adamkjonsson/zipline/issues/154>`_). At the ``0.21``
+#: re-vendor the new key was checked byte-against-``.jsonl`` on every
+#: Participant block. The three entries it held at ``v0.19`` —
 #: ``handshake-at-origin``, ``unplaceable-below-origin`` and
 #: ``mixed-derivation``, whose ``.zpf`` disagreed with their own ``.jsonl``
 #: (defects 5 and 6, `zipline#141
@@ -219,8 +228,8 @@ UNIMPLEMENTED: dict[str, str] = {}
 #: `zipline#140 <https://github.com/adamkjonsson/zipline/issues/140>`_; ``0.20``
 #: answered with an ``extents`` key on every single-file accept entry, so the
 #: hand-kept table is gone and :func:`_extent_params` reads the manifest — 37
-#: streams across 31 vectors at ``0.20``, 44 across 37 at ``0.21``, where the
-#: table held two.
+#: streams across 31 vectors at ``0.20``, 44 across 37 at ``0.21``, 51 across
+#: 39 at ``0.22``, where the table held two.
 #:
 #: Empty since Phase 1 of the ``0.19`` port, which landed the one offset rule.
 _EXTENTS_PENDING: dict[str, str] = {}
@@ -280,7 +289,7 @@ _ISOLATE_REASONS: dict[str, str] = {
 #: Syntax new in 0.13/0.14, by the option id carrying it. Each must be parsed
 #: into a typed field rather than preserved through the unknown-option escape.
 #:
-#: **Nothing joins this at 0.16, and nothing at 0.21.** Each port's one piece
+#: **Nothing joins this at 0.16, 0.21 or 0.22.** Each port's one piece
 #: of new syntax — ``output_layer`` on the Decoder, ``adjacency`` on the
 #: Participant — is a *body* field rather than an option: there is no id for
 #: it and no escape it could hide in, which is why the specification chose a
@@ -289,7 +298,8 @@ _ISOLATE_REASONS: dict[str, str] = {
 #: re-encode and JSONL → binary tests too. The ``0.21`` port found the
 #: qualification the hard way: until Phase 2 added ``Participant.adjacency``,
 #: every dataclass comparison was blind to the byte, and only the projection
-#: saw ``units`` come out as ``contiguous``.
+#: saw ``units`` come out as ``contiguous``. ``0.22`` adds no syntax at all:
+#: its ``net:`` scheme is a new *value* of an existing option.
 _NEW_OPTION_IDS: dict[int, str] = {
     0x0015: "transform_params_digest",
     0x0054: "external_session_id",
@@ -461,7 +471,7 @@ def _params(tier: str) -> list[Any]:
             marks: tuple[Any, ...] = ()
         else:
             reason = DEFECTIVE.get(case.name) or UNIMPLEMENTED.get(
-                case.name, "not yet ported to 0.21"
+                case.name, "not yet ported to 0.22"
             )
             marks = (pytest.mark.xfail(reason=reason, strict=False),)
         params.append(pytest.param(case, id=case.name, marks=marks))
@@ -529,14 +539,14 @@ def test_manifest_covers_the_tree() -> None:
 
 
 def test_every_case_has_a_file() -> None:
-    """The manifest expands to exactly the files `v0.21` ships.
+    """The manifest expands to exactly the files `v0.22` ships.
 
     The count is exact rather than a floor, so a half-copied re-vendoring
-    fails here instead of quietly shrinking the suite: 62 manifest entries,
+    fails here instead of quietly shrinking the suite: 66 manifest entries,
     of which ``chain`` and ``merge`` expand to three files each, ``splice``
     to two and ``tunnel`` — the largest fixture the suite has — to four.
     """
-    assert len(CASES) == 70
+    assert len(CASES) == 74
     for case in CASES:
         assert case.path.exists(), case.name
 
@@ -770,7 +780,7 @@ def _pairwise_params() -> list[Any]:
     for name in PAIRWISE:
         marks: tuple[Any, ...] = ()
         if name not in KNOWN_PASSING:
-            marks = (pytest.mark.xfail(reason="not yet ported to 0.21", strict=False),)
+            marks = (pytest.mark.xfail(reason="not yet ported to 0.22", strict=False),)
         params.append(pytest.param(name, id=name, marks=marks))
     return params
 
