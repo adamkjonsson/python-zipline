@@ -33,7 +33,7 @@ scaffolding without owning the control flow.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import IO, TYPE_CHECKING
+from typing import IO, TYPE_CHECKING, Literal
 
 from zpf._intervals import complement, intersections
 from zpf.blocks import Adjacency, InputExtent, OutputLayer, Span
@@ -701,8 +701,8 @@ class DecodeStage:
 
 
 def decode_stage(  # noqa: PLR0913
-    # Eleven parameters, one over the limit, and one of the two suppressions
-    # in `src/zpf/`. It is a **builder**, which is the difference: called once
+    # Fifteen parameters, over the limit of ten, and one of the suppressions in
+    # `src/zpf/`. It is a **builder**, which is the difference: called once
     # per stage with every argument named, configuring a pipeline rather than
     # filling in a block's fields. `SessionWriter.record()` — #59's real
     # subject — passes the limit on its own, grouped by the format's
@@ -729,6 +729,8 @@ def decode_stage(  # noqa: PLR0913
     adjacency: Adjacency | int | None = None,
     input_ref: InputRef | None = None,
     comment: str | None = None,
+    creator: str | None = None,
+    face: Literal["binary", "jsonl"] = "binary",
     fill_undecoded: bool = True,
 ) -> DecodeStage:
     """Open an input and scaffold a decode-stage file derived from it.
@@ -821,6 +823,10 @@ def decode_stage(  # noqa: PLR0913
             :class:`~zpf.InputRef`. Both halves default: the URI to the path
             the input was opened from, the digest to SHA-256 of its bytes.
         comment: Free-text note for the File Header.
+        creator: The File Header's tool field, for the output (#89).
+        face: ``"binary"`` (the default) or ``"jsonl"`` for the JSON-Lines
+            face, which needs a text ``sink`` (#89). Both are passed to
+            :func:`zpf.create`.
         fill_undecoded: On a clean close, mark every input offset the
             decoder left uncovered as ``Undecoded`` (``gap`` for
             reassembly holes, ``skipped`` for data the decoder passed over),
@@ -865,6 +871,8 @@ def decode_stage(  # noqa: PLR0913
             produced_by=produced_by,
             produced_at=produced_at,
             comment=comment,
+            creator=creator,
+            face=face,
         )
     except BaseException:
         if owns_reader:

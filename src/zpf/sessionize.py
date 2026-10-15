@@ -63,7 +63,7 @@ lets a flow with stored pure ACKs be merged and verified.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import IO, TYPE_CHECKING
+from typing import IO, TYPE_CHECKING, Literal
 
 from zpf.blocks import OutputLayer, SourceKind, Span
 from zpf.decode import (
@@ -324,7 +324,10 @@ class SessionizeStage:
             for view in session.reassemble()
         }
         self._context = _StageContext(source, decoder, self._inputs, self._ledger)
-        self._sessions: dict[str, FlowSession] = {}
+        # The key's current session, and every session in creation order: a
+        # key gets a new session once its last one has ended (#88).
+        self._current: dict[str, FlowSession] = {}
+        self._sessions: list[FlowSession] = []
         self._closed = False
 
     def __enter__(self) -> Self:
@@ -350,7 +353,17 @@ class SessionizeStage:
         session_id: int | None = None,
         sequenced: bool = False,
     ) -> FlowSession:
-        """Return the output session for flow ``key``, creating it on first use.
+        """Return the open session for flow ``key``, creating one if there is none.
+
+        **The end of a session is not the end of its key**
+        (`#88 <https://github.com/adamkjonsson/python-zipline/issues/88>`_).
+        Once the key's session has ended, the next call opens a new session on
+        the same key. That is what a reassembler does at a hole of 2³¹ bytes
+        or more — the specification's ``capture-gap`` rule is to end the
+        session at the hole and *open another on the same key* — and after an
+        idle ``timeout`` or a port reused after ``fin``/``rst``. A consumer
+        tells the sessions apart by their Session End reasons, which is what
+        the rule asks the same key for.
 
         Args:
             key: The flow key, e.g. ``"10.8.0.2:44300 -> 10.8.0.9:80"``.
@@ -361,19 +374,26 @@ class SessionizeStage:
                 it SEQUENCED. They are buffered until the session ends.
 
         Returns:
-            The flow's session.
+            The flow's open session.
 
         Raises:
-            ValueError: If ``key`` names a session already created with a
-                different ``proto``.
+            ValueError: If ``key`` has an open session with a different
+                ``proto``, or ``session_id`` names a different id from the
+                one the key's open session has.
 
         """
-        known = self._sessions.get(key)
-        if known is not None:
+        known = self._current.get(key)
+        if known is not None and not known.ended:
             if known.proto != proto:
                 msg = (
                     f"session {key!r} was created with proto {known.proto!r}, "
                     f"not {proto!r}"
+                )
+                raise ValueError(msg)
+            if session_id is not None and session_id != known.session_id:
+                msg = (
+                    f"session {key!r} is open as session {known.session_id}, so "
+                    f"session_id {session_id} cannot open another; end it first"
                 )
                 raise ValueError(msg)
             return known
@@ -382,12 +402,13 @@ class SessionizeStage:
             linearize=sequenced,
         )
         flow = FlowSession(self._context, writer, key, proto)
-        self._sessions[key] = flow
+        self._current[key] = flow
+        self._sessions.append(flow)
         return flow
 
     def sessions(self) -> tuple[FlowSession, ...]:
-        """Return every session created so far, in creation order."""
-        return tuple(self._sessions.values())
+        """Return every session created so far, ended or not, in creation order."""
+        return tuple(self._sessions)
 
     def undecoded(
         self,
@@ -453,7 +474,7 @@ class SessionizeStage:
                 try:
                     if self._fill_undecoded:
                         self._ledger.autofill(self.streams())
-                    for flow in self._sessions.values():
+                    for flow in self._sessions:
                         flow.end()
                 except BaseException:
                     self.writer.close(end=False)
@@ -495,7 +516,12 @@ def _check_cites(spans: tuple[Span, ...], hints: Hints | None) -> None:
         raise SemanticError(msg)
 
 
-def sessionize_stage(
+def sessionize_stage(  # noqa: PLR0913
+    # Eleven parameters, one over the limit. A builder like `decode_stage`,
+    # whose comment gives the reasoning: called once, every argument named,
+    # and spelled flat as `create()` spells the same File Header fields
+    # (`creator`, `comment`, `face`), so a bundle here would be a third
+    # spelling of them. Approved when #89 added the last two.
     source: str | os.PathLike[str] | IO[bytes] | IO[str] | FileReader,
     sink: str | os.PathLike[str] | IO[bytes] | IO[str],
     *,
@@ -505,6 +531,8 @@ def sessionize_stage(
     params_digest: str | None = None,
     input_ref: InputRef | None = None,
     comment: str | None = None,
+    creator: str | None = None,
+    face: Literal["binary", "jsonl"] = "binary",
     fill_undecoded: bool = True,
 ) -> SessionizeStage:
     """Open a packet-stream input and scaffold a sessionization stage over it.
@@ -530,6 +558,10 @@ def sessionize_stage(
         input_ref: How to describe the input in the output's Source — see
             :class:`~zpf.InputRef`.
         comment: Free-text note for the File Header.
+        creator: The File Header's tool field, for the output (#89).
+        face: ``"binary"`` (the default) or ``"jsonl"`` for the JSON-Lines
+            face, which needs a text ``sink`` (#89). Both are passed to
+            :func:`zpf.create`.
         fill_undecoded: On a clean close, mark every input offset no record
             cited as ``Undecoded``, so the output meets the coverage
             guarantee by construction.
@@ -554,6 +586,8 @@ def sessionize_stage(
             produced_by=produced_by,
             produced_at=produced_at,
             comment=comment,
+            creator=creator,
+            face=face,
         )
     except BaseException:
         if owns_reader:

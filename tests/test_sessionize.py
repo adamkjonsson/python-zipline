@@ -420,3 +420,76 @@ def test_a_record_from_one_packet_carries_no_ts_first():
     sessionize_tunnel(sink, per_flow=True)
     with zpf.open(io.BytesIO(sink.getvalue())) as out:
         assert all(r.ts_first is None for s in out.sessions() for r in s.records())
+
+
+# --- A key outlives its session (#88) ---------------------------------------------
+
+
+def test_a_key_gets_a_new_session_once_its_last_has_ended():
+    """The capture-gap rule: end the session at the hole, open another on the same key."""
+    raw = unit_sequence_of_packets()  # flow A's packets at [0, 40) and [60, 90)
+    sink = io.BytesIO()
+    key = "10.8.0.2:44300 -> 10.8.0.9:80"
+    with zpf.sessionize_stage(
+        io.BytesIO(raw), sink, decoder="tcp-reassembly", produced_by="t", produced_at=2
+    ) as stage:
+        (stream,) = stage.streams()
+        first = stage.session(key, proto="tcp")
+        first.record(first.participant("10.8.0.2:44300", isn=1000), b"A" * 40,
+                     cites=stream.cite(0, 40), hints=zpf.Hints(seq_start=1001))
+        first.end("capture-gap")
+        again = stage.session(key, proto="tcp", session_id=99)
+        assert again is not first
+        assert not again.ended
+        # No isn: the stream resumes at its first captured byte.
+        again.record(again.participant("10.8.0.2:44300"), b"B" * 30,
+                     cites=stream.cite(60, 90), hints=zpf.Hints(seq_start=0x7FFF_0000))
+        assert stage.sessions() == (first, again)
+        assert stage.session(key, proto="tcp") is again
+        stage.undecoded(stream, 40, 60, reason="skipped")
+
+    with zpf.open(io.BytesIO(sink.getvalue())) as out:
+        assert out.diagnostics == []
+        sessions = list(out.sessions())
+        assert [(s.session_id, s.key) for s in sessions] == [(0, key), (99, key)]
+        ends = [b for b in out.blocks() if isinstance(b, zpf.SessionEnd)]
+        assert [(e.session_id, e.reason) for e in ends] == [(0, "capture-gap"), (99, None)]
+        assert [[x.extent for x in e.input_extents] for e in ends] == [[90], [90]]
+    assert zpf.check_coverage(io.BytesIO(sink.getvalue()), io.BytesIO(raw)) == []
+
+
+def test_an_explicit_session_id_cannot_contradict_the_keys_open_session():
+    with zpf.sessionize_stage(
+        io.BytesIO(unit_sequence_of_packets()), io.BytesIO(),
+        decoder="tcp-reassembly", produced_by="t", produced_at=2,
+    ) as stage:
+        open_one = stage.session("a", proto="tcp")
+        assert stage.session("a", proto="tcp", session_id=open_one.session_id) is open_one
+        with pytest.raises(ValueError, match="is open as session"):
+            stage.session("a", proto="tcp", session_id=99)
+
+
+# --- The output's face and creator (#89) ------------------------------------------
+
+
+@pytest.mark.parametrize("stage", ["sessionize", "decode"])
+def test_a_stage_writes_jsonl_and_names_its_creator(stage: str):
+    """Both builders pass ``face`` and ``creator`` to ``create()``."""
+    sink = io.StringIO()
+    common = {"produced_by": "t 1.0", "produced_at": 2, "creator": "zpfwire 0.5.0",
+              "face": "jsonl"}
+    if stage == "sessionize":
+        with zpf.sessionize_stage(PACKETS, sink, decoder="tcp-reassembly", **common) as s:
+            (stream,) = s.streams()
+            flow = s.session("f", proto="tcp")
+            flow.record(flow.participant("10.8.0.2:44300", isn=1000), b"x",
+                        cites=stream.cite(0, 80), hints=zpf.Hints(seq_start=1001))
+    else:
+        with zpf.decode_stage(PACKETS, sink, decoder="ip", **common):
+            pass
+    text = sink.getvalue()
+    assert text.startswith('{"type":"file"')
+    with zpf.open(io.StringIO(text)) as out:
+        assert out.header.creator == "zpfwire 0.5.0"
+        assert out.complete
+        assert out.diagnostics == []

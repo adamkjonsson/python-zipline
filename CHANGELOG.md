@@ -143,6 +143,17 @@ extents and timestamps done by hand.
   also be passed explicitly, to `FlowSession.record` and now to
   `DecodeStage.record`, which never derives it.
   `StreamView.ts_first_for` is the stream-level mirror of `ts_for`.
+- A flow key outlives its session
+  ([#88](https://github.com/adamkjonsson/python-zipline/issues/88)): once a
+  key's session has ended, `stage.session(key, …)` opens a new one on the same
+  key, as the specification's `capture-gap` rule requires and an idle timeout
+  or a reused port needs. `sessions()` lists every session in creation order,
+  and an explicit `session_id` that contradicts the key's open session raises.
+
+**`face` and `creator` on `decode_stage` and `sessionize_stage`**
+([#89](https://github.com/adamkjonsson/python-zipline/issues/89)), passed to
+`create()`, so a stage can write the JSON-Lines face and name its tool in the
+File Header. The defaults write what the stages wrote before.
 
 Rebuilt through it, `tunnel/inner.zpf` matches the vendored file block for
 block (Source and Decoder ids aside, which are the writer's to number).
@@ -157,6 +168,16 @@ record. A unit sequence is what a tunnel decryptor writes, so this was the
 sessionization path's main input. A transport-layer stage now declares
 `contiguous`, and refuses an explicit `adjacency` other than that before the
 output is opened.
+
+**`check_splice` no longer reports a crossing `0.22` permits**
+([#90](https://github.com/adamkjonsson/python-zipline/issues/90)). A
+transport-layer record carrying `seq_start` MAY cite input packets either side
+of a declared Discontinuity
+([zipline#152](https://github.com/adamkjonsson/zipline/issues/152)): its
+sequence numbers carry the break. `check_splice` reported every such record,
+so a file `sessionize_stage` wrote, and the format allows, read as a
+violation. A transport record without `seq_start`, and every decoded record,
+still owe the duty and are still checked.
 
 ## [0.5.2] - 2026-10-13
 

@@ -49,10 +49,10 @@ See [the orchestrator](../guides/decoding.md#writing-the-decode-stage) for
 exactly what it copies and declares, and {meth}`zpf.FileWriter.derive_from` to
 build the same scaffolding around your own {func}`zpf.create` call.
 
-The loop above uses {meth}`~zpf.DecodeStream.segments` because HTTP rides TCP,
+The loop above uses {meth}`~zpf.InputStream.segments` because HTTP rides TCP,
 a byte stream. A **UDP** flow — or any stream without sequence hints — is a
 sequence of whole {class}`~zpf.Datagram`s instead;
-{attr}`~zpf.DecodeStream.is_stream_oriented` tells the two apart, and the
+{attr}`~zpf.InputStream.is_stream_oriented` tells the two apart, and the
 byte-stream methods raise on a packet stream
 ([why](../guides/decoding.md#stream-oriented-vs-packet-oriented)):
 

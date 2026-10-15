@@ -953,6 +953,62 @@ def test_a_units_spans_are_judged_together(tmp_path: Path):
     assert [f.category for f in zpf.check_splice(stage2, stage1)] == ["discontinuity-splice"]
 
 
+# --- check_splice and a sequence-anchored transport output (0.22, #90) ---------
+
+PACKETS = Path(__file__).parent / "vectors" / "tunnel" / "packets.zpf"
+
+
+def sessionize_across_the_tunnels_break(path: Path, *, seq_start: int | None) -> None:
+    """Sessionize tunnel/packets.zpf, citing flow A's two packets across its break.
+
+    packets.zpf declares a Discontinuity at 140, between flow A's packet at
+    [0, 80) and the one at [140, 210). With ``seq_start`` the record cites
+    the two packets; without it the stage takes one range only, so it cites
+    [0, 210) whole — which crosses the break just the same.
+    """
+    with zpf.sessionize_stage(PACKETS, path, decoder=("repro", "0"),
+                              produced_by="repro 0", produced_at=1_700_000_000) as stage:
+        (stream,) = stage.streams()
+        a1, b, a2 = stream.datagrams()
+        flow = stage.session("10.8.0.2:44300 -> 10.8.0.9:80", proto="tcp")
+        side = flow.participant("10.8.0.2:44300")
+        if seq_start is None:
+            flow.record(side, b"x" * 70, cites=stream.cite(a1.off_start, a2.off_end))
+        else:
+            flow.record(side, b"x" * 70, hints=zpf.Hints(seq_start=seq_start),
+                        cites=[stream.cite(a1.off_start, a1.off_end),
+                               stream.cite(a2.off_start, a2.off_end)])
+        other = stage.session("10.8.0.2:44301 -> 10.8.0.9:53", proto="tcp")
+        other.record(other.participant("10.8.0.2:44301"), b"y" * 20,
+                     hints=zpf.Hints(seq_start=5001), cites=stream.cite(b.off_start, b.off_end))
+
+
+def test_check_splice_lets_a_transport_record_with_seq_start_cross(tmp_path: Path):
+    """#90: 0.22 permits it, and sessionize_stage writes it."""
+    out = tmp_path / "out.zpf"
+    sessionize_across_the_tunnels_break(out, seq_start=1001)
+    assert zpf.check_coverage(out, PACKETS) == []
+    assert zpf.check_splice(out, PACKETS) == []
+
+
+def test_check_splice_still_holds_a_transport_record_without_seq_start(tmp_path: Path):
+    """A transport output without sequence numbers has no hole to carry a break in."""
+    out = tmp_path / "out.zpf"
+    sessionize_across_the_tunnels_break(out, seq_start=None)
+    (finding,) = zpf.check_splice(out, PACKETS)
+    assert (finding.category, finding.offset) == ("discontinuity-splice", 140)
+
+
+def test_check_splice_still_holds_a_decoded_record_crossing_the_same_break(tmp_path: Path):
+    out = tmp_path / "out.zpf"
+    with zpf.decode_stage(PACKETS, out, decoder="ip-reassembly",
+                          produced_by="t", produced_at=1) as dec:
+        (stream,) = dec.streams()
+        dec.record(stream, b"x" * 70, cites=[(0, 80), (140, 210)])
+    (finding,) = zpf.check_splice(out, PACKETS)
+    assert finding.offset == 140
+
+
 # --- rewrite_decoded against an input that breaks -----------------------------
 
 
