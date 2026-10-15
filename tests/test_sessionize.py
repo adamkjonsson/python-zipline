@@ -348,3 +348,52 @@ def test_an_inner_pure_ack_is_a_zero_length_record_citing_its_packet(sequenced: 
             session.verify()
         assert [r.timestamp for r in session.timeline()] == [1000, 1100, 1200, 1300]
     assert zpf.check_coverage(io.BytesIO(sink.getvalue()), io.BytesIO(raw)) == []
+
+
+# --- ts_first (#86) ---------------------------------------------------------------
+
+
+def _coalesce(ts: int | None = None, ts_first: int | None = None) -> zpf.Record:
+    """Write one flow record coalescing the first and third packets; return it."""
+    raw = unit_sequence_of_packets()  # packets at ts 1000, 1100, 1200
+    sink = io.BytesIO()
+    with zpf.sessionize_stage(
+        io.BytesIO(raw), sink, decoder="tcp-reassembly", produced_by="t", produced_at=2
+    ) as stage:
+        (stream,) = stage.streams()
+        flow = stage.session("a", proto="tcp")
+        flow.record(
+            flow.participant("10.8.0.2:44300", isn=1000), b"A" * 40 + b"B" * 30,
+            cites=[stream.cite(0, 40), stream.cite(60, 90)],
+            hints=zpf.Hints(seq_start=1001), ts=ts, ts_first=ts_first,
+        )
+        flow_b = stage.session("b", proto="tcp")
+        flow_b.record(flow_b.participant("10.8.0.2:44301", isn=5000), b"C" * 20,
+                      cites=stream.cite(40, 60), hints=zpf.Hints(seq_start=5001))
+    assert zpf.check_coverage(io.BytesIO(sink.getvalue()), io.BytesIO(raw)) == []
+    with zpf.open(io.BytesIO(sink.getvalue())) as out:
+        return next(iter(out.session(0).records()))
+
+
+def test_a_coalesced_record_derives_ts_first_with_ts():
+    record = _coalesce()
+    assert (record.ts_first, record.timestamp) == (1000, 1200)
+
+
+def test_an_explicit_ts_first_is_written_as_given():
+    assert _coalesce(ts_first=990).ts_first == 990
+    assert _coalesce(ts=1500, ts_first=990).ts_first == 990
+
+
+def test_an_explicit_ts_leaves_ts_first_to_the_caller():
+    # Deriving one half of the pair against the caller's other half could
+    # write a ts_first later than ts.
+    record = _coalesce(ts=1500)
+    assert (record.timestamp, record.ts_first) == (1500, None)
+
+
+def test_a_record_from_one_packet_carries_no_ts_first():
+    sink = io.BytesIO()
+    sessionize_tunnel(sink, per_flow=True)
+    with zpf.open(io.BytesIO(sink.getvalue())) as out:
+        assert all(r.ts_first is None for s in out.sessions() for r in s.records())

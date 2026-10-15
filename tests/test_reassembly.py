@@ -946,6 +946,20 @@ def test_ts_first_falls_back_to_the_records_own_timestamp():
     assert segment.ts_first_for(4, 8) == 2000  # no ts_first: its timestamp stands
 
 
+def test_the_view_gives_ts_first_for_absolute_offsets():
+    """#86: the stream-level mirror of ``StreamView.ts_for``, as a stage's cites arrive."""
+    def fill(s: zpf.SessionWriter) -> None:
+        p = s.participant("10.0.0.1:51000", isn=1000)
+        s.record(p, ts=1000, payload=b"AAAA", ts_first=900, hints=zpf.Hints(seq_start=1001))
+        s.record(p, ts=2000, payload=b"BBBB", hints=zpf.Hints(seq_start=1005))
+
+    view = only_view(fill)
+    assert view.ts_first_for(0, 8) == 900
+    assert view.ts_first_for(4, 8) == 2000
+    assert view.ts_for(0, 8) == 2000
+    assert view.ts_first_for(20, 30) is None  # no contributed byte there
+
+
 def test_a_hand_built_segment_falls_back_to_the_runs_time():
     """No contributors to read, so the run's own time is all there is."""
     segment = zpf.Segment(data=b"abcd", off_start=0, off_end=4, ts=42)

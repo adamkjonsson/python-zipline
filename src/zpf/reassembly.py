@@ -845,6 +845,30 @@ class StreamView:
         ]
         return max(stamps) if stamps else None
 
+    def ts_first_for(self, off_start: int, off_end: int) -> int | None:
+        """Return when the *first* packet behind a unit occupying a range arrived.
+
+        The mirror of :meth:`ts_for`, as :meth:`Segment.ts_first_for` is of
+        :meth:`Segment.ts_for`: the minimum over the input records that
+        contributed accepted bytes to the range, each contributing its own
+        ``ts_first``, or its ``timestamp`` where it states none.
+
+        Args:
+            off_start: First offset of the unit, in this stream's own space.
+            off_end: One past its last offset.
+
+        Returns:
+            The unit's first-arrival time, or ``None`` where no record
+            contributed an accepted byte to the range.
+
+        """
+        stamps = [
+            c.ts_first
+            for c in self.contributions()
+            if c.off_start < off_end and off_start < c.off_end
+        ]
+        return min(stamps) if stamps else None
+
     def cited_as(self, source: SourceHandle | int) -> StreamView:
         """Return a copy of this view that cites ``source`` by default.
 

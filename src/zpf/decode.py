@@ -404,6 +404,7 @@ class DecodeStage:
         payload: bytes = b"",
         *,
         ts: int | None = None,
+        ts_first: int | None = None,
         content_type: str | None = None,
         role: str | None = None,
         cites: _Cites = None,
@@ -445,6 +446,14 @@ class DecodeStage:
                 exists because the wrong answer was the easy one to reach for,
                 a run's :attr:`Segment.ts <zpf.reassembly.Segment.ts>` being
                 right only for a unit that spans the whole run.
+            ts_first: Time of the **first** input record the unit draws on,
+                where ``ts`` is the last; optional, and meaningful only for a
+                unit built from several. Written as given and never derived
+                here (`#86 <https://github.com/adamkjonsson/python-zipline/issues/86>`_):
+                a decode stage that wants it reads it from its input, e.g.
+                :meth:`InputStream.view.ts_first_for
+                <zpf.reassembly.StreamView.ts_first_for>` over the range it
+                cites.
 
                 Pass it explicitly for a record citing no single range of one
                 input stream, where there is nothing to derive from.
@@ -518,6 +527,7 @@ class DecodeStage:
         stream.session.record(
             stream.handle,
             ts=ts,
+            ts_first=ts_first,
             payload=payload,
             flags=flags,
             hints=hints,
@@ -971,6 +981,40 @@ def _derive_ts(
         )
         raise SemanticError(msg)
     return max(stamps)
+
+
+def _derive_ts_first(
+    source: SourceHandle,
+    streams: Mapping[tuple[int, int], InputStream],
+    spans: Iterable[Span],
+) -> int | None:
+    """Work out when the first input record a unit cites arrived.
+
+    The mirror of :func:`_derive_ts`, and the specification's ``ts_first``
+    rule applied per unit: the time of the *first* input record contributing
+    to it, each contributing its own ``ts_first`` or, where it states none,
+    its ``timestamp``.
+
+    Args:
+        source: The ``zpf-input`` Source the stage cites.
+        streams: The input streams a span may name, by ``(session_id, pid)``.
+        spans: The record's spans, already normalised.
+
+    Returns:
+        The earliest arrival, or ``None`` if the spans name no contributed
+        byte of these streams.
+
+    """
+    stamps = [
+        found
+        for span in spans
+        if span.source_id == source.source_id
+        for stream in (streams.get((span.session_id, span.participant_id)),)
+        if stream is not None
+        for found in (stream.view.ts_first_for(span.off_start, span.off_end),)
+        if found is not None
+    ]
+    return min(stamps) if stamps else None
 
 
 def _as_spans(stream: DecodeStream, cites: _Cites) -> tuple[Span, ...]:

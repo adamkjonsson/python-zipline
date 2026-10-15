@@ -1394,3 +1394,18 @@ def test_a_decoded_stage_still_carries_a_unit_sequence_forward():
         assert {p.adjacency for s in out.sessions() for p in s.participants} == {
             zpf.Adjacency.UNITS
         }
+
+
+def test_a_decode_stage_passes_ts_first_through():
+    """#86: written as given; a decode stage never derives it."""
+    sink = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw_file()), sink, decoder="http/1.1", produced_by="t 1.0", produced_at=1
+    ) as dec:
+        stream = dec.streams()[0]
+        dec.record(stream, REQUEST, ts=10, ts_first=7, cites=(0, len(REQUEST)))
+        dec.record(dec.streams()[1], RESPONSE, cites=(0, len(RESPONSE)))
+    with zpf.open(io.BytesIO(sink.getvalue())) as out:
+        request, response = out.session(7).records()
+        assert (request.timestamp, request.ts_first) == (10, 7)
+        assert response.ts_first is None

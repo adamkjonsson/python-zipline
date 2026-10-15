@@ -136,6 +136,13 @@ extents and timestamps done by hand.
   the format and said so in the docs.
 - `InputStream` is the input side both stages share; `DecodeStream` extends
   it with its output pairing.
+- `ts_first`, the first packet's arrival where `ts` is the last, is derived
+  with `ts` from what a record cites, and written only for a record drawn from
+  several input packets
+  ([#86](https://github.com/adamkjonsson/python-zipline/issues/86)). It can
+  also be passed explicitly, to `FlowSession.record` and now to
+  `DecodeStage.record`, which never derives it.
+  `StreamView.ts_first_for` is the stream-level mirror of `ts_for`.
 
 Rebuilt through it, `tunnel/inner.zpf` matches the vendored file block for
 block (Source and Decoder ids aside, which are the writer's to number).

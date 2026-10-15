@@ -66,7 +66,14 @@ from dataclasses import dataclass
 from typing import IO, TYPE_CHECKING
 
 from zpf.blocks import OutputLayer, SourceKind, Span
-from zpf.decode import InputStream, _declare_decoder, _derive_ts, _Ledger, _open_input
+from zpf.decode import (
+    InputStream,
+    _declare_decoder,
+    _derive_ts,
+    _derive_ts_first,
+    _Ledger,
+    _open_input,
+)
 from zpf.errors import SemanticError, ZpfError
 from zpf.writer import Decoded, InputRef, create
 
@@ -180,6 +187,7 @@ class FlowSession:
         *,
         cites: Span | Iterable[Span],
         ts: int | None = None,
+        ts_first: int | None = None,
         hints: Hints | None = None,
         flags: RecordFlags | int = 0,
         comment: str | None = None,
@@ -198,6 +206,16 @@ class FlowSession:
             ts: Record time in the file's ticks. **Omit it and it is derived
                 from** ``cites``: the completion time of the last input record
                 the record draws on, as for a decode stage.
+            ts_first: Time of the **first** input packet the record draws on,
+                where ``ts`` is the last — a reassembler's field, for a record
+                coalesced from several packets
+                (`#86 <https://github.com/adamkjonsson/python-zipline/issues/86>`_).
+                **Derived along with** ``ts`` when both are omitted: the
+                earliest arrival among the cited input records, each counting
+                its own ``ts_first`` where it has one. It is written only when
+                it is earlier than ``ts``, so a record built from one packet
+                carries none, as the specification advises. Given explicitly,
+                it is written as given.
             hints: ``seq_start`` and ``ack`` from the flow. With ``seq_start``
                 the record MAY cite several input units, or cross a break the
                 input declares (`zipline#152
@@ -218,9 +236,13 @@ class FlowSession:
             raise ZpfError(msg)
         if ts is None:
             ts = _derive_ts(self._stage.source, self._stage.inputs, spans)
+            if ts_first is None:
+                first = _derive_ts_first(self._stage.source, self._stage.inputs, spans)
+                ts_first = first if first is not None and first < ts else None
         self.writer.record(
             participant,
             ts=ts,
+            ts_first=ts_first,
             payload=payload,
             flags=flags,
             hints=hints,
