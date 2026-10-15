@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 import zpf
+from zpf import decode as decode_module
 
 TUNNEL = Path(__file__).parent / "vectors" / "tunnel"
 PACKETS = TUNNEL / "packets.zpf"
@@ -125,6 +126,28 @@ def test_written_as_the_packets_arrive_the_flows_interleave_and_still_conform():
             # Under fan-out each session declares the whole input stream.
             assert [e.extent for e in end.input_extents] == [210]
     assert zpf.check_coverage(io.BytesIO(sink.getvalue()), PACKETS) == []
+
+
+def test_a_fanned_out_input_stream_is_measured_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    measured: list[tuple[int, int]] = []
+    original = decode_module._extent_and_gaps
+
+    def count_measurements(
+        view: zpf.reassembly.StreamView,
+    ) -> tuple[int, list[tuple[int, int]]]:
+        measured.append((view.participant.session_id, view.participant.participant_id))
+        return original(view)
+
+    monkeypatch.setattr(decode_module, "_extent_and_gaps", count_measurements)
+
+    sink = io.BytesIO()
+    sessionize_tunnel(sink, per_flow=True)
+
+    with zpf.open(io.BytesIO(sink.getvalue())) as out:
+        assert [session.session_id for session in out.sessions()] == [10, 11]
+    assert len(measured) == 1
 
 
 # --- Coalescing across input units (#152) -----------------------------------------

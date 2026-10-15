@@ -230,6 +230,7 @@ class _Ledger:
         self._decoder = decoder
         self._cited: dict[tuple[int, int], list[tuple[int, int]]] = {}
         self._marked: dict[tuple[int, int], list[tuple[int, int]]] = {}
+        self._input_metrics: dict[tuple[int, int], tuple[int, list[tuple[int, int]]]] = {}
 
     def cite(self, spans: Iterable[Span]) -> None:
         """Count the ranges of ``spans`` that cite this stage's input source."""
@@ -255,7 +256,7 @@ class _Ledger:
         Measured with the same rule the coverage check uses, so the two
         cannot disagree.
         """
-        extent, _gaps = _extent_and_gaps(stream.view)
+        extent, _gaps = self._input_metrics_for(stream)
         return InputExtent(
             source_id=self._source.source_id,
             session_id=stream.session_id,
@@ -284,7 +285,7 @@ class _Ledger:
                     "not override an explicit marker"
                 )
                 raise ZpfError(msg)
-            extent, gaps = _extent_and_gaps(stream.view)
+            extent, gaps = self._input_metrics_for(stream)
             uncovered = complement(sorted(cited + marked), extent)
             for start, end, reason in _label_fills(uncovered, gaps):
                 self._writer.undecoded(
@@ -296,6 +297,15 @@ class _Ledger:
                     reason=reason,
                     decoder=self._decoder,
                 )
+
+    def _input_metrics_for(self, stream: InputStream) -> tuple[int, list[tuple[int, int]]]:
+        """Return one input stream's cached extent and gaps."""
+        key = (stream.session_id, stream.pid)
+        metrics = self._input_metrics.get(key)
+        if metrics is None:
+            metrics = _extent_and_gaps(stream.view)
+            self._input_metrics[key] = metrics
+        return metrics
 
 
 class DecodeStage:
