@@ -30,7 +30,10 @@ Pick the level of involvement you need:
 - {meth}`~zpf.SessionReader.stream` — one participant's records in stream order,
   no merge. What a decoder reads (via {meth}`~zpf.SessionReader.reassemble`).
 - {func}`~zpf.causal_merge` and friends in {mod}`zpf.order` — the raw partial
-  order, if you need the DAG itself rather than a linearization.
+  order, if you need the DAG itself rather than a linearization. Pass
+  `isns=` with each participant's `isn`, as `timeline()` does: an ack is a
+  position measured from its peer's origin, and without an `isn` that origin
+  is taken to be the first captured byte.
 
 ```python
 with zpf.open("cap.zpf") as reader:
@@ -176,14 +179,22 @@ for a capture converter the optional `ts_first` is the only place that time can
 go:
 
 ```python
-session.record(alice, ts=5_000_000, payload=response,
-               seq_start=1001, ts_first=3_000_000)
+session.record(alice, ts=5_000_000, payload=response, ts_first=3_000_000,
+               hints=zpf.Hints(seq_start=1001))
 ```
 
 That records a response which *completed* at `5.0 s` having *started* at `3.0 s`
 — the difference between knowing when a transfer landed and knowing it streamed.
 Leave it off when a record came from a single packet, where it would only repeat
 `ts`.
+
+A **sessionization stage** derives it for you. {meth}`FlowSession.record
+<zpf.sessionize.FlowSession.record>` works out `ts` and `ts_first` together
+from what a record cites, the last and the first arrival among the input
+packets, and writes `ts_first` only for a record drawn from more than one. A
+decode stage takes `ts_first=` too, but writes it only as given; to derive it,
+read {meth}`StreamView.ts_first_for <zpf.reassembly.StreamView.ts_first_for>`
+over the range you cite, the mirror of the `ts_for` it already uses.
 
 `ts_first` is an optional TLV: nothing requires it, no reader may depend on it,
 and it takes no part in ordering. In particular it is not a second ordering key

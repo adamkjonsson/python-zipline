@@ -163,6 +163,9 @@ emit no block at all — see [the decoding guide](../guides/decoding.md#when-eve
 
 - [Decoding](../guides/decoding.md) — the feature in full, including reassembly
   views and (advanced) mixing several decoders in one session.
+- [Sessionizing a packet stream](../guides/decoding.md#sessionizing-a-packet-stream-fan-out)
+  — when one input stream holds many flows, such as a decrypted tunnel's
+  packets, {func}`zpf.sessionize_stage` instead of `decode_stage`.
 - [Tutorial: writing a decoder](../tutorial-decoding.md) — the same steps as
   a runnable, end-to-end example.
 - [Concepts: created or preserved](../concepts.md#created-or-preserved)
@@ -170,5 +173,6 @@ emit no block at all — see [the decoding guide](../guides/decoding.md#when-eve
   normative model, including how decode stages chain (`raw → tls-records →
   http`).
 - The API reference for [`zpf.decode`](../../api/decode.md),
+  [`zpf.sessionize`](../../api/sessionize.md),
   [`zpf.reassembly`](../../api/reassembly.md), and
   [`zpf.transform`](../../api/transform.md) ({func}`zpf.check_coverage`).

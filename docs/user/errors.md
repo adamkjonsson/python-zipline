@@ -171,7 +171,7 @@ Categories you will meet:
 | `extent-below-coverage` | reader, {func}`zpf.check_extents` | A declared extent the file's own citations overshoot. |
 | `extents-disagree` | reader, {func}`zpf.check_extents` | Two sessions declare different lengths for one input stream. |
 | `extent-mismatch` | {func}`zpf.check_coverage` | A declared extent the opened input disagrees with. |
-| `discontinuity-splice` | {func}`zpf.check_splice` | A unit whose spans cross a break its input declared. |
+| `discontinuity-splice` | {func}`zpf.check_splice` | A unit whose spans cross a break its input declared — except a transport-layer record with `seq_start`, which may. |
 | `unplaceable` | reader | A record the offset space could not place. **Not in `diagnostics`** — see below. |
 
 ## Unplaceable records: reported, but not a violation

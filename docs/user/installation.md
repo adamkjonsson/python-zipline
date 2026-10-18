@@ -33,9 +33,9 @@ import name are `zpf`.
 
 ```console
 $ python -c "import zpf; print(zpf.__version__)"
-0.1.0
+0.6.0
 $ zpf --version
-zpf 0.1.0
+zpf 0.6.0
 ```
 
 ## Working on `zpf` itself

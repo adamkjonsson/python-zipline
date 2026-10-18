@@ -19,7 +19,8 @@ symbol:
   the three record iterators, and laziness.
 - **[Decoding](decoding.md)** — reassembly views, stream vs datagram input,
   writing a decode stage, coverage, reading a payload as its `content_type`
-  says, and (advanced) multiple decoders and decoder chaining.
+  says, and (advanced) multiple decoders, sessionizing a packet stream and
+  decoder chaining.
 - **[Provenance](provenance.md)** — input sources and digests, spans, origins,
   the coverage guarantee, and following the provenance chain to recover bytes.
 - **[Ordering](ordering.md)** — causal order from `seq`/`ack`, `timeline()`,
@@ -35,6 +36,9 @@ story — basic to expert — stays in one place. This is the index into it:
 
 - [More than one decoder in a session](decoding.md#more-than-one-decoder-in-a-session)
   — a session can mix decoders; pick one per record with `decoder=`.
+- [Sessionizing a packet stream](decoding.md#sessionizing-a-packet-stream-fan-out)
+  — one input stream of packets, a decrypted tunnel's, fanned out into one
+  session per flow with {func}`zpf.sessionize_stage`.
 - [Decoder chaining](decoding.md#decoder-chaining) — `raw → tls-records → http`
   as successive decode stages, and how provenance recurses through them.
 - [Block pipelines](faces-and-io.md#block-pipelines) — filter or rewrite a file

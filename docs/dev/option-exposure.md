@@ -64,14 +64,15 @@ signature says which. On a decode stage there is no line to mark, because
 **every** record it writes is decoded-layer. A `decoded=` wrapper would appear
 on every call and distinguish nothing, which is ceremony rather than structure.
 
-That is why `src/zpf/` carries two `# noqa: PLR0913` rather than one. Both
-comments argue rather than defer, which is the standard the restructure set for
-itself.
+That is why `src/zpf/` carries more than one `# noqa: PLR0913`: this one on
+{meth}`~zpf.DecodeStage.record`, and the builders' below. Each comment argues
+rather than defers, which is the standard the restructure set for itself.
 
 ## The builder is different again
 
-{func}`zpf.decode_stage` carries the other suppression, for a different reason
-from the one above. It is a *builder*: called once per stage with every
+{func}`zpf.decode_stage` carries the second suppression, and
+{func}`zpf.sessionize_stage` the third, for a different reason from the one
+above. It is a *builder*: called once per stage with every
 argument named, configuring a pipeline rather than filling in a block's fields.
 `SessionWriter.record()` — the issue's real subject — passes the limit on its
 own.
@@ -83,6 +84,13 @@ flat on {func}`zpf.create`, {func}`zpf.merge_files` and
 one of four call sites different to satisfy a count, and bundling them
 everywhere is a wider break than the issue asked for. A consistent flat
 spelling is worth more than the suppression costs.
+
+`sessionize_stage` crossed the limit when it gained `face` and `creator`
+([#89](https://github.com/adamkjonsson/python-zipline/issues/89)), and for the
+same reason: those are {func}`zpf.create`'s File Header fields, spelled flat
+there, so a bundle in one builder would be a third spelling of them.
+{meth}`FlowSession.record <zpf.sessionize.FlowSession.record>`, its record
+method, stays under the limit with its eight.
 
 ## Where to go next
 

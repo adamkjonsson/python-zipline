@@ -142,7 +142,10 @@ pair. Passing it with a {class}`~zpf.DecoderHandle` raises `ValueError`: that
 descriptor was written on another writer's terms, so the digest has nowhere to
 land, and dropping it silently would lose the one fact it was passed to record.
 Declare the handle with `params_digest=` on
-{meth}`zpf.FileWriter.add_decoder` instead.
+{meth}`zpf.FileWriter.add_decoder` instead. `output_layer=` is refused with a
+handle the same way, since `0.6.0`: the handle's descriptor already fixes the
+layer, and through `0.5.x` a stage that asked for one quietly got the
+handle's.
 
 ### Output order: two monologues, or the conversation
 
@@ -271,7 +274,10 @@ owed at any seam. A stage *reading* a unit sequence carries the break at every
 seam; leaving `adjacency=` at its default carries `units` forward for you, since
 a unit sequence read stays one. A writer MUST NOT set `units` on a
 transport-layer participant, where stored order defines nothing, and
-{func}`zpf.create` refuses the first record that would make it one.
+{func}`zpf.create` refuses the first record that would make it one. So a
+**transport-layer** stage (`output_layer=zpf.OutputLayer.TRANSPORT`) declares
+`contiguous` whatever its input says, and refuses any other `adjacency=`: a
+reassembler over a tunnel's unit sequence of packets is the common case.
 
 ### Naming a record: `role`
 
@@ -479,15 +485,27 @@ decode stage, measured the way fan-out needs:
   `skipped` (or `gap`).
 - **Extents.** Each session's Session End declares the *whole* extent of every
   input stream it cited, not its share.
-- **Timestamps**, derived from what each record cites.
+- **Timestamps**, derived from what each record cites: `ts` as the last input
+  packet's arrival and, for a record coalesced from several, `ts_first` as the
+  first ([ordering guide](ordering.md#when-a-record-started-not-just-when-it-finished)).
+- **A key outlives its session.** Once a flow's session has ended — `fin`,
+  `rst`, an idle `timeout`, or `capture-gap` at a hole too wide to place —
+  `stage.session(key, …)` opens a new session on the same key, which is what
+  the specification asks of a producer resuming after such a hole.
+  `stage.sessions()` lists them all, in creation order.
 
 Two things it leaves to you. **Parsing**: the format says what a `net:ip`
 payload is, not what is in it, so classifying a packet is your code.
 **Sequence numbers**: since `0.22` a transport record carrying `seq_start` may
 cite several input packets, or cross a break the input declares, because its
 sequence numbers assert that the bytes join and a break between them would be
-a range no record covers. The stage takes your word for them. A record without
+a range no record covers. The stage takes your word for them, and so does
+{func}`zpf.check_splice`, which leaves such a record unchecked. A record without
 `seq_start` cites one range only.
+
+Both builders, {func}`zpf.sessionize_stage` and {func}`zpf.decode_stage`, take
+`face="jsonl"` to write the JSON-Lines face (with a text sink) and `creator=`
+for the File Header's tool field, as {func}`zpf.create` does.
 
 **A pure ACK is a zero-length record citing its packet.** Its packet's bytes
 in the input owe coverage like any other, and its `ack` is ordering
