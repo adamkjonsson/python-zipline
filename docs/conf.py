@@ -48,6 +48,7 @@ nitpick_ignore = [
     ("py:class", "Self"),
     ("py:class", "_Cites"),
     ("py:class", "_SessionIndex"),
+    ("py:class", "_StageContext"),
 ]
 
 nitpick_ignore_regex = [("py:class", r"tuple\[.*")]

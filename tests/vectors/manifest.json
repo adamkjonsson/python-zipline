@@ -1,5 +1,5 @@
 {
-  "format": "zipline-payload/0.21",
+  "format": "zipline-payload/0.23",
   "vectors": [
     {
       "name": "raw-minimal",
@@ -80,6 +80,15 @@
           "session_id": 7,
           "pid": 1,
           "extent": 4
+        }
+      ],
+      "merged": [
+        {
+          "session_id": 7,
+          "order": [
+            2,
+            1
+          ]
         }
       ]
     },
@@ -944,6 +953,16 @@
           "pid": 1,
           "extent": 2
         }
+      ],
+      "merged": [
+        {
+          "session_id": 8,
+          "order": [
+            2,
+            1,
+            3
+          ]
+        }
       ]
     },
     {
@@ -1018,6 +1037,15 @@
           "pid": 1,
           "extent": 8
         }
+      ],
+      "merged": [
+        {
+          "session_id": 8,
+          "order": [
+            2,
+            1
+          ]
+        }
       ]
     },
     {
@@ -1053,6 +1081,16 @@
           "session_id": 9,
           "pid": 1,
           "extent": 5
+        }
+      ],
+      "merged": [
+        {
+          "session_id": 9,
+          "order": [
+            1,
+            2,
+            3
+          ]
         }
       ]
     },
@@ -1102,7 +1140,7 @@
       "options": [
         "0x0020"
       ],
-      "summary": "version_minor is 22 while major is 0. In the 0.x regime the pair (0, minor) is the compatibility identity, so a 0.21 reader MUST reject it.",
+      "summary": "version_minor is 24 while major is 0. In the 0.x regime the pair (0, minor) is the compatibility identity, so a 0.23 reader MUST reject it.",
       "spec_section": "File Header -- version numbering",
       "expect": "Reject the file. This is the vector that distinguishes a 0.x-aware reader from one that assumes minors are always skippable.",
       "has_jsonl": false
@@ -1516,6 +1554,17 @@
           "pid": 1,
           "extent": 19
         }
+      ],
+      "merged": [
+        {
+          "session_id": 7,
+          "order": [
+            1,
+            2,
+            3,
+            4
+          ]
+        }
       ]
     },
     {
@@ -1697,6 +1746,266 @@
           "session_id": 8,
           "pid": 0,
           "extent": 8
+        }
+      ]
+    },
+    {
+      "name": "sequenced-past-2gib-pure-ack",
+      "tier": "accept",
+      "violations": 0,
+      "bytes": 544,
+      "blocks": [
+        "0x01",
+        "0x02",
+        "0x10",
+        "0x11",
+        "0x20",
+        "0x41"
+      ],
+      "options": [
+        "0x0020",
+        "0x0050",
+        "0x0052",
+        "0x0060",
+        "0x0061",
+        "0x0063",
+        "0x0070",
+        "0x0072"
+      ],
+      "summary": "stream-past-2gib's client, after a recorded handshake, in a SEQUENCED session whose server sends nothing after its SYN-ACK. The server's pure ACKs are not records, so its one ack in the file is the SYN-ACK's 1001 for the whole session. That ack is a POSITION in the client's stream -- 0, the origin -- and every client data record ends above it, at 8, 2**30 + 8, 2**31 + 8 and 3 * 2**30 + 8, so no edge runs from any of them to the SYN-ACK and the stored order is causal. Through 0.21 step 2 compared the raw values serially, and the record at 2 GiB ends 2**31 + 8 past 1001, which serial arithmetic reads as BEFORE it: the edge client@2GiB -> SYN-ACK, a record that must precede the handshake. The ordinary large upload, with a peer that only acks, failed the sequenced check from that record on. Since 0.22 ends and acks are unwrapped into the peer's offset space and compared as plain integers.",
+      "spec_section": "Causal ordering from TCP seq/ack -- acks unwrap into the peer's space",
+      "expect": "Accept, and consume the records in STORED order: the session is SEQUENCED and the order is causal. The SYN-ACK's ack 1001 is position 0 of the client's stream; the client SYN ends at 0 and precedes it, as stored; the four data records end at 8, 2**30 + 8, 2**31 + 8 and 3 * 2**30 + 8, all above 0, so none precedes it. Each data record's ack 5001 is position 0 of the server's stream, where the SYN-ACK ends, so the SYN-ACK precedes all four, as stored. A reader or writer that compares raw values serially draws client@2GiB -> SYN-ACK and client@3GiB -> SYN-ACK, and reports the stored order as a causal violation; that reading was the document's own until 0.22 and is wrong now. Rejecting, isolating, or refusing to write the file is NOT conformant. Extents are those of stream-past-2gib for the client, and 0 for the server, whose one record is zero-length at its origin.",
+      "has_jsonl": true,
+      "extents": [
+        {
+          "session_id": 7,
+          "pid": 0,
+          "extent": 3221225480
+        },
+        {
+          "session_id": 7,
+          "pid": 1,
+          "extent": 0
+        }
+      ]
+    },
+    {
+      "name": "sequenced-ack-below-origin",
+      "tier": "accept",
+      "violations": 0,
+      "bytes": 304,
+      "blocks": [
+        "0x01",
+        "0x02",
+        "0x10",
+        "0x11",
+        "0x20",
+        "0x41"
+      ],
+      "options": [
+        "0x0020",
+        "0x0050",
+        "0x0052",
+        "0x0060",
+        "0x0070",
+        "0x0072"
+      ],
+      "summary": "A mid-stream capture, SEQUENCED, with no isn on either side, so each participant's origin is its first captured byte: 1001 for the client, 5001 for the server. The server's response is stored FIRST and carries ack 993 -- it acknowledges eight client bytes sent before the capture began. That ack's position in the client's stream is 993 - 1001 = -8: a signed integer, below 0, acknowledging no captured client byte, so no edge reaches the response. The client's request, stored after it, acks 5013, the end of the response's twelve bytes, so the response precedes the request, as stored. A reader that keeps ack positions in an unsigned type -- the type of an offset -- wraps -8 to just under 2**64 (or 2**32, taking the serial delta unsigned), finds the request's end below it, draws request -> response, and refuses a correct order.",
+      "spec_section": "Causal ordering from TCP seq/ack -- ack positions are signed",
+      "expect": "Accept, and consume the records in STORED order: the session is SEQUENCED and the order is causal. The response's ack 993 is position -8 of the client's stream, below the request's end at 8, so no edge runs from the request to it. The request's ack 5013 is position 12 of the server's stream, where the response ends, so the response precedes the request, as stored. A reader that stores ack positions unsigned reads -8 as a huge position, draws request -> response, and reports the stored order as a causal violation. Rejecting, isolating, or refusing to write the file is NOT conformant. Extents are 8 and 12: with no isn, each stream starts at its first captured byte.",
+      "has_jsonl": true,
+      "extents": [
+        {
+          "session_id": 7,
+          "pid": 0,
+          "extent": 8
+        },
+        {
+          "session_id": 7,
+          "pid": 1,
+          "extent": 12
+        }
+      ]
+    },
+    {
+      "name": "sequenced-pure-ack-and-fin",
+      "tier": "accept",
+      "violations": 0,
+      "bytes": 520,
+      "blocks": [
+        "0x01",
+        "0x02",
+        "0x10",
+        "0x11",
+        "0x20",
+        "0x41"
+      ],
+      "options": [
+        "0x0020",
+        "0x0050",
+        "0x0052",
+        "0x0060",
+        "0x0061",
+        "0x0063",
+        "0x0070",
+        "0x0072"
+      ],
+      "summary": "A SEQUENCED session with a recorded handshake, eight bytes of data, the server's pure ACK of them, the client's zero-length FIN, and the server's pure ACK of the FIN -- pure ACKs stored as zero-length records, as Caveats advises. Ends: the SYN 0 (it occupies isn, below the origin), the SYN-ACK 0, the data 8, the FIN 9 (it occupies the number at its offset 8), and the two pure ACKs NONE, since they occupy no sequence number. The edges are SYN -> SYN-ACK and both pure ACKs, SYN-ACK -> data and FIN, data -> both pure ACKs, and FIN -> the last pure ACK; the stored order respects all of them. Through 0.22 a pure ACK's end was its own offset, 0, which the data's ack of 5001 (position 0) covers: the false edge pure-ACK -> data against the real data -> pure-ACK, a cycle. The sequenced check refused the true order and an unsequenced merge stalled. Not caught before because no producer stored pure ACKs and every zero-length record in the suite was a SYN, whose edge is real. Being SEQUENCED, this file can only catch a reading that ADDS an edge; merge-pure-ack-and-fin is its unsequenced twin, for the readings that drop one and for a merge that stalls.",
+      "spec_section": "Causal ordering from TCP seq/ack -- a record's end is one past the last sequence number it occupies",
+      "expect": "Accept, and consume the records in STORED order: the session is SEQUENCED and the order is causal. Client ends: SYN 0, data 8, FIN 9. Server ends: SYN-ACK 0, and none for the two pure ACKs. Server ack positions 0, 8 and 9; client ack positions 0 (data and FIN). Every edge runs forward in stored order. A reader that gives a pure ACK an end at its offset draws pure-ACK -> data (0 <= 0) against data -> pure-ACK (8 <= 8), a cycle: it refuses the order, or, merging, stalls. A reader that ends the zero-length FIN at its offset (8) draws FIN -> the first pure ACK (8 <= 8), which is stored before the FIN, and refuses the order: that pure ACK acknowledged the data, not the FIN. Rejecting, isolating, or refusing to write the file is NOT conformant. Extents are 8 for the client -- the FIN occupies a sequence number but no byte -- and 0 for the server.",
+      "has_jsonl": true,
+      "extents": [
+        {
+          "session_id": 7,
+          "pid": 0,
+          "extent": 8
+        },
+        {
+          "session_id": 7,
+          "pid": 1,
+          "extent": 0
+        }
+      ]
+    },
+    {
+      "name": "merge-pure-ack-and-fin",
+      "tier": "accept",
+      "violations": 0,
+      "bytes": 512,
+      "blocks": [
+        "0x01",
+        "0x02",
+        "0x10",
+        "0x11",
+        "0x20",
+        "0x41"
+      ],
+      "options": [
+        "0x0020",
+        "0x0050",
+        "0x0060",
+        "0x0061",
+        "0x0063",
+        "0x0070",
+        "0x0072"
+      ],
+      "summary": "sequenced-pure-ack-and-fin's six records, NOT sequenced, with the server's capture clock 50 ticks behind the client's, and stored server first (each participant's own order kept), so stored order is not the answer. A reader merges: edges from acks, each participant's records in stored order, ties broken by (timestamp, participant_id). Under the 0.23 end rule the edges are SYN -> SYN-ACK and both pure ACKs, SYN-ACK -> data and FIN, data -> both pure ACKs, FIN -> the last pure ACK, and the merged order is client SYN, SYN-ACK, data, pure ACK, FIN, pure ACK -- the causal order, though the skew would put every server record first. Each wrong reading gives its own answer: a SYN given no end loses SYN -> SYN-ACK and the SYN-ACK (ts 950) overtakes the SYN it acknowledges; a pure ACK ended at its offset makes the cycle and the merge stalls after the SYN-ACK; a FIN ended at its offset puts the FIN before the pure ACK that acknowledged only the data.",
+      "spec_section": "Causal ordering from TCP seq/ack -- the merge, over records with and without an end",
+      "expect": "Accept. Merged, the order is: client SYN (ts 1000), server SYN-ACK (950), client data (1200), server pure ACK (1150), client FIN (1400), server pure ACK (1350) -- in stored terms, records 4, 1, 5, 2, 6, 3. Every adjacent inversion of timestamp is an edge doing its work. A reader that gives a SYN no end puts the SYN-ACK first; one that gives a pure ACK an end at its offset stalls after the SYN-ACK, the data and the first pure ACK each waiting on the other; one that ends the zero-length FIN at its offset puts the FIN before the first pure ACK. A reader that returns stored order has not merged. Rejecting or isolating is NOT conformant. Extents are 8 for the client and 0 for the server.",
+      "has_jsonl": true,
+      "extents": [
+        {
+          "session_id": 7,
+          "pid": 0,
+          "extent": 8
+        },
+        {
+          "session_id": 7,
+          "pid": 1,
+          "extent": 0
+        }
+      ],
+      "merged": [
+        {
+          "session_id": 7,
+          "order": [
+            4,
+            1,
+            5,
+            2,
+            6,
+            3
+          ]
+        }
+      ]
+    },
+    {
+      "name": "sessionized-across-units",
+      "tier": "accept",
+      "violations": 0,
+      "bytes": 684,
+      "blocks": [
+        "0x01",
+        "0x02",
+        "0x03",
+        "0x10",
+        "0x11",
+        "0x12",
+        "0x20",
+        "0x41"
+      ],
+      "options": [
+        "0x0012",
+        "0x0013",
+        "0x0020",
+        "0x0021",
+        "0x0041",
+        "0x0042",
+        "0x0043",
+        "0x0050",
+        "0x0060",
+        "0x0061",
+        "0x0070",
+        "0x0080",
+        "0x0090",
+        "0x00C1"
+      ],
+      "summary": "A sessionization stage over a packet stream -- tunnel's inner hop, with nothing lost. The input, packets.zpf, is a unit sequence as kober's WireGuard output is: three inner packets at [0,80), [80,140) and [140,210), participant declared units, so every seam is a declared break. The first and third are flow A's and carry 40 and 30 bytes of TCP payload at seq 1001 and 1041, which join; the second is flow B's. Session 10's one record coalesces flow A into 70 bytes with TWO spans, one per input packet, crossing two declared breaks. Through 0.21 that record had no conformant form: the carry duty asked for a Discontinuity or a units output, and a transport-layer stream may have neither. Since 0.22 a transport output whose records carry seq_start MAY cross, because a break there is a range of sequence numbers no record covers and cannot be lost. Nothing in this file shows the input's adjacency, and nothing could catch a wrong coalesce: the sequence numbers are the producer's assertion.",
+      "spec_section": "Discontinuity (0x22) -- what a consumer owes the block",
+      "expect": "Accept. Session 10 has one placeable record at [0,70), extent 70; session 11 one at [0,20), extent 20. The input stream (source 1, session 5, pid 0) is covered once over [0,210) by the union of the two sessions' spans, and both Session Ends declare its whole extent, 210, as fan-out requires. Session 10's record cites two input units and crosses two declared breaks; that is conformant for a transport-layer output whose records carry seq_start, and the seam predicate does not apply, since it tests decoded layers only. A reader that reports a no-splice violation, or rejects or isolates the session, has applied the decoded layer's carry duty to a stream whose offsets already carry every break.",
+      "has_jsonl": true,
+      "extents": [
+        {
+          "session_id": 10,
+          "pid": 0,
+          "extent": 70
+        },
+        {
+          "session_id": 11,
+          "pid": 0,
+          "extent": 20
+        }
+      ]
+    },
+    {
+      "name": "decap-ethernet",
+      "tier": "accept",
+      "violations": 0,
+      "bytes": 584,
+      "blocks": [
+        "0x01",
+        "0x02",
+        "0x03",
+        "0x10",
+        "0x11",
+        "0x12",
+        "0x20",
+        "0x41"
+      ],
+      "options": [
+        "0x0012",
+        "0x0013",
+        "0x0020",
+        "0x0021",
+        "0x0041",
+        "0x0042",
+        "0x0043",
+        "0x0050",
+        "0x0060",
+        "0x0080",
+        "0x0090",
+        "0x0091",
+        "0x00C1"
+      ],
+      "summary": "A VXLAN decapsulation stage: its input is two 8-byte VXLAN headers each followed by an inner Ethernet frame, and its output is one record per frame typed net:ethernet -- LINKTYPE_ETHERNET's unit, from the destination address, no preamble, no FCS. Every header in each frame is real -- Ethernet II, IPv4, UDP, lengths and checksums true -- so a reader that knows the token can hand each record to anything that reads a pcap of link type 1. Each record spans its whole datagram, VXLAN header included, because the header (its VNI) fed the decapsulation -- the correspondence rule tunnel's decrypt stage follows. The participant is declared units, since two frames side by side are two packets and never one byte run; contiguous with no Discontinuity is also conformant, as tunnel shows. The endpoint list runs outer to inner: the VNI, then the inner sender's MAC.",
+      "spec_section": "Enums -- the content_type net: vocabulary",
+      "expect": "Accept. Two records at [0,60) and [60,110) of a unit sequence, extent 110; the input stream (source 1, session 3, pid 0) is covered once over [0,126). Both records' content_type is net:ethernet, a token this version defines: the payload is one Ethernet frame as a LINKTYPE_ETHERNET capture stores it. A reader that does not know the net: scheme treats the label as opaque and falls back to the decoder name, which is conformant -- an unknown scheme is opaque -- but a reader implementing this version knows the token. Rejecting or isolating is NOT conformant, and neither is checking the label against the payload: net: binds no length and the format parses no packet.",
+      "has_jsonl": true,
+      "extents": [
+        {
+          "session_id": 4,
+          "pid": 0,
+          "extent": 110
         }
       ]
     },
@@ -2105,6 +2414,7 @@
         "0x0060",
         "0x0061",
         "0x0070",
+        "0x0072",
         "0x0080",
         "0x0090",
         "0x0091",
@@ -2113,8 +2423,8 @@
         "0x00C1",
         "0x00D1"
       ],
-      "bytes": 3016,
-      "summary": "A decrypted tunnel, end to end: outer.zpf -> packets.zpf -> inner.zpf -> http.zpf. #41's case D, and the fixture that exercises the whole of 0.15 at once. FOUR THINGS TO READ IT FOR. (1) CORRESPONDENCE, NOT IDENTITY: each inner packet spans the WHOLE outer datagram, nonce and tag included, because those fed the computation -- so tunnel coverage closes with no skipped Undecoded blocks at all. (2) FAN-OUT: one input stream (packets.zpf session 5, pid 0) feeds TWO output sessions in inner.zpf; neither covers the extent alone and both Session Ends declare the same 150 for the shared input. (3) A zpf-SOURCED TRANSPORT STREAM: inner.zpf declares output_layer = transport, carries isn and seq_start, and expresses its 40-byte hole in the SEQUENCE NUMBERS -- no Discontinuity, no content_type. (4) ORIGINATION, AND THE CROSSING LEFT UNDONE: packets.zpf withholds an inner packet and declares the break; inner.zpf reads that break and CANNOT express one, so no record crosses packets offset 100 and the loss survives as a TCP gap instead; http.zpf then meets a hole-class region between two adjacent output units and originates its own block.",
+      "bytes": 3076,
+      "summary": "A decrypted tunnel, end to end: outer.zpf -> packets.zpf -> inner.zpf -> http.zpf. #41's case D, and the fixture that exercises the whole of 0.15 at once. FOUR THINGS TO READ IT FOR. (1) CORRESPONDENCE, NOT IDENTITY: each inner packet spans the WHOLE outer datagram, nonce and tag included, because those fed the computation -- so tunnel coverage closes with no skipped Undecoded blocks at all. (2) FAN-OUT: one input stream (packets.zpf session 5, pid 0) feeds TWO output sessions in inner.zpf; neither covers the extent alone and both Session Ends declare the same 210 for the shared input. (3) A zpf-SOURCED TRANSPORT STREAM: inner.zpf declares output_layer = transport, carries isn and seq_start, and expresses its 40-byte hole in the SEQUENCE NUMBERS -- no Discontinuity, no content_type. (4) ORIGINATION, AND THE BREAK CARRIED AS A HOLE: packets.zpf withholds an inner packet and declares the break at its offset 140; the lost packet was flow A's, so inner.zpf carries the break as a TCP sequence gap, which a transport stream needs no block for (and since 0.22 its packets are real IPv4 + TCP, so inner.zpf can be rebuilt from them); http.zpf then meets a hole-class region between two adjacent output units and originates its own block.",
       "spec_section": "Layers; Conformance; Discontinuity; Worked example: a decrypted tunnel",
       "expect": "Accept all four. Each .jsonl is the expected projection, and each declared digest is the real SHA-256 of the sibling it names, so the whole chain verifies. A reader that infers a stream's layer from its Source kind gets inner.zpf wrong; one that assumes a decode stage's output sessions mirror its input's gets inner.zpf wrong too.",
       "has_jsonl": true,

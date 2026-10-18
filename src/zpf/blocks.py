@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, Callable, ClassVar, NamedTuple
 
 from zpf import _frame
 from zpf._frame import RawOption
-from zpf.content import ContentType, decode_prim, prim_fault
+from zpf.content import ContentType, decode_prim, net_fault, prim_fault
 from zpf.errors import ContentError, EncodeError, SemanticError, StructuralError
 
 if TYPE_CHECKING:
@@ -42,7 +42,7 @@ _SWAPPED_MAGIC = 0x4650495A
 #: ``(version_major, version_minor)``. A writer stamps the version it
 #: implements; there is no obligation to compute the lowest version whose
 #: features a file happens to use.
-SPEC_VERSION: tuple[int, int] = (0, 21)
+SPEC_VERSION: tuple[int, int] = (0, 23)
 
 
 #: The canonical :class:`Undecoded` ``reason`` values, mapped to their
@@ -1194,9 +1194,13 @@ class Record(Block):
         and the label never replaces them.
 
         The fallback covers a record with no ``content_type``, a
-        ``prim:bytes`` payload, a ``mime:``/``dec:``/unknown scheme, and a
-        ``prim:`` label the payload contradicts (an illegal token, or a
-        width that disagrees — never padded, truncated, or reinterpreted).
+        ``mime:``/``dec:``/unknown scheme, a ``net:`` token this version does
+        not define, and a ``prim:`` label the payload contradicts (an illegal
+        token, or a width that disagrees — never padded, truncated, or
+        reinterpreted). ``prim:bytes`` and a known ``net:`` token
+        (:data:`~zpf.content.NET_LINK_TYPES`) return the payload too, but as
+        the label's meaning rather than a fallback: the bytes, and one whole
+        packet of that link type.
         A ``dec:`` token cannot be resolved from a record at all: the
         format namespaces it by the *decoder's name*, and a record knows
         only its ``decoder_id``, so resolving it needs the file.
@@ -1204,8 +1208,8 @@ class Record(Block):
         Args:
             strict: Raise instead of falling back, so the return value is
                 always the label's meaning rather than possibly the raw
-                bytes. Interpreting ``prim:bytes`` still succeeds — the
-                label asks for the bytes.
+                bytes. Interpreting ``prim:bytes`` or a known ``net:`` token
+                still succeeds — the label asks for the bytes.
 
         Returns:
             An :class:`int` for a ``prim:`` integer token, otherwise the
@@ -1232,6 +1236,8 @@ class Record(Block):
                 value = decode_prim(self.payload, parsed.value)
                 if value is not None:
                     return value
+            elif parsed.link_type is not None:
+                return self.payload
         if strict:
             raise ContentError(self._uninterpretable())
         return self.payload
@@ -1242,7 +1248,12 @@ class Record(Block):
         if content_type is None:
             return "record carries no content_type, so its payload has no declared meaning"
         parsed = ContentType.parse(content_type)
-        fault = prim_fault(self.payload, parsed.value) if parsed.is_prim else None
+        if parsed.is_prim:
+            fault = prim_fault(self.payload, parsed.value)
+        elif parsed.is_net:
+            fault = net_fault(parsed.value)
+        else:
+            fault = None
         if fault is not None:
             return f"content_type {content_type!r} {fault}"
         return (

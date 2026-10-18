@@ -154,7 +154,11 @@ def merge_files(
                 out_b.pid: _reissued(session_b, session.session_id, out_b.pid,
                                      source_b.source_id),
             }
-            for record in causal_merge(streams):
+            isns = {
+                out_a.pid: session_a.participants[0].isn,
+                out_b.pid: session_b.participants[0].isn,
+            }
+            for record in causal_merge(streams, isns=isns):
                 writer.write_block(record)
             # The output cites both inputs, so it is answerable for them.
             extents = [
@@ -663,10 +667,21 @@ def check_splice(
     cross it without emitting a Discontinuity of its own in the
     corresponding position of its output. For a single unit straddling the
     break that position falls *inside* the unit, so the escape is
-    unavailable — a stage that cannot express the break "has to leave the
-    crossing undone". Hence the check: a stage-2 record violates the rule
+    unavailable. Hence the check: a stage-2 record violates the rule
     exactly when the ranges it cites in stage 1's output have bytes on both
     sides of a break.
+
+    **Except a sequence-anchored transport record**, which since ``0.22``
+    MAY cross (`zipline#152
+    <https://github.com/adamkjonsson/zipline/issues/152>`_). A transport
+    stream whose records carry ``seq_start`` meets the duty through its
+    offsets: a break there is a range of sequence numbers no record covers,
+    which cannot be lost, so a sessionization stage's record that cites
+    packets either side of an input break asserts, with its sequence numbers,
+    that they join. Such a record is not checked
+    (`#90 <https://github.com/adamkjonsson/python-zipline/issues/90>`_). A
+    transport record **without** ``seq_start`` has no hole to carry a break
+    in and keeps the duty, and so does every decoded record.
 
     Args:
         stage2: The downstream file, whose spans cite ``stage1``.
@@ -693,6 +708,10 @@ def check_splice(
         findings: list[Diagnostic] = []
         for session in downstream.sessions():
             for index, record in enumerate(session.records()):
+                if record.seq_start is not None and (
+                    session.layer(record.sender_pid) == OutputLayer.TRANSPORT
+                ):
+                    continue  # it MAY cross: its offsets carry the break (0.22)
                 findings.extend(_crossings(record, index, source_id, breaks))
         return findings
 

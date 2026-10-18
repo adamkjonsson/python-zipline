@@ -1,0 +1,97 @@
+# sequenced-ack-below-origin
+#
+# Generated from the same description as the .zpf -- never edited
+# by hand, so the annotation cannot drift from the bytes.
+
+0000  01 00                    type   = 0x0001  File Header
+0002  00 00                    reserved
+0004  10 00 00 00              length = 16
+0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
+000C  00 00                    version_major = 0
+000E  17 00                    version_minor = 23
+0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
+
+0018  02 00                    type   = 0x0002  Source Descriptor
+001A  00 00                    reserved
+001C  18 00 00 00              length = 24
+0020  01 00                    source_id = 1
+0022  00                       kind = 0  (capture)
+0023  00                       _reserved
+0024  20 00 0E 00              option 0x0020 uri, len = 14
+0028  6D 69 64 73 74 72 65 61  "midstream.pcap"
+0030  6D 2E 70 63 61 70
+0036  00 00                    value padding
+
+0038  10 00                    type   = 0x0010  Session Descriptor
+003A  00 00                    reserved
+003C  18 00 00 00              length = 24
+0040  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+0048  50 00 03 00              option 0x0050 proto, len = 3
+004C  74 63 70                 "tcp"
+004F  00                       value padding
+0050  52 00 02 00              option 0x0052 flags, len = 2  (0x0001)
+0054  01 00
+0056  00 00                    value padding
+
+0058  11 00                    type   = 0x0011  Participant Descriptor
+005A  00 00                    reserved
+005C  20 00 00 00              length = 32
+0060  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+0068  00 00                    participant_id = 0
+006A  00                       adjacency = 0  (contiguous)
+006B  00                       _reserved
+006C  60 00 0E 00              option 0x0060 endpoint, len = 14
+0070  31 30 2E 30 2E 30 2E 31  "10.0.0.1:51000"
+0078  3A 35 31 30 30 30
+007E  00 00                    value padding
+
+0080  11 00                    type   = 0x0011  Participant Descriptor
+0082  00 00                    reserved
+0084  20 00 00 00              length = 32
+0088  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+0090  01 00                    participant_id = 1
+0092  00                       adjacency = 0  (contiguous)
+0093  00                       _reserved
+0094  60 00 10 00              option 0x0060 endpoint, len = 16
+0098  39 33 2E 31 38 34 2E 32  "93.184.216.34:80"
+00A0  31 36 2E 33 34 3A 38 30
+
+00A8  20 00                    type   = 0x0020  Record
+00AA  00 00                    reserved
+00AC  38 00 00 00              length = 56
+00B0  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+00B8  01 00                    sender_pid = 1
+00BA  01 00                    source_id  = 1
+00BC  E8 03 00 00 00 00 00 00  timestamp  = 1000
+00C4  00 00                    _reserved  (u16 = 0)
+00C6  00 00                    flags      = 0x0000
+00C8  0C 00 00 00              payload_len = 12
+00CC  48 54 54 50 2F 31 2E 31  "HTTP/1.1 200"
+00D4  20 32 30 30
+00D8  70 00 04 00              option 0x0070 seq_start, len = 4  (5001)
+00DC  89 13 00 00
+00E0  72 00 04 00              option 0x0072 ack, len = 4  (993)
+00E4  E1 03 00 00
+
+00E8  20 00                    type   = 0x0020  Record
+00EA  00 00                    reserved
+00EC  34 00 00 00              length = 52
+00F0  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+00F8  00 00                    sender_pid = 0
+00FA  01 00                    source_id  = 1
+00FC  4C 04 00 00 00 00 00 00  timestamp  = 1100
+0104  00 00                    _reserved  (u16 = 0)
+0106  00 00                    flags      = 0x0000
+0108  08 00 00 00              payload_len = 8
+010C  47 45 54 20 2F 74 77 6F  "GET /two"
+0114  70 00 04 00              option 0x0070 seq_start, len = 4  (1001)
+0118  E9 03 00 00
+011C  72 00 04 00              option 0x0072 ack, len = 4  (5013)
+0120  95 13 00 00
+
+0124  41 00                    type   = 0x0041  End of file
+0126  00 00                    reserved
+0128  04 00 00 00              length = 4
+012C  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
+
+0130                           (end of file, 304 bytes)

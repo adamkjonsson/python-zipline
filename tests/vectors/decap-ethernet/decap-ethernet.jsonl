@@ -1,0 +1,9 @@
+{"type":"file","format":"zipline-payload/0.23","tick_hz":1000000,"produced_by":"zpf-vxlan 0.1","produced_at":1719800000}
+{"type":"source","source_id":1,"kind":"zpf-input","uri":"vxlan.zpf","digest":"sha256:91c3"}
+{"type":"decoder","decoder_id":1,"output_layer":"decoded","name":"vxlan-decap","version":"0.1","params_digest":"sha256:0b7d"}
+{"type":"session","session_id":4,"proto":"ethernet"}
+{"type":"participant","session_id":4,"pid":0,"adjacency":"units","endpoint":["vni:5001","aa:bb:cc:00:00:01"]}
+{"type":"record","session_id":4,"sender_pid":0,"source_id":1,"ts":1000,"payload":"qrvMAAACqrvMAAABCABFAAAuAABAAEARJqUKCAACCggACZxAE4gAGrRPZGRkZGRkZGRkZGRkZGRkZGRk","decoder_id":1,"spans":[{"source_id":1,"session_id":3,"pid":0,"off_start":0,"off_end":68}],"content_type":"net:ethernet"}
+{"type":"record","session_id":4,"sender_pid":0,"source_id":1,"ts":1100,"payload":"qrvMAAACqrvMAAABCABFAAAkAABAAEARJq8KCAACCggACZxAE4gAEKZVZWVlZWVlZWU=","decoder_id":1,"spans":[{"source_id":1,"session_id":3,"pid":0,"off_start":68,"off_end":126}],"content_type":"net:ethernet"}
+{"type":"session_end","session_id":4,"input_extents":[{"source_id":1,"session_id":3,"pid":0,"extent":126}]}
+{"type":"end"}

@@ -7,14 +7,15 @@ specification repository. They are not ours to edit.
 |---|---|
 | Source | <https://github.com/adamkjonsson/zipline> |
 | Path | `vectors/` |
-| Tag | `v0.21` |
-| Commit | `4964deed795bb8b60b2596d1bb3ae7281414ff0e` |
-| Vendored | 2026-09-18 |
+| Tag | `v0.23` |
+| Commit | `38084399c3913e7d13b286d4e88c0a1871c0d995` |
+| Vendored | 2026-10-14 |
 
 ## What was and was not copied
 
-Copied: `manifest.json`, `README.md`, and all 62 vector directories — verified
-byte-identical to the tag with `diff -r`. 62 entries expand to 70 files, because
+Copied: `manifest.json`, `README.md`, and all 68 vector directories — verified
+byte-identical to the tag with `diff -r`, extracted with `git archive` from the
+tag rather than copied from a working tree. 68 entries expand to 76 files, because
 `chain` and `merge` ship three each, `splice` two and `tunnel` four.
 
 **Not** copied: `build.py` and `check.py`. Those are the upstream *generator* and
@@ -36,7 +37,7 @@ to run.
 declares **1** violation rather than 0. It is a key rather than a fourth tier
 because a tier names what a *reader does*, and a reader accepts these files
 completely. Our harness needs a path for it that neither `accept` nor `isolate`
-provides. There are three at `0.21`: `advisory-transport-content-type` and
+provides. There are three at `0.22`, unchanged since `0.21`: `advisory-transport-content-type` and
 `advisory-transport-role`, one per label the transport-layer bar names, and
 `advisory-transport-adjacency`, for the body field that bar was extended to.
 
@@ -49,7 +50,7 @@ computes the wrong offset in silence — which is what this library did to
 [zipline#140](https://github.com/adamkjonsson/zipline/issues/140). The harness
 reads the key directly (`test_an_accept_vector_puts_its_bytes_where_it_says`),
 so the hand-transcribed table it replaced is gone. 37 entries, 44 streams at
-`0.21`.
+`0.21`; 39 entries, 51 streams at `0.22`.
 
 `0.21` changes no manifest key, but **every participant `.jsonl` line gains
 `"adjacency"`** — a Participant Descriptor body field, and body fields always
@@ -65,6 +66,28 @@ promote the SHOULD to a MUST through the suite, which the vectors' ground rule
 2 forbids. So `unplaceable-below-origin` is asserted as a clean accept, and its
 `expect` now says so.
 
+`0.22` changes no manifest key and adds no syntax. Its four new vectors are
+`sequenced-past-2gib-pure-ack` and `sequenced-ack-below-origin` for acks
+unwrapping into the peer's offset space (zipline#151, #157),
+`sessionized-across-units` for a transport output crossing its input's seams
+(zipline#152), and `decap-ethernet` for the `net:` scheme (zipline#153). `tunnel`
+was regenerated: its packets became real IPv4 + TCP, which moved
+`packets.zpf`'s offsets and the spans and extents citing them (zipline#154, found
+by this library against the release candidate). Every other file changed only
+its version stamp.
+
+`0.23` adds one manifest key and two vectors. **`merged`** gives, for every
+unsequenced session in which two or more participants send records, the order
+a reader must merge it into, as 1-based stored positions
+([zipline#162](https://github.com/adamkjonsson/zipline/issues/162), asked for
+by this library because the tiers could see a merge that stalled and nothing
+else). Six vectors carry it, and the harness compares `timeline()` against it
+(`test_an_accept_vector_merges_in_the_order_it_states`). The vectors are
+`sequenced-pure-ack-and-fin` and its unsequenced twin `merge-pure-ack-and-fin`
+(zipline#160, #161), for the rule that a record's end is one past the last
+sequence number it occupies. Every other file changed only its version stamp
+and the input digests that follow from it.
+
 ## Why they are checked in rather than fetched
 
 Fetching by tag at test time would keep them authoritative, but makes the suite
@@ -79,7 +102,7 @@ vector that seems wrong is a question for the spec repository, not a local patch
 
 ## Known defects
 
-**None open at `v0.21`.** Defects 5 and 6 — three vectors whose `.zpf`
+**None open at `v0.23`.** Defects 5 and 6 — three vectors whose `.zpf`
 disagreed with their own `.jsonl`, found at the `0.19` re-vendor by projecting
 every file and diffing — were fixed upstream in `0.20`
 ([zipline#141](https://github.com/adamkjonsson/zipline/issues/141)), which also
@@ -88,13 +111,14 @@ cannot recur. That guard is the part that outlives the fix. So `DEFECTIVE` in
 [`../test_vectors.py`](../test_vectors.py) is empty, and there is no fixture the
 implementation must be kept away from.
 
-Six have been found in all — two against `v0.12`, one against `v0.15`, one
-against `v0.16` and two against `v0.19` — and every one was fixed upstream;
+Seven have been found in all — two against `v0.12`, one against `v0.15`, one
+against `v0.16`, two against `v0.19` and one against the `0.22` release
+candidate — and every one was fixed upstream;
 [`VECTOR-DEFECTS.md`](../../VECTOR-DEFECTS.md) is the closed record of them.
-The projection sweep was repeated at this re-vendor: 49 files carry both faces,
-and none disagree on any key this library projects. The new key was checked the
-other way, since no projection of it existed yet: the `adjacency` byte of all
-61 Participant blocks read directly against the `.jsonl` line, 0 mismatches.
+The projection sweep was repeated at this re-vendor: 55 files carry both faces,
+and none disagree on any key this library projects. (At `0.21`, 49 files; the
+new `adjacency` key was then also checked the other way, its byte in all 61
+Participant blocks against the `.jsonl` line, 0 mismatches.)
 
 The third is worth knowing about while reading these files, because it is the one
 whose fix changed a vector's **bytes**: `undecoded-in-capture` shipped at `v0.15`

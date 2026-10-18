@@ -30,7 +30,10 @@ Pick the level of involvement you need:
 - {meth}`~zpf.SessionReader.stream` — one participant's records in stream order,
   no merge. What a decoder reads (via {meth}`~zpf.SessionReader.reassemble`).
 - {func}`~zpf.causal_merge` and friends in {mod}`zpf.order` — the raw partial
-  order, if you need the DAG itself rather than a linearization.
+  order, if you need the DAG itself rather than a linearization. Pass
+  `isns=` with each participant's `isn`, as `timeline()` does: an ack is a
+  position measured from its peer's origin, and without an `isn` that origin
+  is taken to be the first captured byte.
 
 ```python
 with zpf.open("cap.zpf") as reader:
@@ -111,6 +114,40 @@ If the two directions' hints are inconsistent — each acknowledging bytes the
 other never sent — the merge stalls and `end()` raises rather than inventing an
 order.
 
+## What an ack orders, and what it does not
+
+An `ack` orders a record after the peer's bytes it acknowledges. Two things
+about that comparison are worth knowing, because each was once wrong and each
+changes what a file may hold.
+
+**It holds at any stream length.** An ack and the end of the record it covers
+can be gigabytes apart, so neither is compared as a raw 32-bit sequence number.
+Both are unwrapped into the peer's offset space, the way offsets are, and
+compared as integers. A sequenced upload past 2 GiB whose server only sends
+pure ACKs verifies, and merges. (Since `0.22`; through `0.21` it was refused at
+its 2 GiB record.)
+
+**An ack covers sequence numbers, not records.** A record's end, the value an
+ack must reach to cover it, is one past the last sequence number it occupies:
+
+| Record | End |
+| ------ | --- |
+| carries data, FIN or not | its offset plus its length |
+| zero-length SYN | its offset — the SYN occupies `isn`, one below the origin |
+| zero-length FIN | its offset plus one |
+| pure ACK, bare RST | **none** — it occupies no sequence number |
+
+So **store pure ACKs as zero-length records**, as the specification advises:
+each one's `ack` orders it after the data it answers, and nothing is ordered
+after it on its account. (Since `0.23`; through `0.22` a pure ACK ended at its
+offset, so the ordinary handshake, data, pure-ACK flow was refused when
+sequenced and stalled when merged.)
+
+```python
+session.record(server, ts=t, payload=b"",
+               hints=zpf.Hints(seq_start=server_next_seq, ack=client_bytes_seen))
+```
+
 ## Timestamps are not an ordering invariant
 
 Worth stating plainly, because it is the rule most readers get wrong: stored
@@ -142,14 +179,22 @@ for a capture converter the optional `ts_first` is the only place that time can
 go:
 
 ```python
-session.record(alice, ts=5_000_000, payload=response,
-               seq_start=1001, ts_first=3_000_000)
+session.record(alice, ts=5_000_000, payload=response, ts_first=3_000_000,
+               hints=zpf.Hints(seq_start=1001))
 ```
 
 That records a response which *completed* at `5.0 s` having *started* at `3.0 s`
 — the difference between knowing when a transfer landed and knowing it streamed.
 Leave it off when a record came from a single packet, where it would only repeat
 `ts`.
+
+A **sessionization stage** derives it for you. {meth}`FlowSession.record
+<zpf.sessionize.FlowSession.record>` works out `ts` and `ts_first` together
+from what a record cites, the last and the first arrival among the input
+packets, and writes `ts_first` only for a record drawn from more than one. A
+decode stage takes `ts_first=` too, but writes it only as given; to derive it,
+read {meth}`StreamView.ts_first_for <zpf.reassembly.StreamView.ts_first_for>`
+over the range you cite, the mirror of the `ts_for` it already uses.
 
 `ts_first` is an optional TLV: nothing requires it, no reader may depend on it,
 and it takes no part in ordering. In particular it is not a second ordering key

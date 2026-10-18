@@ -11,6 +11,7 @@ reader
 reassembly
 writer
 decode
+sessionize
 transform
 blocks
 binary

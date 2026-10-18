@@ -57,7 +57,9 @@ for, wasteful for a multi-gigabyte one.
 
 {func}`zpf.create` takes the same `face=` argument and defaults to `"binary"`.
 The sink must match: a binary stream for the binary face, a text stream for
-JSONL (a path works for either).
+JSONL (a path works for either). A stream of the wrong kind is refused with a
+{class}`~zpf.ZpfError` before anything is written. {func}`zpf.decode_stage` and
+{func}`zpf.sessionize_stage` take `face=` as well, and pass it on.
 
 ```python
 with zpf.create("capture.jsonl", tick_hz=1_000_000, face="jsonl") as writer:

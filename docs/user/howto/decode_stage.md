@@ -49,10 +49,10 @@ See [the orchestrator](../guides/decoding.md#writing-the-decode-stage) for
 exactly what it copies and declares, and {meth}`zpf.FileWriter.derive_from` to
 build the same scaffolding around your own {func}`zpf.create` call.
 
-The loop above uses {meth}`~zpf.DecodeStream.segments` because HTTP rides TCP,
+The loop above uses {meth}`~zpf.InputStream.segments` because HTTP rides TCP,
 a byte stream. A **UDP** flow — or any stream without sequence hints — is a
 sequence of whole {class}`~zpf.Datagram`s instead;
-{attr}`~zpf.DecodeStream.is_stream_oriented` tells the two apart, and the
+{attr}`~zpf.InputStream.is_stream_oriented` tells the two apart, and the
 byte-stream methods raise on a packet stream
 ([why](../guides/decoding.md#stream-oriented-vs-packet-oriented)):
 
@@ -163,6 +163,9 @@ emit no block at all — see [the decoding guide](../guides/decoding.md#when-eve
 
 - [Decoding](../guides/decoding.md) — the feature in full, including reassembly
   views and (advanced) mixing several decoders in one session.
+- [Sessionizing a packet stream](../guides/decoding.md#sessionizing-a-packet-stream-fan-out)
+  — when one input stream holds many flows, such as a decrypted tunnel's
+  packets, {func}`zpf.sessionize_stage` instead of `decode_stage`.
 - [Tutorial: writing a decoder](../tutorial-decoding.md) — the same steps as
   a runnable, end-to-end example.
 - [Concepts: created or preserved](../concepts.md#created-or-preserved)
@@ -170,5 +173,6 @@ emit no block at all — see [the decoding guide](../guides/decoding.md#when-eve
   normative model, including how decode stages chain (`raw → tls-records →
   http`).
 - The API reference for [`zpf.decode`](../../api/decode.md),
+  [`zpf.sessionize`](../../api/sessionize.md),
   [`zpf.reassembly`](../../api/reassembly.md), and
   [`zpf.transform`](../../api/transform.md) ({func}`zpf.check_coverage`).

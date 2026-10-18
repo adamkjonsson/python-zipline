@@ -33,7 +33,7 @@ scaffolding without owning the control flow.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import IO, TYPE_CHECKING
+from typing import IO, TYPE_CHECKING, Literal
 
 from zpf._intervals import complement, intersections
 from zpf.blocks import Adjacency, InputExtent, OutputLayer, Span
@@ -44,7 +44,7 @@ from zpf.writer import Decoded, DecoderHandle, Hints, InputRef, create
 
 if TYPE_CHECKING:
     import os
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Iterable, Iterator, Mapping
     from datetime import datetime
     from types import TracebackType
     from typing import Self
@@ -102,27 +102,24 @@ class Seam:
     reason: str | None = None
 
 
-class DecodeStream:
-    """One input stream, paired with the output participant standing for it.
+class InputStream:
+    """One input stream of a stage: read it, and cite it.
 
-    Handed out by :meth:`DecodeStage.streams`. Delegates the reading side to
-    the underlying :class:`~zpf.reassembly.StreamView` — :meth:`segments`,
-    :meth:`chunks`, :meth:`datagrams` — so a decoder iterates it directly.
+    Handed out by :meth:`DecodeStage.streams` (as a :class:`DecodeStream`)
+    and by :meth:`~zpf.sessionize.SessionizeStage.streams`. Delegates the
+    reading side to the underlying :class:`~zpf.reassembly.StreamView` —
+    :meth:`segments`, :meth:`chunks`, :meth:`datagrams` — so a decoder
+    iterates it directly, and :meth:`cite` names a range of it with every id
+    filled in.
 
     Attributes:
         view: The input stream's reassembly view, already bound to cite the
             ``zpf-input`` source.
-        handle: The output participant re-declared for this stream.
-        session: The output session writer this stream's records go to.
 
     """
 
-    def __init__(
-        self, view: StreamView, handle: ParticipantHandle, session: SessionWriter
-    ) -> None:
+    def __init__(self, view: StreamView) -> None:
         self.view = view
-        self.handle = handle
-        self.session = session
 
     @property
     def participant(self) -> Participant:
@@ -131,12 +128,12 @@ class DecodeStream:
 
     @property
     def session_id(self) -> int:
-        """The stream's session id, shared by the input and the output."""
+        """The stream's session id in the input."""
         return self.view.participant.session_id
 
     @property
     def pid(self) -> int:
-        """The stream's participant id, shared by the input and the output."""
+        """The stream's participant id in the input."""
         return self.view.participant.participant_id
 
     @property
@@ -179,6 +176,138 @@ class DecodeStream:
         return self.view.cite(off_start, off_end)
 
 
+class DecodeStream(InputStream):
+    """One input stream, paired with the output participant standing for it.
+
+    Handed out by :meth:`DecodeStage.streams`. A decode stage mirrors its
+    input under the same ids, so the stream's ``session_id`` and ``pid`` are
+    the output's too.
+
+    Attributes:
+        view: The input stream's reassembly view, already bound to cite the
+            ``zpf-input`` source.
+        handle: The output participant re-declared for this stream.
+        session: The output session writer this stream's records go to.
+
+    """
+
+    def __init__(
+        self, view: StreamView, handle: ParticipantHandle, session: SessionWriter
+    ) -> None:
+        super().__init__(view)
+        self.handle = handle
+        self.session = session
+
+
+class _Ledger:
+    """The coverage a stage owes its input, kept as the stage writes.
+
+    The coverage guarantee is stated per **input participant stream**: every
+    offset is either cited by a record or named by an Undecoded block, never
+    both and never neither. A decode stage maps each input stream to one
+    output participant, a sessionization stage to any number of output
+    sessions, and the accounting is the same either way: keyed by the input
+    stream, it collects every citation and marker, whichever output they were
+    written for, and auto-fill closes the rest. So both stages own one.
+
+    **A range is counted only after its block is written**, which is the fix
+    `0.5.2` made to :class:`DecodeStage`: a refused record or marker cites
+    nothing, and counting it would let auto-fill skip bytes the file never
+    accounts for.
+
+    Args:
+        writer: The output file.
+        source: The ``zpf-input`` Source the output cites.
+        decoder: The stage's decoder, which auto-fill names.
+
+    """
+
+    def __init__(
+        self, writer: FileWriter, source: SourceHandle, decoder: DecoderHandle | None
+    ) -> None:
+        self._writer = writer
+        self._source = source
+        self._decoder = decoder
+        self._cited: dict[tuple[int, int], list[tuple[int, int]]] = {}
+        self._marked: dict[tuple[int, int], list[tuple[int, int]]] = {}
+        self._input_metrics: dict[tuple[int, int], tuple[int, list[tuple[int, int]]]] = {}
+
+    def cite(self, spans: Iterable[Span]) -> None:
+        """Count the ranges of ``spans`` that cite this stage's input source."""
+        for span in spans:
+            if span.source_id == self._source.source_id and span.off_start < span.off_end:
+                self._cited.setdefault((span.session_id, span.participant_id), []).append(
+                    (span.off_start, span.off_end)
+                )
+
+    def mark(self, stream: InputStream, off_start: int, off_end: int) -> None:
+        """Count a range of ``stream`` an Undecoded block has just named.
+
+        Called after the block is written, never before (see the class note).
+        """
+        if off_start < off_end:
+            self._marked.setdefault((stream.session_id, stream.pid), []).append(
+                (off_start, off_end)
+            )
+
+    def extent(self, stream: InputStream) -> InputExtent:
+        """Return ``stream``'s whole extent, as a Session End declares it.
+
+        Measured with the same rule the coverage check uses, so the two
+        cannot disagree.
+        """
+        extent, _gaps = self._input_metrics_for(stream)
+        return InputExtent(
+            source_id=self._source.source_id,
+            session_id=stream.session_id,
+            participant_id=stream.pid,
+            extent=extent,
+        )
+
+    def autofill(self, streams: Iterable[InputStream]) -> None:
+        """Mark every uncovered input offset as Undecoded, gaps included.
+
+        Raises:
+            ZpfError: If a range was both cited and explicitly marked —
+                auto-fill will not silently override an explicit marker.
+
+        """
+        for stream in streams:
+            key = (stream.session_id, stream.pid)
+            cited = sorted(self._cited.get(key, []))
+            marked = sorted(self._marked.get(key, []))
+            clash = intersections(cited, marked)
+            if clash:
+                start, end = clash[0]
+                msg = (
+                    f"input stream (session {key[0]}, pid {key[1]}): [{start}, {end}) "
+                    "is both decoded and explicitly marked Undecoded; auto-fill will "
+                    "not override an explicit marker"
+                )
+                raise ZpfError(msg)
+            extent, gaps = self._input_metrics_for(stream)
+            uncovered = complement(sorted(cited + marked), extent)
+            for start, end, reason in _label_fills(uncovered, gaps):
+                self._writer.undecoded(
+                    self._source,
+                    stream.session_id,
+                    stream.pid,
+                    start,
+                    end,
+                    reason=reason,
+                    decoder=self._decoder,
+                )
+
+    def _input_metrics_for(self, stream: InputStream) -> tuple[int, list[tuple[int, int]]]:
+        """Return one input stream's cached extent and gaps."""
+        key = (stream.session_id, stream.pid)
+        metrics = self._input_metrics.get(key)
+        if metrics is None:
+            metrics = _extent_and_gaps(stream.view)
+            self._input_metrics[key] = metrics
+        return metrics
+
+
 class DecodeStage:
     """An open decode stage: an input being read, an output being written.
 
@@ -211,8 +340,7 @@ class DecodeStage:
         self._owns_reader = owns_reader
         self._fill_undecoded = fill_undecoded
         self._streams: tuple[DecodeStream, ...] | None = None
-        self._cited: dict[tuple[int, int], list[tuple[int, int]]] = {}
-        self._marked: dict[tuple[int, int], list[tuple[int, int]]] = {}
+        self._ledger = _Ledger(writer, derived.source, decoder)
         # Streams that have emitted a record, so a seam has two sides.
         self._emitted: set[int] = set()
         self._closed = False
@@ -244,7 +372,7 @@ class DecodeStage:
         One :class:`DecodeStream` per participant of every input session,
         in declaration order.
 
-        **Check** :attr:`DecodeStream.is_stream_oriented` **rather than
+        **Check** :attr:`InputStream.is_stream_oriented` **rather than
         assuming** :meth:`~zpf.StreamView.segments`. A stage's input shape
         follows its input's *records*, not the transport underneath them: a
         **decoded** file is always packet-oriented, because decoding
@@ -286,6 +414,7 @@ class DecodeStage:
         payload: bytes = b"",
         *,
         ts: int | None = None,
+        ts_first: int | None = None,
         content_type: str | None = None,
         role: str | None = None,
         cites: _Cites = None,
@@ -327,6 +456,14 @@ class DecodeStage:
                 exists because the wrong answer was the easy one to reach for,
                 a run's :attr:`Segment.ts <zpf.reassembly.Segment.ts>` being
                 right only for a unit that spans the whole run.
+            ts_first: Time of the **first** input record the unit draws on,
+                where ``ts`` is the last; optional, and meaningful only for a
+                unit built from several. Written as given and never derived
+                here (`#86 <https://github.com/adamkjonsson/python-zipline/issues/86>`_):
+                a decode stage that wants it reads it from its input, e.g.
+                :meth:`InputStream.view.ts_first_for
+                <zpf.reassembly.StreamView.ts_first_for>` over the range it
+                cites.
 
                 Pass it explicitly for a record citing no single range of one
                 input stream, where there is nothing to derive from.
@@ -391,7 +528,8 @@ class DecodeStage:
             )
             raise SemanticError(msg)
         if ts is None:
-            ts = self._derive_ts(stream, all_spans)
+            ts = _derive_ts(self.derived.source, {(stream.session_id, stream.pid): stream},
+                            all_spans)
         if seam is not None and stream.pid in self._emitted:
             stream.session.discontinuity(
                 stream.handle, width=seam.width, reason=seam.reason
@@ -399,6 +537,7 @@ class DecodeStage:
         stream.session.record(
             stream.handle,
             ts=ts,
+            ts_first=ts_first,
             payload=payload,
             flags=flags,
             hints=hints,
@@ -411,50 +550,8 @@ class DecodeStage:
             comment=comment,
         )
         # As in `undecoded`: a refused record cites nothing.
-        self._track(self._cited, all_spans)
+        self._ledger.cite(all_spans)
         self._emitted.add(stream.pid)
-
-    def _derive_ts(self, stream: DecodeStream, spans: tuple[Span, ...]) -> int:
-        """Work out a record's timestamp from the input ranges it cites.
-
-        The specification's rule, applied: a decoded record's ``timestamp`` is
-        that of the last source element **in its span set**. So this is the
-        maximum over every cited range of this stage's input, which for a unit
-        inside a reassembled run is *not* the run's own completion time.
-
-        Args:
-            stream: The input stream the record was decoded from.
-            spans: The record's spans, already normalised.
-
-        Returns:
-            The derived timestamp.
-
-        Raises:
-            SemanticError: If nothing can be derived — the record cites no
-                range of this stream, or names offsets it does not hold. The
-                alternative is inventing a time, and a timestamp nobody can
-                trace is worse than being asked for one.
-
-        """
-        source_id = self.derived.source.source_id
-        stamps = [
-            found
-            for span in spans
-            if span.source_id == source_id
-            and span.session_id == stream.session_id
-            and span.participant_id == stream.pid
-            for found in (stream.view.ts_for(span.off_start, span.off_end),)
-            if found is not None
-        ]
-        if not stamps:
-            msg = (
-                "cannot derive ts from cites: this record cites no range of "
-                f"(session {stream.session_id}, pid {stream.pid}) that any input "
-                "record contributed bytes to. Pass ts= explicitly, which is what a "
-                "record citing several streams or an empty range has to do"
-            )
-            raise SemanticError(msg)
-        return max(stamps)
 
     def undecoded(
         self,
@@ -507,10 +604,7 @@ class DecodeStage:
         )
         # Only after the write: a refused block marked nothing, and counting
         # it would let auto-fill skip bytes the file never accounts for.
-        if off_start < off_end:
-            self._marked.setdefault((stream.session_id, stream.pid), []).append(
-                (off_start, off_end)
-            )
+        self._ledger.mark(stream, off_start, off_end)
 
     def discontinuity(
         self,
@@ -575,7 +669,7 @@ class DecodeStage:
         try:
             if end and self._fill_undecoded:
                 try:
-                    self._autofill()
+                    self._ledger.autofill(self.streams())
                 except BaseException:
                     self.writer.close(end=False)  # failed stage: no End block
                     raise
@@ -585,19 +679,6 @@ class DecodeStage:
         finally:
             if self._owns_reader:
                 self.reader.close()
-
-    def _track(
-        self,
-        into: dict[tuple[int, int], list[tuple[int, int]]],
-        spans: tuple[Span, ...],
-    ) -> None:
-        """Record the intervals of ``spans`` that cite this stage's input source."""
-        source_id = self.derived.source.source_id
-        for span in spans:
-            if span.source_id == source_id and span.off_start < span.off_end:
-                into.setdefault((span.session_id, span.participant_id), []).append(
-                    (span.off_start, span.off_end)
-                )
 
     def _declare_extents(self) -> None:
         """End each output session, declaring how long its inputs were.
@@ -614,50 +695,14 @@ class DecodeStage:
         """
         by_session: dict[int, list[InputExtent]] = {}
         for stream in self.streams():
-            extent, _gaps = _extent_and_gaps(stream.view)
-            by_session.setdefault(stream.session_id, []).append(
-                InputExtent(
-                    source_id=self.derived.source.source_id,
-                    session_id=stream.session_id,
-                    participant_id=stream.pid,
-                    extent=extent,
-                )
-            )
+            by_session.setdefault(stream.session_id, []).append(self._ledger.extent(stream))
         for session_id, out in self.derived.sessions.items():
             out.end(input_extents=by_session.get(session_id, []))
 
-    def _autofill(self) -> None:
-        """Mark every uncovered input offset as Undecoded, gaps included."""
-        for stream in self.streams():
-            key = (stream.session_id, stream.pid)
-            cited = sorted(self._cited.get(key, []))
-            marked = sorted(self._marked.get(key, []))
-            clash = intersections(cited, marked)
-            if clash:
-                start, end = clash[0]
-                msg = (
-                    f"input stream (session {key[0]}, pid {key[1]}): [{start}, {end}) "
-                    "is both decoded and explicitly marked Undecoded; auto-fill will "
-                    "not override an explicit marker"
-                )
-                raise ZpfError(msg)
-            extent, gaps = _extent_and_gaps(stream.view)
-            uncovered = complement(sorted(cited + marked), extent)
-            for start, end, reason in _label_fills(uncovered, gaps):
-                self.writer.undecoded(
-                    self.derived.source,
-                    stream.session_id,
-                    stream.pid,
-                    start,
-                    end,
-                    reason=reason,
-                    decoder=self._decoder,
-                )
-
 
 def decode_stage(  # noqa: PLR0913
-    # Eleven parameters, one over the limit, and one of the two suppressions
-    # in `src/zpf/`. It is a **builder**, which is the difference: called once
+    # Fifteen parameters, over the limit of ten, and one of the suppressions in
+    # `src/zpf/`. It is a **builder**, which is the difference: called once
     # per stage with every argument named, configuring a pipeline rather than
     # filling in a block's fields. `SessionWriter.record()` — #59's real
     # subject — passes the limit on its own, grouped by the format's
@@ -677,13 +722,15 @@ def decode_stage(  # noqa: PLR0913
     decoder: str | tuple[str, str | None] | DecoderHandle,
     produced_by: str,
     produced_at: int | datetime,
-    output_layer: OutputLayer | int = OutputLayer.DECODED,
+    output_layer: OutputLayer | int | None = None,
     params_digest: str | None = None,
     proto: str | None = None,
     sequenced: bool = False,
     adjacency: Adjacency | int | None = None,
     input_ref: InputRef | None = None,
     comment: str | None = None,
+    creator: str | None = None,
+    face: Literal["binary", "jsonl"] = "binary",
     fill_undecoded: bool = True,
 ) -> DecodeStage:
     """Open an input and scaffold a decode-stage file derived from it.
@@ -701,26 +748,35 @@ def decode_stage(  # noqa: PLR0913
         sink: Where to write the decode-stage file.
         decoder: The decoder to declare: a name, a ``(name, version)``
             pair, or a handle already declared on another writer's terms.
-        output_layer: The layer this stage's decoder emits. Leave it at
-            :attr:`~zpf.OutputLayer.DECODED` for an app decoder. Pass
+        output_layer: The layer this stage's decoder emits. Leave it out
+            for an app decoder, which is :attr:`~zpf.OutputLayer.DECODED`. Pass
             :attr:`~zpf.OutputLayer.TRANSPORT` to build a **sessionization
             stage** — a reassembler run over a ``.zpf`` rather than over a
             capture, whose output is ``zpf``-sourced and transport-shaped.
             0.14 could not express that at all: a reassembler had to be
             characterised by the *absence* of a ``decoder_id``, so its
-            overlap policy and timeout had nowhere to be recorded. Ignored
-            when ``decoder`` is a handle, which was declared already.
+            overlap policy and timeout had nowhere to be recorded.
+            **Refused** alongside a :class:`~zpf.DecoderHandle`, whose
+            descriptor already fixes the layer
+            (`#85 <https://github.com/adamkjonsson/python-zipline/issues/85>`_):
+            through ``0.5.x`` it was silently ignored there, so a caller who
+            asked for a sessionization stage could get a decode stage.
+
+            This is the **one-to-one** case: each input stream becomes one
+            output participant under the same ids. A stage whose input
+            stream holds several flows — a tunnel's packets — fans out
+            instead, one output session per flow with fresh ids, and
+            :func:`zpf.sessionize_stage` is its entry point.
         params_digest: Hash of the configuration this stage's decoder ran
             with — the reproducibility contract the Decoder Descriptor
             states. The same decoder at the same version decodes differently
             under a different configuration (a cipher key, a document
             parameter, a reassembler's overlap policy), and this is where
-            that difference is recorded. Unlike ``output_layer`` it is
-            **refused** rather than ignored alongside a
-            :class:`~zpf.DecoderHandle`: a digest names the run, so a caller
-            passing one is stating something about a descriptor this stage
-            did not write, and quietly dropping it would lose exactly the
-            fact it was passed to record.
+            that difference is recorded. Like ``output_layer`` it is
+            **refused** alongside a :class:`~zpf.DecoderHandle`: a digest
+            names the run, so a caller passing one is stating something
+            about a descriptor this stage did not write, and quietly
+            dropping it would lose exactly the fact it was passed to record.
         produced_by: Tool + version doing the decoding (required of a
             derived file).
         produced_at: Build time (required of a derived file); Unix seconds,
@@ -754,10 +810,23 @@ def decode_stage(  # noqa: PLR0913
             one, since a stage reading one carries the break at every seam,
             and anything else is ``contiguous`` with :class:`Seam` for the
             seams that do not join.
+
+            **Except at the transport layer**
+            (`#84 <https://github.com/adamkjonsson/python-zipline/issues/84>`_):
+            with ``output_layer=TRANSPORT`` the default is ``contiguous``
+            whatever the input declares, and anything else is refused. A
+            writer MUST NOT set ``units`` on a transport participant, whose
+            offsets come from sequence numbers so that stored order defines
+            nothing; and a sessionization stage reads a unit sequence (a
+            tunnel decryptor's packets) as often as anything.
         input_ref: How to describe the input in the output's Source — see
             :class:`~zpf.InputRef`. Both halves default: the URI to the path
             the input was opened from, the digest to SHA-256 of its bytes.
         comment: Free-text note for the File Header.
+        creator: The File Header's tool field, for the output (#89).
+        face: ``"binary"`` (the default) or ``"jsonl"`` for the JSON-Lines
+            face, which needs a text ``sink`` (#89). Both are passed to
+            :func:`zpf.create`.
         fill_undecoded: On a clean close, mark every input offset the
             decoder left uncovered as ``Undecoded`` (``gap`` for
             reassembly holes, ``skipped`` for data the decoder passed over),
@@ -770,18 +839,25 @@ def decode_stage(  # noqa: PLR0913
         An open :class:`DecodeStage`, also a context manager.
 
     Raises:
-        ValueError: If ``params_digest`` is given with an already-declared
-            :class:`~zpf.DecoderHandle`.
+        ValueError: If ``output_layer`` or ``params_digest`` is given with an
+            already-declared :class:`~zpf.DecoderHandle`, or a
+            transport-layer stage is given an ``adjacency`` other than
+            ``contiguous``. All are refused before the output is opened, so
+            nothing is left behind.
         ZpfError: If the input has no File Header.
 
     """
-    if params_digest is not None and isinstance(decoder, DecoderHandle):
-        msg = (
-            "params_digest cannot be applied to an already-declared DecoderHandle; "
-            "pass it to add_decoder() where the descriptor is written, or give "
-            "decode_stage a decoder name instead"
-        )
-        raise ValueError(msg)
+    if isinstance(decoder, DecoderHandle):
+        for name, value in (("output_layer", output_layer), ("params_digest", params_digest)):
+            if value is not None:
+                msg = (
+                    f"{name} cannot be applied to an already-declared DecoderHandle; "
+                    "pass it to add_decoder() where the descriptor is written, or give "
+                    "decode_stage a decoder name instead"
+                )
+                raise ValueError(msg)
+    layer = OutputLayer.DECODED if output_layer is None else output_layer
+    adjacency = _stage_adjacency(decoder, layer, adjacency)
     reader, owns_reader = _open_input(source)
     try:
         header = reader.header
@@ -795,6 +871,8 @@ def decode_stage(  # noqa: PLR0913
             produced_by=produced_by,
             produced_at=produced_at,
             comment=comment,
+            creator=creator,
+            face=face,
         )
     except BaseException:
         if owns_reader:
@@ -810,7 +888,7 @@ def decode_stage(  # noqa: PLR0913
             sequenced=sequenced,
             adjacency=adjacency,
         )
-        handle = _declare_decoder(writer, decoder, output_layer, params_digest)
+        handle = _declare_decoder(writer, decoder, layer, params_digest)
     except BaseException:
         writer.close(end=False)
         if owns_reader:
@@ -830,6 +908,31 @@ def _open_input(
     return FileReader(source), True
 
 
+def _stage_adjacency(
+    decoder: str | tuple[str, str | None] | DecoderHandle,
+    output_layer: OutputLayer | int,
+    adjacency: Adjacency | int | None,
+) -> Adjacency | int | None:
+    """Return the ``adjacency`` the stage's participants declare (#84).
+
+    A stage that declares its own decoder at the transport layer writes
+    ``contiguous``, never the input's ``units``: a writer MUST NOT set
+    ``units`` there. A :class:`~zpf.DecoderHandle` carries no layer, so a
+    handle's stage keeps the caller's value, as before.
+    """
+    transport = not isinstance(decoder, DecoderHandle) and output_layer == OutputLayer.TRANSPORT
+    if not transport:
+        return adjacency
+    if adjacency is not None and adjacency != Adjacency.CONTIGUOUS:
+        msg = (
+            f"a transport-layer stage cannot declare adjacency {adjacency!r}: its "
+            f"offsets come from sequence numbers, so stored order defines nothing, and "
+            f"a writer MUST NOT set units there. Leave adjacency at its default"
+        )
+        raise ValueError(msg)
+    return Adjacency.CONTIGUOUS
+
+
 def _declare_decoder(
     writer: FileWriter,
     decoder: str | tuple[str, str | None] | DecoderHandle,
@@ -847,6 +950,89 @@ def _declare_decoder(
             name, version=version, output_layer=output_layer, params_digest=params_digest
         )
     return decoder
+
+
+def _derive_ts(
+    source: SourceHandle,
+    streams: Mapping[tuple[int, int], InputStream],
+    spans: Iterable[Span],
+) -> int:
+    """Work out a record's timestamp from the input ranges it cites.
+
+    The specification's rule, applied: a decoded record's ``timestamp`` is
+    that of the last source element **in its span set**. So this is the
+    maximum over every cited range of this stage's input, which for a unit
+    inside a reassembled run is *not* the run's own completion time.
+
+    Args:
+        source: The ``zpf-input`` Source the stage cites.
+        streams: The input streams a span may name, by ``(session_id, pid)``.
+            A decode stage passes the one stream the record was decoded
+            from; a sessionization stage passes every input stream.
+        spans: The record's spans, already normalised.
+
+    Returns:
+        The derived timestamp.
+
+    Raises:
+        SemanticError: If nothing can be derived — the record cites no range
+            of these streams, or names offsets they do not hold. The
+            alternative is inventing a time, and a timestamp nobody can trace
+            is worse than being asked for one.
+
+    """
+    stamps = [
+        found
+        for span in spans
+        if span.source_id == source.source_id
+        for stream in (streams.get((span.session_id, span.participant_id)),)
+        if stream is not None
+        for found in (stream.view.ts_for(span.off_start, span.off_end),)
+        if found is not None
+    ]
+    if not stamps:
+        named = ", ".join(f"(session {sid}, pid {pid})" for sid, pid in streams)
+        msg = (
+            f"cannot derive ts from cites: this record cites no range of {named} "
+            "that any input record contributed bytes to. Pass ts= explicitly, which "
+            "is what a record citing several streams or an empty range has to do"
+        )
+        raise SemanticError(msg)
+    return max(stamps)
+
+
+def _derive_ts_first(
+    source: SourceHandle,
+    streams: Mapping[tuple[int, int], InputStream],
+    spans: Iterable[Span],
+) -> int | None:
+    """Work out when the first input record a unit cites arrived.
+
+    The mirror of :func:`_derive_ts`, and the specification's ``ts_first``
+    rule applied per unit: the time of the *first* input record contributing
+    to it, each contributing its own ``ts_first`` or, where it states none,
+    its ``timestamp``.
+
+    Args:
+        source: The ``zpf-input`` Source the stage cites.
+        streams: The input streams a span may name, by ``(session_id, pid)``.
+        spans: The record's spans, already normalised.
+
+    Returns:
+        The earliest arrival, or ``None`` if the spans name no contributed
+        byte of these streams.
+
+    """
+    stamps = [
+        found
+        for span in spans
+        if span.source_id == source.source_id
+        for stream in (streams.get((span.session_id, span.participant_id)),)
+        if stream is not None
+        for found in (stream.view.ts_first_for(span.off_start, span.off_end),)
+        if found is not None
+    ]
+    return min(stamps) if stamps else None
 
 
 def _as_spans(stream: DecodeStream, cites: _Cites) -> tuple[Span, ...]:

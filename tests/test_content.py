@@ -3,18 +3,23 @@
 from __future__ import annotations
 
 import json
+import pathlib
 
 import pytest
 from test_conformance import DECODED_PRELUDE, decoded_record
 
 import zpf
 from zpf.content import (
+    NET_ETHERNET,
+    NET_IP,
+    NET_LINK_TYPES,
     PRIM_BYTES,
     PRIM_WIDTHS,
     ContentRegistry,
     ContentType,
     decode_prim,
     media_type_of,
+    net_fault,
     prim_fault,
 )
 
@@ -399,3 +404,105 @@ def test_the_top_level_re_exports_are_the_flat_modules():
     assert zpf.decode_prim is decode_prim
     assert zpf.PRIM_WIDTHS is PRIM_WIDTHS
     assert zpf.ContentRegistry is ContentRegistry
+    assert zpf.NET_LINK_TYPES is NET_LINK_TYPES
+    assert (zpf.NET_IP, zpf.NET_ETHERNET) == (NET_IP, NET_ETHERNET)
+
+
+# --- The net: scheme (0.22) --------------------------------------------------------
+
+VECTORS = pathlib.Path(__file__).parent / "vectors"
+
+
+def test_the_net_vocabulary_is_closed_and_names_pcap_link_types():
+    # LINKTYPE_RAW and LINKTYPE_ETHERNET; no ipv4/ipv6, the version nibble says.
+    assert dict(NET_LINK_TYPES) == {"ip": 101, "ethernet": 1}
+    assert (NET_IP, NET_ETHERNET) == ("net:ip", "net:ethernet")
+    with pytest.raises(TypeError):
+        NET_LINK_TYPES["ipv4"] = 4  # type: ignore[index]
+
+
+@pytest.mark.parametrize(
+    ("label", "is_net", "link_type"),
+    [
+        ("net:ip", True, 101),
+        ("net:ethernet", True, 1),
+        ("net:ipv4", True, None),  # the scheme, but a token this version does not define
+        ("NET:ip", False, None),  # compared exactly, like prim:
+        ("dec:ip-packet", False, None),  # the 0.21 spelling: private to its decoder
+        ("prim:bytes", False, None),
+    ],
+)
+def test_a_net_label_names_its_link_type(label: str, is_net: bool, link_type: int | None):
+    parsed = ContentType.parse(label)
+    assert parsed.is_net is is_net
+    assert parsed.link_type == link_type
+
+
+def test_only_an_unknown_net_token_has_a_fault():
+    assert net_fault("ip") is None
+    assert net_fault("ethernet") is None
+    assert net_fault("ipv6") == "is not a legal net: token"
+
+
+@pytest.mark.parametrize("token", ["ip", "ethernet", "ipv4", ""])
+def test_the_checker_flags_exactly_the_net_tokens_a_reader_calls_opaque(token: str):
+    # No payload check: b"not a packet" is a conformant net:ip payload, since
+    # whether it is an IP packet is protocol parsing, which the format does not do.
+    block = decoded_record(payload=b"not a packet", content_type=f"net:{token}")
+    try:
+        zpf.ConformanceChecker().check([*DECODED_PRELUDE, block])
+    except zpf.AdvisoryError:
+        flagged = True
+    else:
+        flagged = False
+    assert flagged == (ContentType.parse(f"net:{token}").link_type is None)
+
+
+def test_a_known_net_label_means_its_payload_even_strictly():
+    # Like prim:bytes, the label asks for the bytes: one whole packet. So
+    # strict=True has nothing to refuse.
+    record = decoded_record(payload=b"E\x00\x00\x14", content_type=NET_IP)
+    assert record.content() == b"E\x00\x00\x14"
+    assert record.content(strict=True) == b"E\x00\x00\x14"
+
+
+def test_an_unknown_net_token_is_opaque_and_strict_says_why():
+    record = decoded_record(payload=b"frame", content_type="net:wifi")
+    assert record.content() == b"frame"
+    with pytest.raises(zpf.ContentError, match="'net:wifi' is not a legal net: token"):
+        record.content(strict=True)
+
+
+def test_net_handlers_are_found_by_token_whoever_wrote_the_record():
+    registry = ContentRegistry()
+    registry.register_net("ip", bytes.hex)
+    label = ContentType.parse(NET_IP)
+    # No decoder namespace, unlike dec: — the meaning is the format's.
+    assert registry.handler(label) is bytes.hex
+    assert registry.handler(label, decoder_name="wireguard") is bytes.hex
+    assert registry.handler(ContentType.parse(NET_ETHERNET)) is None
+
+
+@pytest.mark.parametrize("token", ["ipv4", "", "IP"])
+def test_a_net_handler_for_an_undefined_token_is_refused(token: str):
+    with pytest.raises(ValueError, match="is not a legal net: token"):
+        ContentRegistry().register_net(token, bytes.hex)
+
+
+@pytest.mark.parametrize(
+    ("vector", "token", "first_byte"),
+    [
+        ("tunnel/packets.zpf", "ip", 0x45),  # IPv4, a 20-byte header
+        ("decap-ethernet/decap-ethernet.zpf", "ethernet", 0xAA),  # the destination MAC
+    ],
+)
+def test_the_reader_dispatches_net_labels_from_the_vectors(
+    vector: str, token: str, first_byte: int
+):
+    registry = ContentRegistry()
+    registry.register_net(token, lambda packet: packet[0])
+    with zpf.open(VECTORS / vector, content=registry) as reader:
+        records = [r for s in reader.sessions() for r in s.records()]
+        assert records
+        assert {r.content_type for r in records} == {f"net:{token}"}
+        assert {reader.content(r) for r in records} == {first_byte}

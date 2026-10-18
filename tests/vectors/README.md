@@ -2,7 +2,7 @@
 
 Small `.zpf` files, each with its expected JSON-Lines projection or its expected
 failure, for testing an implementation of the
-[Zipline Payload Format](../docs/zipline-payload-format.md) `0.21`.
+[Zipline Payload Format](../docs/zipline-payload-format.md) `0.23`.
 
 Run `python3 check.py` to verify the tree is self-consistent.
 Run `python3 build.py` to regenerate it.
@@ -122,6 +122,23 @@ mandatory so that every stream's number is one somebody confronted — and
 nothing else does. A wrong number is caught by the first implementation that
 disagrees, which is the loop the suite lacked. Multi-file fixtures declare none;
 their extents are verified against their inputs by the bespoke checks.
+
+**Every single-file `accept` entry with a session a reader must merge declares
+`merged`**, since `0.23` (#162). That is a session not marked `sequenced` in
+which two or more participants send records. The key is a list of
+`{"session_id", "order"}`, where the order is the session's records by 1-based
+position in stored order, as the [merge](../docs/zipline-payload-format.md#merge-algorithm)
+emits them. It is the same assertion as `extents`, about a different computation.
+`merge-pure-ack-and-fin` carried its lesson in the merged order alone, and a
+harness could see only the one wrong reading that stalls. A plausible wrong order
+passed, and so did stored order returned unmerged. Six vectors owe the key:
+`merge-pure-ack-and-fin`, `merge-timestamp-tie`, `hintless-merge-backwards-ts`,
+`handshake-at-origin`, `unplaceable-no-seq-start` and `decoded-basic`.
+A sequenced session owes none, because its answer is stored order. As with
+`extents`, the values are the author's and are never computed here, since the
+merge is semantics. `check.py` checks their shape: exactly the owed sessions are
+named, and each order is a permutation of the session's records that keeps each
+participant's own order.
 
 **Every capability the format defines is exercised by some vector**, and since
 `0.14` that is enforced too. `check.py` parses the option-id registry and the
@@ -326,6 +343,61 @@ changed.
 | `isolate-unknown-adjacency` | *(isolate)* An `adjacency` value this version does not define — the load-bearing twin of `isolate-unknown-output-layer`: the value decides whether any two of the participant's records may be spliced, so a reader cannot say what a single pair asserts. MUST NOT guess, and MUST NOT fall back to `contiguous`. |
 | `advisory-transport-adjacency` | *(accept, **advisory**)* `units` on a **transport-layer** participant, where offsets come from sequence numbers and the field says nothing. A writer MUST NOT set it there; a reader ignores it, reports it, and accepts — the treatment a transport-layer label gets, and for the same reason. Not the isolate shape of `isolate-discontinuity-in-raw`: that block contradicts the offsets, this field is inert. Extent 16. |
 
+### Added in `0.22`
+
+The first two are the suite's first vectors about **acks**. `0.21` unwrapped offsets so a stream
+could be placed past 2 GiB. The causal edge rule still compared an `ack` with peer
+record ends by serial arithmetic, which is defined only within 2³¹, and an ack
+stored once stays put while the record ends run on past it. Since `0.22` both are
+**positions in the peer's offset space**: the end is the unwrapped offset plus
+`payload_len`, and the ack is unwrapped along the acker's own records, by signed
+delta from the previous ack (#151). A position is signed, because a mid-stream
+first ack can lie below the peer's first captured byte (#157). `check.py` draws
+no causal edges, so these vectors test implementations only.
+
+The third is a reassembler over a **packet stream**. The duty to carry an input
+break has two recourses, a Discontinuity or a `units` output, and a
+transport-layer stream may use neither. Read literally, a sessionizer over a unit
+sequence could therefore never coalesce two packets. Since `0.22` a transport
+output whose records carry `seq_start` **MAY** cross input seams, because its
+sequence numbers carry any break as a hole (#152).
+
+The fourth is a **packet type**. A packet-preserving stage was told to type its
+records with a `dec:` token, which is private to its decoder, so a generic
+sessionizer could recognise packets only by a convention the format declined to
+make. Since `0.22` `content_type` has a fourth scheme, `net:`, closed and
+spec-defined like `prim:`: `net:ip` and `net:ethernet`, each meaning the unit a
+capture of that link type stores (#153). `tunnel`'s decrypt stage now types its
+packets `net:ip`, and they are real IPv4 headers rather than filler, so the label
+is true. This vector carries the other value.
+
+| Vector | What it carries |
+|--------|-----------------|
+| `sequenced-past-2gib-pure-ack` | *(accept)* `stream-past-2gib`'s client after a recorded handshake, in a **SEQUENCED** session whose server sends nothing after its SYN-ACK. That ack, `1001`, is position 0 of the client's stream, and every data record ends above it, so the stored order is causal. Compared serially, the record at 2 GiB ends 2³¹ + 8 past `1001`, which reads as *before* it, so a reader draws `client@2GiB → SYN-ACK` and refuses the order. The ordinary large upload, with a peer that only acks. Extents `3221225480` and 0. |
+| `sequenced-ack-below-origin` | *(accept)* A mid-stream **SEQUENCED** session with no `isn` on either side. The server's response is stored first and acks `993`, eight bytes below the client's first captured byte, so its position is **−8**. That is signed, acknowledges no captured byte, and no edge reaches it. A reader that keeps ack positions in an offset's unsigned type wraps it to near 2⁶⁴, draws `request → response`, and refuses a correct order (#157). Extents 8 and 12. |
+| `sessionized-across-units` | *(accept)* `tunnel`'s inner hop with nothing lost, over a `units` input as `kober`'s WireGuard output is: flow A's packets at `[0,80)` and `[140,210)` join in A's sequence space, so session 10 emits **one** 70-byte record with **two** spans, crossing two declared breaks; flow B's packet between them is session 11's. Coverage of the input closes over `[0,210)` across both sessions. A reader that reports a no-splice violation has applied the decoded layer's duty to a stream whose offsets carry every break. Nothing can catch a *wrong* coalesce here: the sequence numbers are the producer's assertion. Extents 70 and 20. |
+| `decap-ethernet` | *(accept)* A VXLAN decapsulation stage emitting one record per inner **Ethernet frame**, typed `net:ethernet`: Ethernet II, IPv4 and UDP headers all real, checksums included, as a `LINKTYPE_ETHERNET` capture stores it. The suite's one non-TCP packet. Each record spans its whole datagram, VXLAN header included, since the VNI fed the decapsulation. The participant is `units`, and the endpoint list runs from the VNI to the inner MAC. A reader that does not know `net:` treats the label as opaque, as it would any unknown scheme. Checking the label against the payload is not conformant, because `net:` binds no length. Extent 110. |
+
+### Added in `0.23`
+
+An `ack` acknowledges **sequence numbers**: each byte of data, plus the one number
+that a SYN and a FIN each consume. Through `0.22`, merge step 2 gave every record
+an end, including a pure ACK, which occupies none. An ack reaching its offset
+then drew an edge from it, backwards to the peer data that ack acknowledged. The
+ordinary trace (handshake, data, pure ACK) made a cycle. Since `0.23` a record's
+end is one past the last sequence number it occupies. Data is unchanged, a
+zero-length SYN ends at its offset, a zero-length FIN ends one past it, and a
+pure ACK has no end, so no edge runs from it (#160). The vectors come as a pair.
+A sequenced file is read in stored order, so it can only catch a reading that
+*adds* an edge. Its unsequenced twin is merged, so it catches a dropped edge and
+a merge that stalls (#161). `check.py` draws no causal edges, so both test
+implementations only.
+
+| Vector | What it carries |
+|--------|-----------------|
+| `sequenced-pure-ack-and-fin` | *(accept)* A **SEQUENCED** session: handshake, eight bytes of data, the server's pure ACK, the client's zero-length FIN, and the server's pure ACK of the FIN. Pure ACKs are stored as zero-length records, as *Caveats* advises. Ends: SYN 0, SYN-ACK 0, data 8, FIN **9**, pure ACKs **none**. Every edge runs forward in stored order. A reader that gives a pure ACK an end at its offset draws `pure ACK → data` against `data → pure ACK`, a cycle, and refuses the order or stalls. One that ends the FIN at its offset draws `FIN → pure ACK` against the stored order. Extents 8 and 0. |
+| `merge-pure-ack-and-fin` | *(accept)* The same six records, **unsequenced**, stored server first, with the server's clock 50 ticks behind, so the timestamp tie-break pulls a server record too early wherever an edge is missing. Merged: client SYN, SYN-ACK, data, pure ACK, FIN, pure ACK. Each wrong reading gives its own answer: a SYN given no end puts the SYN-ACK first, a pure ACK ended at its offset **stalls**, and a FIN ended at its offset overtakes the pure ACK that acknowledged only the data. A reader returning stored order has not merged. Extents 8 and 0. |
+
 ## Multi-file fixtures
 
 Four directories are **fixtures** rather than vectors: several files that only
@@ -438,20 +510,26 @@ which was an argument somewhere in `0.13`–`0.15`:
 - **Correspondence, not identity.** An inner packet spans the *whole* outer
   datagram — nonce and tag included, because those fed the computation — so tunnel
   coverage closes with **no `skipped` blocks at all**. The earlier estimate was one
-  per packet for framing; that clarification is what made case D affordable.
+  per packet for framing; that clarification is what made case D affordable. The
+  packets are typed `net:ip` since `0.22`, and are real IPv4 packets carrying
+  real TCP segments (ports, sequence and ack numbers, PSH|ACK, checksums), so the
+  label is true and `inner.zpf` can be rebuilt from `packets.zpf` alone (#154).
+  `outer.zpf`'s datagram sizes are nominal; ciphertext carries no label.
 - **Fan-out.** One input stream (`packets.zpf` session 5, pid 0) feeds **two**
-  output sessions in `inner.zpf`. Neither covers `[0,150)` alone and both Session
-  Ends declare the same extent 150 for the shared input — the rule
+  output sessions in `inner.zpf`. Neither covers `[0,210)` alone and both Session
+  Ends declare the same extent 210 for the shared input — the rule
   `isolate-extents-disagree` polices, here in its legitimate form.
 - **A `zpf`-sourced transport stream.** `inner.zpf`'s Decoder declares
   `output_layer = transport`, so a *decode stage's* output is `isn`-anchored and
   hole-inclusive. Its 40-byte hole shows up as `seq_start 1081` where 1041 would be
   contiguous — no Discontinuity, no `content_type`. **Nothing else in the suite
   shows the F1 cell against a real gap.**
-- **Origination, and the crossing left undone.** `packets.zpf` withholds an inner
-  packet and declares the break. `inner.zpf` reads that break and *cannot* express
-  one, so it does the other legal thing — no record crosses packets offset 100 —
-  and the loss survives as a TCP sequence gap instead. `http.zpf` then meets a
+- **Origination, and the break carried as a hole.** `packets.zpf` withholds an
+  inner packet and declares the break. `inner.zpf` cannot carry a Discontinuity,
+  and does not need one: the lost packet was flow A's, so the loss survives as a
+  TCP sequence gap. Since `0.22` a sequence-anchored transport output may cross
+  an input break where its sequence numbers say the bytes join;
+  `sessionized-across-units` shows that case. `http.zpf` then meets a
   `hole`-class region between two adjacent output units and originates its own
   block. Delete that one block and `http.zpf` **is** `isolate-unmarked-break`.
 

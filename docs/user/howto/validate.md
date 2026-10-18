@@ -1,6 +1,6 @@
 # Validate a file
 
-Validation reads a file and reports where it departs from the v0.21
+Validation reads a file and reports where it departs from the v0.23
 specification. It answers three separable questions: is the file
 *conformant*, is a SEQUENCED session's stored order *actually* a valid
 ordering, and does a decode stage *cover* its input. This is the recipe; the
@@ -86,7 +86,9 @@ coverage check available to a consumer handed one file.
 
 {func}`zpf.check_splice` takes two stages of a chain. The violation it finds
 belongs to **neither file alone** — stage 1 declares a break, stage 2 emits a
-unit spanning across it — so no single-file check can see it:
+unit spanning across it — so no single-file check can see it. One kind of
+stage 2 record may cross: a transport-layer record carrying `seq_start`, whose
+sequence numbers carry the break (since `0.22`), so the check passes it:
 
 ```python
 zpf.check_splice("http.zpf", "tls-records.zpf")

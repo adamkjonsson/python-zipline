@@ -22,6 +22,183 @@ it back from the installed distribution metadata.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-18
+
+Implements spec **v0.23** (`SPEC_VERSION == (0, 23)`), up from `0.21`. Files
+written by `0.5.x` are refused at the version gate, and files written by this
+release are unreadable by `0.5.x` — the `0.x` rule, as before. No release of
+this library implements `0.22`: `0.23` followed it within days, to fix the
+pure-ACK edge this port found, and this release takes both.
+
+### Changed
+
+**Acks are positions, so a sequenced stream past 2 GiB orders and verifies**
+([#75](https://github.com/adamkjonsson/python-zipline/issues/75),
+[zipline#151](https://github.com/adamkjonsson/zipline/issues/151)). The causal
+merge and the stored-order check compared a record's `ack` with peer record
+ends by serial arithmetic, which is only defined within 2³¹. A peer whose last
+stored ack is far behind — a server that sends its SYN-ACK and then only pure
+ACKs, which are not records — read every client record 2 GiB past it as
+*below* the ack. So `verify()` and the writer's linearize guard refused a
+correct upload at its 2 GiB record, and the merge could hold a record back
+past where it belongs. Since `0.22` an ack is unwrapped along its sender's
+records into the peer's offset space, the way offsets have been since `0.21`,
+and compared with record ends as a plain integer:
+
+- Positions are **signed**: in a mid-stream capture an ack can lie below the
+  peer's first captured byte, and acknowledges no captured byte.
+- An **unplaceable** record has no end, so no edge runs from it; its own ack
+  still orders it.
+- In the merge, a record whose peer's next record is unplaceable now waits for
+  the placeable records behind it, where it used to overtake them.
+- Every file that verified before still verifies; every merge under 2 GiB is
+  unchanged except for that last case.
+
+`verify_sequenced` and `causal_merge` take a new keyword, `isns`: each
+participant's declared `isn`, which anchors its offsets at `isn + 1`. A
+participant missing from it is anchored at its first captured byte.
+`SessionReader.verify()`, `SessionReader.timeline()`, the writer and
+`merge_files` pass their participants' values.
+
+**`decode_stage` refuses `output_layer` alongside a `DecoderHandle`**
+([#85](https://github.com/adamkjonsson/python-zipline/issues/85)). The handle's
+descriptor already fixes the layer, and `output_layer` was silently ignored
+there, so a caller who asked for a sessionization stage with a handle got
+whatever layer the handle had declared. It is now a `ValueError` before the
+output is opened, as `params_digest` has been since `0.5.1`. Its default is
+`None` rather than `DECODED`, so that an explicit `DECODED` is refused too;
+a stage that declares its own decoder still defaults to the decoded layer. A
+call that passed both now raises: pass the layer to `add_decoder()`, or give
+`decode_stage` a decoder name.
+
+**A pure ACK draws no edge, so a flow with stored pure ACKs merges and
+verifies** ([zipline#160](https://github.com/adamkjonsson/zipline/issues/160)).
+Through `0.22` every record had an end, its offset plus its length, so a
+zero-length pure ACK ended at its offset. An ack reaching that offset drew an
+edge from the pure ACK backwards to the data it answered, and the ordinary
+handshake, data, pure-ACK trace made a cycle: `verify()` and the writer's
+linearize guard refused a correct order, and `timeline()` stalled. `0.21` did
+the same; nothing had met it because no producer stored pure ACKs. Since
+`0.23` a record's end is one past the last sequence number it occupies:
+
+- data: its offset plus its length, FIN or not;
+- a zero-length SYN: its offset (the SYN occupies `isn`, one below);
+- a zero-length FIN: its offset plus one;
+- a pure ACK or bare RST: **none**, so no edge runs from it. Its own `ack`
+  still orders it.
+
+The merge also waits less: a peer record with no end now holds a record back
+only for what could follow it, where it held back records whose ack it could
+not answer. A merge that worked before gives the same order, except where it
+stalled.
+
+**`decode_stage` reads each input stream once to measure it, not twice**
+([#91](https://github.com/adamkjonsson/python-zipline/issues/91)). The Session
+End extents and the closing auto-fill measured every input stream separately;
+they now share one measurement. The output is unchanged, byte for byte.
+
+### Added
+
+**`net:`, the fourth `content_type` scheme**
+([zipline#153](https://github.com/adamkjonsson/zipline/issues/153),
+[#156](https://github.com/adamkjonsson/zipline/issues/156)). A record labelled
+`net:ip` or `net:ethernet` is exactly one IP packet or one Ethernet frame
+(without the FCS), meaning what pcap's `LINKTYPE_RAW` and `LINKTYPE_ETHERNET`
+mean. It is the label a packet-preserving stage gives its records, and the one
+a generic consumer matches, whichever decoder wrote them; through `0.21` such
+a stage could only use a decoder-private `dec:` token.
+
+- `zpf.NET_IP` and `zpf.NET_ETHERNET` are the two labels, and
+  `zpf.NET_LINK_TYPES` maps each token to its link type.
+  `ContentType.is_net` and `ContentType.link_type` read a parsed label.
+- `Record.content()` returns a `net:` payload as the label's meaning, so
+  `strict=True` does not raise for it.
+- `ContentRegistry.register_net(token, handler)` dispatches by token alone.
+  Parsing a packet is beyond the format, so a handler's answer is the caller's
+  claim, as for `mime:` and `dec:`.
+- A `net:` token outside the vocabulary is opaque to a reader and refused to a
+  writer, the way an illegal `prim:` token is. Nothing checks a `net:`
+  payload against its label: the format parses no packets.
+
+**`sessionize_stage`, a sessionization stage that fans out**
+([#76](https://github.com/adamkjonsson/python-zipline/issues/76)). The hop
+from a stream of packets to the conversations inside them, such as
+`packets.zpf → inner.zpf` in the specification's decrypted-tunnel example.
+`decode_stage` mirrors its input one to one under the same ids, and could not
+express it; the only route was the primitive writer API, with coverage,
+extents and timestamps done by hand.
+
+- `stage.streams()` yields the input streams, and `stage.session(key,
+  proto=…)` creates or returns the output session for a flow, with fresh ids.
+  Its `participant(endpoint, isn=…)` is cached per endpoint, and its
+  `record(participant, payload, cites=…, hints=…)` writes a transport record
+  citing the input.
+- Coverage is kept per input stream across every session, and auto-filled on
+  close. Each session's Session End declares the whole extent of every input
+  stream it cited. That extent is measured **once per input stream**, however
+  many sessions cite it, and auto-fill shares the measurement
+  ([#91](https://github.com/adamkjonsson/python-zipline/issues/91), contributed
+  in [#92](https://github.com/adamkjonsson/python-zipline/pull/92)). The
+  dev builds measured it once per session, a full pass over the input each
+  time, which on a 200-flow fan-out was ten times the stage's other cost.
+- Since `0.22` a record carrying `seq_start` may cite several input packets,
+  or cross a break the input declares
+  ([zipline#152](https://github.com/adamkjonsson/zipline/issues/152)). A
+  record without `seq_start` may cite one range only, which is stricter than
+  the format and said so in the docs.
+- `InputStream` is the input side both stages share; `DecodeStream` extends
+  it with its output pairing.
+- `ts_first`, the first packet's arrival where `ts` is the last, is derived
+  with `ts` from what a record cites, and written only for a record drawn from
+  several input packets
+  ([#86](https://github.com/adamkjonsson/python-zipline/issues/86)). It can
+  also be passed explicitly, to `FlowSession.record` and now to
+  `DecodeStage.record`, which never derives it.
+  `StreamView.ts_first_for` is the stream-level mirror of `ts_for`.
+- A flow key outlives its session
+  ([#88](https://github.com/adamkjonsson/python-zipline/issues/88)): once a
+  key's session has ended, `stage.session(key, …)` opens a new one on the same
+  key, as the specification's `capture-gap` rule requires and an idle timeout
+  or a reused port needs. `sessions()` lists every session in creation order,
+  and an explicit `session_id` that contradicts the key's open session raises.
+
+**`face` and `creator` on `decode_stage` and `sessionize_stage`**
+([#89](https://github.com/adamkjonsson/python-zipline/issues/89)), passed to
+`create()`, so a stage can write the JSON-Lines face and name its tool in the
+File Header. The defaults write what the stages wrote before.
+
+Rebuilt through it, `tunnel/inner.zpf` matches the vendored file block for
+block (Source and Decoder ids aside, which are the writer's to number).
+
+### Fixed
+
+**A transport-layer `decode_stage` over a unit sequence wrote nothing**
+([#84](https://github.com/adamkjonsson/python-zipline/issues/84)). Its
+participants inherited the input's `adjacency = units`, which a writer MUST NOT
+set on a transport participant, so the writer refused the stage's first
+record. A unit sequence is what a tunnel decryptor writes, so this was the
+sessionization path's main input. A transport-layer stage now declares
+`contiguous`, and refuses an explicit `adjacency` other than that before the
+output is opened.
+
+**`check_splice` no longer reports a crossing `0.22` permits**
+([#90](https://github.com/adamkjonsson/python-zipline/issues/90)). A
+transport-layer record carrying `seq_start` MAY cite input packets either side
+of a declared Discontinuity
+([zipline#152](https://github.com/adamkjonsson/zipline/issues/152)): its
+sequence numbers carry the break. `check_splice` reported every such record,
+so a file `sessionize_stage` wrote, and the format allows, read as a
+violation. A transport record without `seq_start`, and every decoded record,
+still owe the duty and are still checked.
+
+**`create()` refuses a stream of the wrong kind for its face**, before anything
+is written. The binary face on a text stream, or the JSON-Lines face on a bytes
+stream, used to fail on the first block with Python's own `TypeError`, far from
+the call that chose the face. It is now a `ZpfError` naming the mismatch, in
+the reader's words for the same case. `0.5.x` had it too; `face` on
+`decode_stage` and `sessionize_stage` (#89) made it reachable there as well.
+Found by python-zipline-wire.
+
 ## [0.5.2] - 2026-10-13
 
 Implements spec **v0.21** (`SPEC_VERSION == (0, 21)`), unchanged from `0.5.1`.
@@ -564,7 +741,8 @@ as "1.0" and renumbered without rewriting its bytes.
 - The streaming causal merge and `SEQUENCED` verification.
 - The merge transform, the coverage validator, and the `zpf` CLI.
 
-[Unreleased]: https://github.com/adamkjonsson/python-zipline/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/adamkjonsson/python-zipline/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/adamkjonsson/python-zipline/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/adamkjonsson/python-zipline/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/adamkjonsson/python-zipline/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/adamkjonsson/python-zipline/compare/v0.4.0...v0.5.0

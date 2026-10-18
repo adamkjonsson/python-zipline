@@ -1,4 +1,4 @@
-"""Conformance-vector harness for the upstream 0.21 vectors.
+"""Conformance-vector harness for the upstream 0.22 vectors.
 
 The vectors in ``tests/vectors/`` are hand-built from the specification's
 normative text (see ``tests/vectors/VENDORED.md``). They are the acceptance
@@ -8,7 +8,7 @@ targets pass.
 **The ratchet.** A vector case is a hard requirement only once its name is added
 to :data:`KNOWN_PASSING`; every other case is ``xfail(strict=False)``. That keeps
 the suite green across a migration that starts with every file unreadable — until
-the version gate moves, a 0.21 file is refused whatever else is implemented. A
+the version gate moves, a 0.22 file is refused whatever else is implemented. A
 case that starts passing shows up as ``XPASS`` — that is the progress signal —
 and is then promoted into :data:`KNOWN_PASSING` so it can never silently
 regress.
@@ -60,27 +60,38 @@ VECTORS = Path(__file__).parent / "vectors"
 #: Vector cases that MUST pass. Grow it as phases land; never remove a name
 #: while its vector exists, because that is the regression guard.
 #:
-#: **62 names, 70 files, and every case in this set at the ``0.21`` port.**
-#: The arithmetic from ``0.20``'s 55: seven joined, one per new vector, and
-#: nothing was deleted. Unlike ``0.20``, where the ratchet was full on
-#: arrival, every one of the seven was *earned* by a phase of the port:
-#: ``stream-past-2gib`` and ``stream-wraps-seq`` by the unwrapping walk
-#: (Phase 3; the second already measured right, the first read two records
-#: as below the origin); ``unit-sequence-reversed``, ``unit-sequence-nested``
-#: and ``session-split-capture-gap`` by the ``adjacency`` field's projection
-#: (Phase 2 — they accepted and measured right from the start, but projected
-#: ``units`` as ``contiguous``, and re-encoded it so); and the two negative
-#: ones, ``isolate-unknown-adjacency`` and ``advisory-transport-adjacency``,
-#: by the checker's two new conditions (Phase 4). Each showed up as ``XPASS``
-#: the moment its phase landed, and this promotion is what turns the signal
-#: into a guard.
+#: **68 names, 76 files, and every case in this set at the ``0.23`` port.**
+#: ``0.23`` added two, both earned by its one rule (a record's end is one past
+#: the last sequence number it occupies, so a pure ACK has none):
+#: ``sequenced-pure-ack-and-fin``, refused by the old reading at its first
+#: pure ACK, and ``merge-pure-ack-and-fin``, its unsequenced twin, on which the
+#: Phase 3 merge stalled until its bound for a peer record with no end was
+#: tightened. The second is also the first vector whose merged order the
+#: harness checks (``merged``, :func:`_merged_params`).
 #:
-#: (69 case names against 62 manifest entries: ``chain`` and ``merge`` expand
+#: ``0.22``'s arithmetic, from ``0.21``'s 62: four vectors were new and nothing was deleted. Three
+#: joined on arrival, because they passed the moment the gate moved:
+#: ``decap-ethernet`` (a ``net:`` label is opaque to a reader that does not
+#: interpret it, so it reads and projects already), ``sessionized-across-units``
+#: (the seam predicate only ever tested decoded layers, so a transport record
+#: crossing input units was never refused), and ``sequenced-ack-below-origin``.
+#: The last one passes only by accident: the serial comparison it was written
+#: against happens to accept it, and it starts guarding something once Phase 3
+#: unwraps acks into signed positions.
+#:
+#: The fourth, ``sequenced-past-2gib-pure-ack``, was **earned**. The ordering
+#: checks ``test_accept`` gained for
+#: `#83 <https://github.com/adamkjonsson/python-zipline/issues/83>`_ held it
+#: out at the re-vendor (before them it passed while ``verify()`` refused it),
+#: and it joined when the ack unwrap landed (Phase 3,
+#: `#75 <https://github.com/adamkjonsson/python-zipline/issues/75>`_).
+#:
+#: (75 case names against 68 manifest entries: ``chain`` and ``merge`` expand
 #: to three files each, ``tunnel`` to four, and ``splice`` is one name for
 #: two.)
 #:
 #: ``splice`` is one name for two files, because its violation belongs to
-#: neither of them, which is why 62 names cover 70 files. :data:`PAIRWISE`
+#: neither of them, which is why 68 names cover 76 files. :data:`PAIRWISE`
 #: routes it to :func:`test_a_pairwise_vector_is_caught`, and the per-file
 #: tiers skip it.
 KNOWN_PASSING: frozenset[str] = frozenset(
@@ -93,6 +104,7 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "chain/decoded",
         "chain/raw",
         "custom-block",
+        "decap-ethernet",
         "decoded-basic",
         "decoded-field-roles",
         "descriptive-metadata",
@@ -125,6 +137,7 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "merge/a",
         "merge/b",
         "merge/merged",
+        "merge-pure-ack-and-fin",
         "merge-timestamp-tie",
         "mixed-derivation",
         "proxy-decoded",
@@ -136,9 +149,13 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "reject-unknown-major",
         "reject-unknown-minor",
         "reordered-decoded",
+        "sequenced-ack-below-origin",
+        "sequenced-past-2gib-pure-ack",
+        "sequenced-pure-ack-and-fin",
         "sequenced-session",
         "session-fan-out",
         "session-split-capture-gap",
+        "sessionized-across-units",
         "sessionization-stage",
         "splice",
         "stream-past-2gib",
@@ -162,9 +179,13 @@ KNOWN_PASSING: frozenset[str] = frozenset(
 #: that nobody bends this implementation to match a broken fixture: if one of
 #: these starts passing, the vector was fixed — or we got it wrong.
 #:
-#: **Empty at ``v0.21``, as at ``v0.20``.** The projection sweep at this
-#: re-vendor found nothing, and the new key was checked byte-against-``.jsonl``
-#: on every Participant block. The three entries it held at ``v0.19`` —
+#: **Empty at ``v0.23``, as at every release since ``v0.20``.** The projection
+#: sweep at the ``0.23`` re-vendor compared all 55 files that ship a ``.jsonl``
+#: and found nothing, as the ``0.22`` one did over 53; four of ``0.22``'s
+#: defects were reported against its release candidate and fixed before the tag (`zipline#154–#157
+#: <https://github.com/adamkjonsson/zipline/issues/154>`_). At the ``0.21``
+#: re-vendor the new key was checked byte-against-``.jsonl`` on every
+#: Participant block. The three entries it held at ``v0.19`` —
 #: ``handshake-at-origin``, ``unplaceable-below-origin`` and
 #: ``mixed-derivation``, whose ``.zpf`` disagreed with their own ``.jsonl``
 #: (defects 5 and 6, `zipline#141
@@ -219,8 +240,8 @@ UNIMPLEMENTED: dict[str, str] = {}
 #: `zipline#140 <https://github.com/adamkjonsson/zipline/issues/140>`_; ``0.20``
 #: answered with an ``extents`` key on every single-file accept entry, so the
 #: hand-kept table is gone and :func:`_extent_params` reads the manifest — 37
-#: streams across 31 vectors at ``0.20``, 44 across 37 at ``0.21``, where the
-#: table held two.
+#: streams across 31 vectors at ``0.20``, 44 across 37 at ``0.21``, 51 across
+#: 39 at ``0.22``, where the table held two.
 #:
 #: Empty since Phase 1 of the ``0.19`` port, which landed the one offset rule.
 _EXTENTS_PENDING: dict[str, str] = {}
@@ -280,7 +301,7 @@ _ISOLATE_REASONS: dict[str, str] = {
 #: Syntax new in 0.13/0.14, by the option id carrying it. Each must be parsed
 #: into a typed field rather than preserved through the unknown-option escape.
 #:
-#: **Nothing joins this at 0.16, and nothing at 0.21.** Each port's one piece
+#: **Nothing joins this at 0.16, 0.21 or 0.22.** Each port's one piece
 #: of new syntax — ``output_layer`` on the Decoder, ``adjacency`` on the
 #: Participant — is a *body* field rather than an option: there is no id for
 #: it and no escape it could hide in, which is why the specification chose a
@@ -289,7 +310,8 @@ _ISOLATE_REASONS: dict[str, str] = {
 #: re-encode and JSONL → binary tests too. The ``0.21`` port found the
 #: qualification the hard way: until Phase 2 added ``Participant.adjacency``,
 #: every dataclass comparison was blind to the byte, and only the projection
-#: saw ``units`` come out as ``contiguous``.
+#: saw ``units`` come out as ``contiguous``. ``0.22`` adds no syntax at all:
+#: its ``net:`` scheme is a new *value* of an existing option.
 _NEW_OPTION_IDS: dict[int, str] = {
     0x0015: "transform_params_digest",
     0x0054: "external_session_id",
@@ -461,7 +483,7 @@ def _params(tier: str) -> list[Any]:
             marks: tuple[Any, ...] = ()
         else:
             reason = DEFECTIVE.get(case.name) or UNIMPLEMENTED.get(
-                case.name, "not yet ported to 0.21"
+                case.name, "not yet ported to 0.23"
             )
             marks = (pytest.mark.xfail(reason=reason, strict=False),)
         params.append(pytest.param(case, id=case.name, marks=marks))
@@ -529,14 +551,14 @@ def test_manifest_covers_the_tree() -> None:
 
 
 def test_every_case_has_a_file() -> None:
-    """The manifest expands to exactly the files `v0.21` ships.
+    """The manifest expands to exactly the files `v0.23` ships.
 
     The count is exact rather than a floor, so a half-copied re-vendoring
-    fails here instead of quietly shrinking the suite: 62 manifest entries,
+    fails here instead of quietly shrinking the suite: 68 manifest entries,
     of which ``chain`` and ``merge`` expand to three files each, ``splice``
     to two and ``tunnel`` — the largest fixture the suite has — to four.
     """
-    assert len(CASES) == 70
+    assert len(CASES) == 76
     for case in CASES:
         assert case.path.exists(), case.name
 
@@ -627,10 +649,22 @@ def test_accept(case: Case) -> None:
     survives, because a reader preserves what it does not act on — but a
     diagnostic is owed, so silence fails the case just as loudly as
     rejecting it would.
+
+    **Every session is also put in order**
+    (`#83 <https://github.com/adamkjonsson/python-zipline/issues/83>`_): a
+    SEQUENCED one is verified, every other one is merged. Both are opt-in on
+    the reader, so reading the records alone never reaches the ordering
+    code. Without this, ``sequenced-past-2gib-pure-ack``, a vector whose
+    whole point is ordering, passed while the check it targets still refused
+    it.
     """
     with zpf.open(case.path) as reader:
         for session in reader.sessions():
             list(session.records())
+            if session.sequenced:
+                session.verify()
+            else:
+                list(session.timeline())
         if case.advisory:
             assert reader.diagnostics, (
                 f"{case.name}: accepted silently, but the manifest declares a "
@@ -707,6 +741,65 @@ def test_an_accept_vector_puts_its_bytes_where_it_says(
             )
 
 
+def _merged_params() -> list[Any]:
+    """Build one param per manifest ``merged`` entry, ratchet-gated.
+
+    Since ``0.23`` every single-file accept vector with an unsequenced
+    session in which two or more participants send records declares that
+    session's merged order, as 1-based positions among the session's records
+    in stored order (`zipline#162
+    <https://github.com/adamkjonsson/zipline/issues/162>`_). Like ``extents``,
+    the manifest checker upstream requires the key on exactly the entries that
+    owe it. Gated by :data:`KNOWN_PASSING`, like the tiers, because a vector
+    whose merge is the point is one a port can be behind on.
+
+    Returns:
+        One param per declared vector, carrying its ``merged`` list.
+
+    """
+    manifest = json.loads((VECTORS / "manifest.json").read_text())
+    params = []
+    for entry in manifest["vectors"]:
+        if "merged" not in entry:
+            continue
+        name = entry["name"]
+        marks: tuple[Any, ...] = ()
+        if name not in KNOWN_PASSING:
+            marks = (pytest.mark.xfail(reason="not yet ported to 0.23", strict=False),)
+        params.append(pytest.param(name, entry["merged"], id=name, marks=marks))
+    return params
+
+
+@pytest.mark.parametrize(("name", "merged"), _merged_params())
+def test_an_accept_vector_merges_in_the_order_it_states(
+    name: str, merged: list[dict[str, Any]]
+) -> None:
+    """An unsequenced session's merged order is the one the manifest declares.
+
+    :func:`test_accept` drains :meth:`~zpf.SessionReader.timeline`, so it sees
+    a merge that stalls and nothing else. A merge that drops an edge, or
+    returns stored order unmerged, yields a plausible order without an error.
+    ``merge-pure-ack-and-fin`` was built so that each wrong reading of a
+    record's end gives its own wrong order, which only a comparison sees.
+
+    Positions are matched per participant: the merge never reorders one
+    participant's records, so the *k*-th record a participant contributes to
+    the merge is that participant's *k*-th record in stored order.
+    """
+    case = next(c for c in CASES if c.name == name)
+    with zpf.open(case.path) as reader:
+        for declared in merged:
+            session = reader.session(declared["session_id"])
+            positions: dict[int, list[int]] = {}
+            for index, record in enumerate(session.records(), start=1):
+                positions.setdefault(record.sender_pid, []).append(index)
+            got = [positions[record.sender_pid].pop(0) for record in session.timeline()]
+            assert got == declared["order"], (
+                f"{name}: session {declared['session_id']} merges as {got}, but the "
+                f"manifest declares {declared['order']}"
+            )
+
+
 @pytest.mark.parametrize("case", _params("reject"))
 def test_reject(case: Case) -> None:
     """Structural corruption is refused, and refused for the right reason.
@@ -758,7 +851,7 @@ def _pairwise_params() -> list[Any]:
     for name in PAIRWISE:
         marks: tuple[Any, ...] = ()
         if name not in KNOWN_PASSING:
-            marks = (pytest.mark.xfail(reason="not yet ported to 0.21", strict=False),)
+            marks = (pytest.mark.xfail(reason="not yet ported to 0.23", strict=False),)
         params.append(pytest.param(name, id=name, marks=marks))
     return params
 
