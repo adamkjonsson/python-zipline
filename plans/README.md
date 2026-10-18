@@ -29,7 +29,8 @@ the test suite.
 | [`SPEC-0.16-MIGRATION-PLAN.md`](SPEC-0.16-MIGRATION-PLAN.md) | The 0.14 → 0.16 port, phases 0–8. |
 | [`V0.3.0-RELEASE-PLAN.md`](V0.3.0-RELEASE-PLAN.md) | The 0.16 → 0.19 port, as Phase 0 of the `0.3.0` release plan below. |
 | [`SPEC-0.20-MIGRATION-PLAN.md`](SPEC-0.20-MIGRATION-PLAN.md) | The 0.19 → 0.20 port. |
-| [`SPEC-0.21-MIGRATION-PLAN.md`](SPEC-0.21-MIGRATION-PLAN.md) | The 0.20 → 0.21 port, phases 0–8: the unwrapping walk and the `adjacency` body field. The version the library implements today. |
+| [`SPEC-0.21-MIGRATION-PLAN.md`](SPEC-0.21-MIGRATION-PLAN.md) | The 0.20 → 0.21 port, phases 0–8: the unwrapping walk and the `adjacency` body field. |
+| [`V0.6.0-RELEASE-PLAN.md`](V0.6.0-RELEASE-PLAN.md) | The 0.21 → 0.23 port and the fan-out sessionization stage, as the `0.6.0` release plan: acks as positions, a record's end by the sequence numbers it occupies, the `net:` scheme, `sessionize_stage`, and two rounds of downstream review. `0.22` was never released by this library. Shipped in `0.6.0` on 2026-10-18; the version the library implements today. |
 
 ## API and documentation design
 
@@ -43,7 +44,6 @@ the test suite.
 
 | Document | What it is |
 | --- | --- |
-| [`V0.6.0-RELEASE-PLAN.md`](V0.6.0-RELEASE-PLAN.md) | The `0.22` port (#75, #83, the `net:` scheme) and the fan-out sessionization stage (#76); #77 and #79 shipped ahead of it as `0.5.1` and `0.5.2`. Revised 2026-10-14, when `0.22` was released. **Live.** |
 | [`V0.3.0-RELEASE-PLAN.md`](V0.3.0-RELEASE-PLAN.md) | The `0.16` → `0.19` port and the four issues open at `0.2.0` (#58, #59, #62, #63), including the API break that makes `0.3.0` a minor. Shipped in `0.3.0` on 2026-09-06; historical. |
 | [`SIMPLIFICATION-IMPACT.md`](SIMPLIFICATION-IMPACT.md) | What the spec repository's simplification analysis would remove from this library, and what it would cost. `0.19` answered it by taking the three packages it supports; historical, and its header says what it missed. |
 | [`V0.2.0-ISSUES-PLAN.md`](V0.2.0-ISSUES-PLAN.md) | The four issues on the `v0.2.0` milestone (#47, #48, #49, #50). Shipped in `0.2.0`; historical. |
