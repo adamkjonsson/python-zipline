@@ -25,6 +25,7 @@ hatch, which is checked exactly like everything else.
 
 from __future__ import annotations
 
+import io
 from dataclasses import dataclass
 from datetime import datetime
 from typing import IO, TYPE_CHECKING, Literal
@@ -311,6 +312,7 @@ class FileWriter:
         comment: str | None = None,
         face: Literal["binary", "jsonl"] = "binary",
     ) -> None:
+        _check_sink_face(sink, face)
         if face == "binary":
             self._writer: BlockWriter | JsonlWriter = BlockWriter(sink)
         elif face == "jsonl":
@@ -1177,6 +1179,34 @@ class SessionWriter:
         self._ended = True
 
 
+def _check_sink_face(sink: object, face: str) -> None:
+    """Refuse a stream of the wrong kind for the face, before anything is written.
+
+    Each face needs its own kind of stream: the binary container writes
+    bytes, the JSON-Lines face writes text. Handed the other kind, the write
+    used to fail on the first block with Python's own ``TypeError``, far from
+    the call that chose the face. The reader already refuses the mismatch in
+    these words. A stream is classified by the :mod:`io` base classes, so
+    nothing is read from or written to it here; a path is opened by the
+    writer and always matches, and a stream that is neither kind passes, to
+    fail or succeed as it would have.
+
+    Raises:
+        ZpfError: If ``sink`` is a text stream for the binary face, or a
+            bytes stream for the JSON-Lines face.
+
+    """
+    if face == "binary" and isinstance(sink, io.TextIOBase):
+        msg = "the binary face needs a bytes stream, not a text stream"
+        raise ZpfError(msg)
+    if face == "jsonl" and isinstance(sink, (io.RawIOBase, io.BufferedIOBase)):
+        msg = (
+            "the jsonl face needs a text stream, not a bytes stream; wrap it in "
+            "io.TextIOWrapper, or pass a path"
+        )
+        raise ZpfError(msg)
+
+
 def create(
     sink: str | os.PathLike[str] | IO[bytes] | IO[str],
     *,
@@ -1216,6 +1246,12 @@ def create(
     Returns:
         An open :class:`FileWriter` (also a context manager: a clean exit
         writes the End block, an exception skips it).
+
+    Raises:
+        ZpfError: If ``sink`` is a stream of the wrong kind for ``face``: a
+            text stream for the binary face, or a bytes stream for the
+            JSON-Lines face. Raised before anything is written.
+        ValueError: If ``face`` is neither ``"binary"`` nor ``"jsonl"``.
 
     """
     return FileWriter(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+from pathlib import Path
 
 import pytest
 from test_golden import GOLDEN
@@ -584,6 +585,34 @@ def test_manual_end_block_is_not_doubled():
 def test_invalid_face_is_rejected():
     with pytest.raises(ValueError, match="face"):
         zpf.create(io.BytesIO(), tick_hz=1, face="xml")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("sink", "face", "message"),
+    [
+        (io.StringIO(), "binary", "binary face needs a bytes stream"),
+        (io.BytesIO(), "jsonl", "jsonl face needs a text stream"),
+    ],
+)
+def test_a_stream_of_the_wrong_kind_for_the_face_is_refused_up_front(
+    sink: io.StringIO | io.BytesIO, face: str, message: str
+):
+    """The reader's check, made on write: a clear error, and nothing written.
+
+    It used to surface as Python's own TypeError from the first write, far
+    from the call that chose the face.
+    """
+    with pytest.raises(zpf.ZpfError, match=message):
+        zpf.create(sink, tick_hz=1_000_000, face=face)  # type: ignore[arg-type]
+    assert not sink.getvalue()
+
+
+def test_the_check_reaches_the_stages_through_create():
+    """#89 made ``face`` reachable through the stages, and with it the mismatch."""
+    packets = Path(__file__).parent / "vectors" / "tunnel" / "packets.zpf"
+    with pytest.raises(zpf.ZpfError, match="jsonl face needs a text stream"):
+        zpf.sessionize_stage(packets, io.BytesIO(), decoder="r", produced_by="t",
+                             produced_at=1, face="jsonl")
 
 
 def test_closed_writer_refuses_use():

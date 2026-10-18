@@ -90,6 +90,11 @@ only for what could follow it, where it held back records whose ack it could
 not answer. A merge that worked before gives the same order, except where it
 stalled.
 
+**`decode_stage` reads each input stream once to measure it, not twice**
+([#91](https://github.com/adamkjonsson/python-zipline/issues/91)). The Session
+End extents and the closing auto-fill measured every input stream separately;
+they now share one measurement. The output is unchanged, byte for byte.
+
 ### Added
 
 **`net:`, the fourth `content_type` scheme**
@@ -128,7 +133,12 @@ extents and timestamps done by hand.
   citing the input.
 - Coverage is kept per input stream across every session, and auto-filled on
   close. Each session's Session End declares the whole extent of every input
-  stream it cited.
+  stream it cited. That extent is measured **once per input stream**, however
+  many sessions cite it, and auto-fill shares the measurement
+  ([#91](https://github.com/adamkjonsson/python-zipline/issues/91), contributed
+  in [#92](https://github.com/adamkjonsson/python-zipline/pull/92)). The
+  dev builds measured it once per session, a full pass over the input each
+  time, which on a 200-flow fan-out was ten times the stage's other cost.
 - Since `0.22` a record carrying `seq_start` may cite several input packets,
   or cross a break the input declares
   ([zipline#152](https://github.com/adamkjonsson/zipline/issues/152)). A
@@ -178,6 +188,14 @@ sequence numbers carry the break. `check_splice` reported every such record,
 so a file `sessionize_stage` wrote, and the format allows, read as a
 violation. A transport record without `seq_start`, and every decoded record,
 still owe the duty and are still checked.
+
+**`create()` refuses a stream of the wrong kind for its face**, before anything
+is written. The binary face on a text stream, or the JSON-Lines face on a bytes
+stream, used to fail on the first block with Python's own `TypeError`, far from
+the call that chose the face. It is now a `ZpfError` naming the mismatch, in
+the reader's words for the same case. `0.5.x` had it too; `face` on
+`decode_stage` and `sessionize_stage` (#89) made it reachable there as well.
+Found by python-zipline-wire.
 
 ## [0.5.2] - 2026-10-13
 
