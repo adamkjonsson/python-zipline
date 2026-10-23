@@ -22,6 +22,41 @@ it back from the installed distribution metadata.
 
 ## [Unreleased]
 
+### Added
+
+**`zpf.open(..., check=False)` declines the conformance checker**
+([#97](https://github.com/adamkjonsson/python-zipline/issues/97)). Every read
+ran the checker over every block, which is **~30% of the indexing pass**
+(measured: 0.465 s → 0.328 s over 60,000 records), with no way to opt out.
+It stays on by default and should, for any file you did not produce — it is
+what populates `diagnostics` and `unplaceable`, and what `strict=`
+escalates. `check=False` is for a file whose conformance you already know:
+one the same process just wrote, a stage reading its own predecessor's
+output inside one run, or a caller about to drive `zpf.ConformanceChecker`
+itself.
+
+What is given up is everything the checker finds — no `"nonconformant"`
+diagnostics, no advisory findings, an empty `unplaceable`, because nothing
+looked rather than because the file was clean. What is kept is the
+structural tier, which belongs to the flat reader: truncation, trailing
+bytes and a malformed frame raise or report exactly as before. The
+self-derivation check is kept too, being a path comparison over the Source
+table rather than part of the checker. `strict=True` with `check=False`
+raises `ValueError`, since strict mode's whole content is to raise on what
+the checker found.
+
+### Fixed
+
+**A block naming an undeclared session no longer crashes the indexing pass.**
+Found while building the above. `_file_into_index` looked its session up
+directly, relying on the checker having already isolated such a block — so
+with the checker declined, a record naming a session the file never declared
+raised `KeyError` out of `zpf.open`. It is now dropped from the index
+instead, which is what isolation did: a reader that cannot resolve the
+reference has nothing to file the block against, and inventing the session
+would be inventing structure the file does not have. Unreachable with
+`check=True`, so no checked read changes.
+
 ### Changed
 
 **`zpf.stream_layer` takes an iterator**

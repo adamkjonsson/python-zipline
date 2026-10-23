@@ -25,7 +25,11 @@ The reader exposes the file's top-level facts as plain attributes: `header`,
 malformed file — `complete`, `truncated`, and `diagnostics` (covered in the
 [robustness how-to](../howto/robustness.md)). By default a read is **lenient**: a
 nonconformant or truncated file still opens, collecting findings rather than
-raising. Pass `strict=True` to raise on the first violation instead.
+raising. Pass `strict=True` to raise on the first violation instead, or
+`check=False` to skip the semantic checks altogether for a file whose
+conformance you already know — roughly 30% of the cost of opening one, and
+what you give up is spelled out in the
+[robustness how-to](../howto/robustness.md#declining-the-checker).
 
 A pipe or live tail isn't seekable; for those, drop to the lower-level
 {class}`~zpf.BlockReader` / {class}`~zpf.JsonlReader`, which stream block by

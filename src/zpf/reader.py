@@ -474,6 +474,11 @@ class FileReader:
             `zipline#140 <https://github.com/adamkjonsson/zipline/issues/140>`_,
             because the manifest cannot express the obligation either.
         strict: Whether semantic violations and truncation raised instead.
+        check: Whether the conformance checker ran over every block. With
+            ``False`` it did not, so ``diagnostics`` holds no
+            ``"nonconformant"`` entry and ``unplaceable`` is empty — not
+            because the file was clean, but because nothing looked. See
+            :func:`open`.
         path: The filesystem path this file was opened from, or None when
             it came from an already-open stream.
 
@@ -490,12 +495,21 @@ class FileReader:
         strict: bool = False,
         face: Literal["auto", "binary", "jsonl"] = "auto",
         content: ContentRegistry | None = None,
+        check: bool = True,
     ) -> None:
+        if strict and not check:
+            msg = (
+                "strict=True needs check=True: strict mode's whole content is to "
+                "raise on what the conformance checker found, and with check=False "
+                "nothing looks for it"
+            )
+            raise ValueError(msg)
         stream, owns = _as_stream(source)
         self._stream: IO[Any] = stream
         self._owns_stream = owns
         self.path = os.fspath(source) if isinstance(source, (str, os.PathLike)) else None
         self.strict = strict
+        self.check = check
         self._content = content
         self.complete = False
         self.truncated = False
@@ -773,9 +787,17 @@ class FileReader:
         self.truncated = flat.truncated
 
     def _finish_checks(self, offset: int) -> None:
-        """Run the checker's end-of-stream pass, isolating in lenient mode."""
+        """Run the checker's end-of-stream pass, isolating in lenient mode.
+
+        ``check=False`` skips the checker — it observed nothing, so it has
+        nothing to settle — but **not** the self-derivation check, which is
+        not the checker: it is a path comparison over the Source table, it
+        costs nothing per block, and it is the one rule whose violation would
+        have a reader resolve spans against the wrong file.
+        """
         try:
-            self._checker.finish()
+            if self.check:
+                self._checker.finish()
             self._check_self_derivation()
         except SemanticError as exc:
             if self.strict:
@@ -823,7 +845,13 @@ class FileReader:
         An :class:`~zpf.errors.AdvisoryError` is reported like any other
         violation but does *not* cost the caller the block: the spec tells a
         reader meeting one to ignore the label and keep the bytes.
+
+        With ``check=False`` every block is admitted unexamined, which is the
+        whole of what that option does: the checker is the only thing here
+        that can refuse one.
         """
+        if not self.check:
+            return True
         try:
             self._checker.observe(block)
         except AdvisoryError as exc:
@@ -852,25 +880,46 @@ class FileReader:
             self.unplaceable.append(Diagnostic(offset, "unplaceable", note))
 
     def _file_into_index(self, block: Block, offset: int) -> None:
+        """File one admitted block under the session it names.
+
+        A block naming a session the file never declared is **dropped**, not
+        filed. With the checker on it never arrives — `_admit` isolated it
+        and said so — so this only bears weight under ``check=False``, where
+        it keeps the index the same as the checked one. Declare-on-first-use
+        is the rule being broken, and a reader that cannot resolve the
+        reference has nothing to file the block against; inventing the
+        session to hold it would be inventing structure the file does not
+        have. Before `0.7.0` this raised ``KeyError`` from inside the
+        indexing pass.
+        """
         if isinstance(block, Source):
             self._sources[block.source_id] = block
-        elif isinstance(block, Decoder):
+            return
+        if isinstance(block, Decoder):
             self._decoders[block.decoder_id] = block
-        elif isinstance(block, Session):
+            return
+        if isinstance(block, Session):
             self._sessions[block.session_id] = _SessionIndex(descriptor=block)
-        elif isinstance(block, Participant):
-            self._sessions[block.session_id].participants.append(block)
-        elif isinstance(block, NameResolution):
-            self._sessions[block.session_id].names.append(block)
-        elif isinstance(block, SessionEnd):
-            self._sessions[block.session_id].end = block
-        elif isinstance(block, Undecoded):
+            return
+        if isinstance(block, Undecoded):
             self._undecoded.append(block)
+            return
+        if not isinstance(
+            block, (Participant, NameResolution, SessionEnd, Discontinuity, Record)
+        ):
+            return
+        index = self._sessions.get(block.session_id)
+        if index is None:
+            return  # undeclared session: nothing to file this against
+        if isinstance(block, Participant):
+            index.participants.append(block)
+        elif isinstance(block, NameResolution):
+            index.names.append(block)
+        elif isinstance(block, SessionEnd):
+            index.end = block
         elif isinstance(block, Discontinuity):
-            index = self._sessions[block.session_id]
             index.by_pid.setdefault(block.participant_id, []).append(block)
-        elif isinstance(block, Record):
-            index = self._sessions[block.session_id]
+        else:
             locator: int | Record = block if self._jsonl_blocks is not None else offset
             index.locators.append(locator)
             index.by_pid.setdefault(block.sender_pid, []).append(locator)
@@ -983,6 +1032,7 @@ def open(
     strict: bool = False,
     face: Literal["auto", "binary", "jsonl"] = "auto",
     content: ContentRegistry | None = None,
+    check: bool = True,
 ) -> FileReader:
     """Open a ``.zpf`` file (either face) for session-first reading.
 
@@ -1001,9 +1051,38 @@ def open(
         content: Handlers for the advisory ``mime:``/``dec:`` content types,
             used by :meth:`FileReader.content`. Without one, only the
             spec-defined ``prim:`` scheme is interpreted.
+        check: Run the conformance checker over every block. On by default,
+            and it should stay on for a file you did not produce — it is
+            what populates ``diagnostics`` and ``unplaceable``, what
+            ``strict=`` escalates, and the reason this library does not hand
+            you a nonconformant file as though it were sound.
+
+            ``False`` skips it, which is **~30% of the indexing pass**
+            (`#97 <https://github.com/adamkjonsson/python-zipline/issues/97>`_).
+            It is for a file whose conformance you already know: one this
+            same process just wrote, a stage reading its own predecessor's
+            output inside one run, or a caller about to drive
+            :class:`zpf.ConformanceChecker` itself. **Not** a speed switch
+            for input you did not write.
+
+            What is lost is everything the checker finds: no
+            ``"nonconformant"`` diagnostics, no advisory findings, and an
+            empty ``unplaceable`` — because nothing computed them, not
+            because the file was clean. What is **kept** is the structural
+            tier, which is the flat reader's and not the checker's:
+            truncation, trailing bytes, and a malformed frame still raise or
+            report exactly as before. The self-derivation check is kept too:
+            it is a path comparison over the Source table rather than part
+            of the checker, and it is the one rule whose violation would
+            have a reader resolve spans against the wrong file.
 
     Returns:
         A :class:`FileReader` (context manager).
 
+    Raises:
+        ValueError: If ``strict=True`` is combined with ``check=False``,
+            which asks the reader to raise on findings it was told not to
+            look for.
+
     """
-    return FileReader(source, strict=strict, face=face, content=content)
+    return FileReader(source, strict=strict, face=face, content=content, check=check)
