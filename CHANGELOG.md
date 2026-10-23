@@ -22,6 +22,29 @@ it back from the installed distribution metadata.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-23
+
+Implements spec **v0.23** (`SPEC_VERSION == (0, 23)`), unchanged from `0.6.0`.
+**The first minor in four that is not a spec port**, and the one difference
+that follows from it: the file format does not move, so files written by
+`0.6.0` and by this release are read by both — verified in both directions,
+including a `ts_first` this release writes where `0.6.0` would not have. What
+makes it a minor is the API and the bytes a decode stage emits, not the gate.
+
+Its subject is **streamability and cost**. The format's goals promise a
+writer can flush a finished session and forget it, keeping memory bounded on
+unbounded input; three of the five issues were places this library did not
+deliver that, and they were found by measuring rather than by reading.
+Recorded in `plans/V0.7.0-RELEASE-PLAN.md`.
+
+| | `0.6.0` | `0.7.0` |
+| --- | --- | --- |
+| Write a derived file, 100k records | 13.7 MB | **0.2 MB** |
+| `zpf.open()` a derived file, 100k records | 20.1 MB | **4.9 MB** |
+| One unit of a 20k-record unit sequence | 22.4 MB | **1.1 MB** |
+| A decode stage's parse passes over its input | 5 | **4** |
+| `zpf.open()` with `check=False` | — | **30% faster** |
+
 ### Added
 
 **`zpf.open(..., check=False)` declines the conformance checker**
@@ -44,38 +67,6 @@ self-derivation check is kept too, being a path comparison over the Source
 table rather than part of the checker. `strict=True` with `check=False`
 raises `ValueError`, since strict mode's whole content is to raise on what
 the checker found.
-
-### Fixed
-
-**A block naming an undeclared session no longer crashes the indexing pass.**
-Found while building the above. `_file_into_index` looked its session up
-directly, relying on the checker having already isolated such a block — so
-with the checker declined, a record naming a session the file never declared
-raised `KeyError` out of `zpf.open`. It is now dropped from the index
-instead, which is what isolation did: a reader that cannot resolve the
-reference has nothing to file the block against, and inventing the session
-would be inventing structure the file does not have. Unreachable with
-`check=True`, so no checked read changes.
-
-### Documentation
-
-**The reading guide no longer promises flat memory**
-([#98](https://github.com/adamkjonsson/python-zipline/issues/98)). Its
-*Laziness* section said *"nothing buffers the whole file, so memory stays
-flat regardless of size"*. Three parts of that were wrong: the JSON-Lines
-face holds every block, because a text stream cannot be seeked back to one;
-the binary index keeps a locator per record; and a `_SessionIndex` per
-session costs considerably more than a record does. The page now states what
-the reader is — lazy in payloads, eager in structure — with the measured
-costs (~50 bytes per record, ~1.9 kB per session, nothing per byte of
-payload; ~384 bytes per record on the JSONL face), and points at
-`BlockReader`/`JsonlReader` as the bounded-memory path for input whose size
-you do not control.
-
-`concepts.md`'s *Streamable by construction* is a statement about the
-**format** and stays as it was, with one addition: this library's writer
-takes the flush-and-forget option and its reader deliberately does not, so
-the two pages cannot be read as one promise.
 
 ### Changed
 
@@ -111,6 +102,16 @@ reads each record's `decoder_id` and keeps nothing, so an iterator was always
 enough; a caller passing a list is unaffected.
 
 ### Fixed
+
+**A block naming an undeclared session no longer crashes the indexing pass.**
+Found while building the above. `_file_into_index` looked its session up
+directly, relying on the checker having already isolated such a block — so
+with the checker declined, a record naming a session the file never declared
+raised `KeyError` out of `zpf.open`. It is now dropped from the index
+instead, which is what isolation did: a reader that cannot resolve the
+reference has nothing to file the block against, and inventing the session
+would be inventing structure the file does not have. Unreachable with
+`check=True`, so no checked read changes.
 
 **`SessionReader.layer()` no longer holds a whole participant in memory**
 ([#93](https://github.com/adamkjonsson/python-zipline/issues/93)). It
@@ -177,6 +178,26 @@ coalescing never empties a non-empty set, so the existing emptiness test
 still answers the question. And the saving is per **input stream**, which is
 where the guarantee is scoped — a file deriving 10,000 input streams still
 holds a ledger each.
+
+### Documentation
+
+**The reading guide no longer promises flat memory**
+([#98](https://github.com/adamkjonsson/python-zipline/issues/98)). Its
+*Laziness* section said *"nothing buffers the whole file, so memory stays
+flat regardless of size"*. Three parts of that were wrong: the JSON-Lines
+face holds every block, because a text stream cannot be seeked back to one;
+the binary index keeps a locator per record; and a `_SessionIndex` per
+session costs considerably more than a record does. The page now states what
+the reader is — lazy in payloads, eager in structure — with the measured
+costs (~50 bytes per record, ~1.9 kB per session, nothing per byte of
+payload; ~384 bytes per record on the JSONL face), and points at
+`BlockReader`/`JsonlReader` as the bounded-memory path for input whose size
+you do not control.
+
+`concepts.md`'s *Streamable by construction* is a statement about the
+**format** and stays as it was, with one addition: this library's writer
+takes the flush-and-forget option and its reader deliberately does not, so
+the two pages cannot be read as one promise.
 
 ## [0.6.0] - 2026-10-18
 
@@ -897,7 +918,8 @@ as "1.0" and renumbered without rewriting its bytes.
 - The streaming causal merge and `SEQUENCED` verification.
 - The merge transform, the coverage validator, and the `zpf` CLI.
 
-[Unreleased]: https://github.com/adamkjonsson/python-zipline/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/python-zipline/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/adamkjonsson/python-zipline/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/adamkjonsson/python-zipline/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/adamkjonsson/python-zipline/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/adamkjonsson/python-zipline/compare/v0.5.0...v0.5.1
