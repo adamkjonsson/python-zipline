@@ -94,6 +94,19 @@ warnings can only be used as a last resort, and **always ask before making such 
 ## Git
 
 - **Never commit or push without explicit instruction.** Do not run `git commit`, `git push`, or any destructive git command (`reset --hard`, `checkout .`, etc.) unless I have asked for it in the current message.
+- **Never push directly to `main`.** Every change reaches it through a pull
+  request, including a one-line docs fix, and including when I have asked for
+  a commit — "commit this" means *on a branch*, never on `main`. `main` carries
+  a GitHub rule requiring a pull request; a bypass permission makes that rule
+  advisory rather than enforced, so the discipline has to come from here. It
+  went wrong once, closing the `0.7.0` plan: a docs-only commit was pushed
+  straight to `main` and the remote reported *Bypassed rule violations*. It
+  could not be undone — the `non_fast_forward` rule **is** enforced, so the
+  commit is still in the history. Asking first costs a minute; the bypass is
+  not reversible.
+- If `main` is checked out and a commit is wanted, create the branch first.
+  That is the one branching decision to take without asking, because the
+  alternative is the mistake above.
 
 ## Project layout
 
