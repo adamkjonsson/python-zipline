@@ -59,6 +59,31 @@ would be inventing structure the file does not have. Unreachable with
 
 ### Changed
 
+**A decode stage derives `ts_first`, as a sessionization stage already did**
+([#87](https://github.com/adamkjonsson/python-zipline/issues/87)).
+`DecodeStage.record` wrote `ts_first` only when given one; it now works it
+out alongside `ts` from what a record cites — the earliest arrival among the
+cited input records, each counting its own `ts_first` where it has one — and
+writes it only where it is earlier than `ts`. So a unit built from one input
+record still carries none, and a unit reassembled from several now carries
+the time it started.
+
+**This changes the bytes an existing `decode_stage` caller writes**, which is
+why it waited: the option appears on every decoded unit drawn from more than
+one input record, which is the ordinary case — a message spread over several
+TCP records, a TLS record split across segments. `0.6.0` derived it in
+`FlowSession.record` only, because `sessionize_stage` was new there and
+deriving it could not change anything anyone had written, while doing it in
+both would have moved output a downstream had just reviewed
+([#86](https://github.com/adamkjonsson/python-zipline/issues/86)). That
+release has shipped, and the two stages answer the specification's timestamp
+rule the same way again.
+
+An explicit `ts_first=` is still written as given. An explicit `ts=` still
+leaves `ts_first` to the caller, in both stages, because deriving one half of
+the pair against the caller's other half could place the first arrival after
+the last.
+
 **`zpf.stream_layer` takes an iterator**
 ([#93](https://github.com/adamkjonsson/python-zipline/issues/93)). Its
 `records` parameter widens from `Sequence[Record]` to `Iterable[Record]`. It

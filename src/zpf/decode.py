@@ -457,13 +457,24 @@ class DecodeStage:
                 a run's :attr:`Segment.ts <zpf.reassembly.Segment.ts>` being
                 right only for a unit that spans the whole run.
             ts_first: Time of the **first** input record the unit draws on,
-                where ``ts`` is the last; optional, and meaningful only for a
-                unit built from several. Written as given and never derived
-                here (`#86 <https://github.com/adamkjonsson/python-zipline/issues/86>`_):
-                a decode stage that wants it reads it from its input, e.g.
-                :meth:`InputStream.view.ts_first_for
-                <zpf.reassembly.StreamView.ts_first_for>` over the range it
-                cites.
+                where ``ts`` is the last; meaningful only for a unit built
+                from several. **Derived along with** ``ts`` when both are
+                omitted: the earliest arrival among the cited input records,
+                each counting its own ``ts_first`` where it has one. It is
+                written only when it is earlier than ``ts``, so a unit built
+                from one input record carries none, as the specification
+                advises. Given explicitly, it is written as given.
+
+                `0.6.0` derived it in
+                :meth:`FlowSession.record <zpf.sessionize.FlowSession.record>`
+                and not here
+                (`#86 <https://github.com/adamkjonsson/python-zipline/issues/86>`_,
+                `#87 <https://github.com/adamkjonsson/python-zipline/issues/87>`_):
+                the sessionization stage was new, so deriving it there changed
+                nothing anyone had written, while doing it here would have moved
+                the bytes of decode-stage output a downstream had just reviewed.
+                That release has shipped, and the two stages answer the
+                timestamp rule the same way again.
 
                 Pass it explicitly for a record citing no single range of one
                 input stream, where there is nothing to derive from.
@@ -528,8 +539,11 @@ class DecodeStage:
             )
             raise SemanticError(msg)
         if ts is None:
-            ts = _derive_ts(self.derived.source, {(stream.session_id, stream.pid): stream},
-                            all_spans)
+            inputs = {(stream.session_id, stream.pid): stream}
+            ts = _derive_ts(self.derived.source, inputs, all_spans)
+            if ts_first is None:
+                first = _derive_ts_first(self.derived.source, inputs, all_spans)
+                ts_first = first if first is not None and first < ts else None
         if seam is not None and stream.pid in self._emitted:
             stream.session.discontinuity(
                 stream.handle, width=seam.width, reason=seam.reason
