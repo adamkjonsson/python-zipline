@@ -297,7 +297,14 @@ class SessionReader:
 
         Resolved once per participant and kept, which the specification
         licenses because every record of a participant must resolve to the
-        same layer.
+        same layer. It still reads the participant's records to confirm they
+        agree — but **streams** them, so asking costs one answer and not a
+        copy of the stream. Through `0.6.0` it materialised the whole
+        participant first, which undid the laziness
+        :class:`~zpf.reassembly.StreamView` promises for anything that
+        reaches this through
+        :attr:`~zpf.reassembly.StreamView.is_unit_sequence`
+        (`#93 <https://github.com/adamkjonsson/python-zipline/issues/93>`_).
 
         Args:
             pid: The participant to ask about.
@@ -316,7 +323,7 @@ class SessionReader:
         self.participant(pid)  # raises KeyError for an unknown pid
         cached = self._index.layers.get(pid)
         if cached is None:
-            cached = stream_layer(list(self.stream(pid)), self._decoders)
+            cached = stream_layer(self.stream(pid), self._decoders)
             self._index.layers[pid] = cached
         return cached
 

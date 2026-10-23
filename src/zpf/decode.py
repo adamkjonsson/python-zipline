@@ -303,7 +303,7 @@ class _Ledger:
         key = (stream.session_id, stream.pid)
         metrics = self._input_metrics.get(key)
         if metrics is None:
-            metrics = _extent_and_gaps(stream.view)
+            metrics = stream.view.extent_and_gaps()
             self._input_metrics[key] = metrics
         return metrics
 
@@ -1067,27 +1067,6 @@ def _is_offset_pair(value: object) -> bool:
         and len(value) == _PAIR
         and all(isinstance(item, int) for item in value)
     )
-
-
-def _extent_and_gaps(view: StreamView) -> tuple[int, list[tuple[int, int]]]:
-    """Return an input stream's hole-inclusive extent and its gap ranges.
-
-    Matches the extent model :func:`zpf.check_coverage` uses: the last
-    offset of the reassembled space for a stream-oriented participant, the
-    cumulative payload length for a packet-oriented one (which has no gaps).
-    """
-    if not view.is_stream_oriented:
-        extent = 0
-        for datagram in view.datagrams():
-            extent = datagram.off_end
-        return extent, []
-    extent = 0
-    gaps: list[tuple[int, int]] = []
-    for chunk in view.chunks():
-        extent = chunk.off_end
-        if isinstance(chunk, Gap):
-            gaps.append((chunk.off_start, chunk.off_end))
-    return extent, gaps
 
 
 def _label_fills(

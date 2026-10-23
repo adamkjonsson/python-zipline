@@ -33,14 +33,14 @@ from zpf.errors import SemanticError, ZpfError
 from zpf.order import SEQ_SPACE, _Placer
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 
     from zpf.blocks import Decoder, Participant
     from zpf.writer import SourceHandle
 
 
 def stream_layer(
-    records: Sequence[Record], decoders: Mapping[int, Decoder]
+    records: Iterable[Record], decoders: Mapping[int, Decoder]
 ) -> OutputLayer | int:
     """Resolve the layer of one participant's stream.
 
@@ -60,7 +60,13 @@ def stream_layer(
     exists to prevent.
 
     Args:
-        records: The participant's records, in stored order.
+        records: The participant's records, in stored order. Consumed once,
+            and an iterator is enough — this reads each record's
+            ``decoder_id`` and keeps nothing, so a caller with a stream need
+            not materialise it to ask (which is what
+            `#93 <https://github.com/adamkjonsson/python-zipline/issues/93>`_
+            reported: :meth:`zpf.SessionReader.layer` held a whole
+            participant in memory to keep one answer).
         decoders: The file's declared Decoders, by ``decoder_id``.
             Declare-on-first-use guarantees every id a record references is
             already in here.
@@ -525,6 +531,15 @@ class StreamView:
         self._source_id = None if source is None else _source_id_of(source)
         self._layer = layer
         self._contributions: tuple[Contribution, ...] | None = None
+        # Set by a walk that ran to exhaustion: (extent, gaps). A stage needs
+        # those two numbers for every input stream — to declare
+        # ``input_extents`` and to auto-fill what it left uncovered — and its
+        # caller's own read has already computed them on the way past. Keeping
+        # them saves that read being made twice
+        # (`#93 <https://github.com/adamkjonsson/python-zipline/issues/93>`_).
+        # Only a *complete* walk sets it, which generator semantics give for
+        # free: the recording line is the one after the loop.
+        self._measured: tuple[int, tuple[tuple[int, int], ...]] | None = None
 
     def _records(self) -> Iterator[Record]:
         """Iterate the stream's records, dropping the breaks between them."""
@@ -604,6 +619,7 @@ class StreamView:
         run_start = 0
         run_ts = 0
         parts: list[Contribution] = []
+        holes: list[tuple[int, int]] = []
         for record in self._records():
             if placer is None and record.seq_start is not None:
                 # No isn: the first record carrying a hint is the origin,
@@ -625,6 +641,7 @@ class StreamView:
                     )
                     run = bytearray()
                     parts = []
+                holes.append((cursor, off))
                 yield Gap(cursor, off)
             if run:
                 run_ts = max(run_ts, record.timestamp)
@@ -647,6 +664,10 @@ class StreamView:
                 bytes(run), run_start, cursor, run_ts,
                 contributors=tuple(parts), view=self,
             )
+        # Reached only by a complete walk, which is what makes these numbers
+        # the whole stream's. A trailing Gap cannot occur — one is yielded
+        # only ahead of a run — so `cursor` is the last chunk's end.
+        self._measured = (cursor, tuple(holes))
 
     def segments(self) -> Iterator[Segment]:
         """Iterate only the stream's contiguous :class:`Segment` runs, skipping holes.
@@ -750,6 +771,7 @@ class StreamView:
         seams = self.is_unit_sequence
         cursor = 0
         emitted = False
+        last_end = 0
         for block in self._blocks():
             if isinstance(block, Discontinuity):
                 yield Break(off_start=cursor, width=block.width, reason=block.reason)
@@ -770,6 +792,7 @@ class StreamView:
             else:
                 off = cursor
                 cursor += len(record.payload)
+            last_end = off + len(record.payload)
             yield Datagram(
                 data=record.payload,
                 off_start=off,
@@ -777,6 +800,14 @@ class StreamView:
                 ts=record.timestamp,
                 record=record,
             )
+        if not hinted:
+            # A packet-oriented stream has no holes, and its extent is the
+            # last *record's* end — not `cursor`, which a Discontinuity after
+            # the last record would have advanced. `stream_extent` declines
+            # to count a trailing break for the same reason, and the two must
+            # not disagree. A hinted stream is measured by `chunks` instead,
+            # whose offsets are the placed ones rather than these.
+            self._measured = (last_end, ())
 
     def contributions(self) -> tuple[Contribution, ...]:
         """Return every input record's accepted bytes, across the whole stream.
@@ -819,6 +850,45 @@ class StreamView:
                     )
             self._contributions = tuple(parts)
         return self._contributions
+
+    def extent_and_gaps(self) -> tuple[int, list[tuple[int, int]]]:
+        """Return this stream's extent and its reassembly holes.
+
+        The pair a stage needs for every input stream it reads: the extent to
+        declare on its Session End, and the holes that decide which regions
+        auto-fill marks ``gap`` rather than ``skipped``.
+
+        **Measured by a walk — and a walk the caller has very likely already
+        made.** Any iteration of this view that runs to exhaustion records
+        both numbers on the way past, so a stage that read its input, which
+        is what a stage does, pays nothing here. Only a view nothing has
+        fully walked is walked now, and the result is kept either way.
+        Through `0.6.0` this was an unconditional second read of every input
+        stream, at the first Session End
+        (`#93 <https://github.com/adamkjonsson/python-zipline/issues/93>`_).
+
+        Matches the model :func:`zpf.check_coverage` uses, which is the
+        point: the extent a stage *declares* and the extent a checker
+        *measures* must be one number. A stream-oriented stream is measured
+        on its placed, hole-inclusive offsets; a packet-oriented one on its
+        payload concatenation, which has no holes. Neither counts a
+        Discontinuity after the last record, for the reason
+        :func:`stream_extent` gives.
+
+        Returns:
+            The extent, and the hole ranges in ascending order — empty for a
+            packet-oriented stream.
+
+        """
+        if self._measured is None:
+            if self.is_stream_oriented:
+                for _chunk in self.chunks():
+                    pass
+            else:
+                for _datagram in self.datagrams():
+                    pass
+        extent, holes = self._measured or (0, ())
+        return extent, list(holes)
 
     def ts_for(self, off_start: int, off_end: int) -> int | None:
         """Return the completion time of a unit occupying a range of this stream.

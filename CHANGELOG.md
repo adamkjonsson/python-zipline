@@ -22,7 +22,41 @@ it back from the installed distribution metadata.
 
 ## [Unreleased]
 
+### Changed
+
+**`zpf.stream_layer` takes an iterator**
+([#93](https://github.com/adamkjonsson/python-zipline/issues/93)). Its
+`records` parameter widens from `Sequence[Record]` to `Iterable[Record]`. It
+reads each record's `decoder_id` and keeps nothing, so an iterator was always
+enough; a caller passing a list is unaffected.
+
 ### Fixed
+
+**`SessionReader.layer()` no longer holds a whole participant in memory**
+([#93](https://github.com/adamkjonsson/python-zipline/issues/93)). It
+materialised every record of a participant to resolve one answer, which undid
+the laziness `StreamView` promises for anything reaching it through
+`is_unit_sequence` — so the *first* read of a `units` stream held the whole
+stream before yielding its first record. It streams the records now. Taking a
+single unit from a 20,000-record unit sequence: **22.4 MB → 1.1 MB**.
+
+**A stage no longer re-reads its input to measure it**
+([#93](https://github.com/adamkjonsson/python-zipline/issues/93)). The extent
+a stage declares on each Session End, and the holes that decide which
+auto-filled regions are `gap` rather than `skipped`, were measured by a fresh
+walk of every input stream at the first Session End — a second full read of
+data the stage's own caller had just read. Any complete walk of a
+`StreamView` now records both numbers as it goes, and the new
+`StreamView.extent_and_gaps()` reuses them; a view nothing walked is still
+walked on demand, so the answer is the same either way. Measured on a
+20,000-record unit-sequence input, a decode stage's parse calls fall from
+five passes over the input to four.
+
+The numbers are unchanged, including the two places it would be easy to
+change them: a Discontinuity *after* the last record does not extend the
+extent (as `zpf.stream_extent` already declined to count one), and an
+abandoned walk records nothing, so a partial read cannot leave a partial
+measurement behind.
 
 **A derived file's write is bounded-memory again**
 ([#96](https://github.com/adamkjonsson/python-zipline/issues/96)). The

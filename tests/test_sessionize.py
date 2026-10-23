@@ -12,7 +12,6 @@ from typing import Any
 import pytest
 
 import zpf
-from zpf import decode as decode_module
 
 TUNNEL = Path(__file__).parent / "vectors" / "tunnel"
 PACKETS = TUNNEL / "packets.zpf"
@@ -132,7 +131,7 @@ def test_a_fanned_out_input_stream_is_measured_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     measured: list[tuple[int, int]] = []
-    original = decode_module._extent_and_gaps
+    original = zpf.reassembly.StreamView.extent_and_gaps
 
     def count_measurements(
         view: zpf.reassembly.StreamView,
@@ -140,7 +139,7 @@ def test_a_fanned_out_input_stream_is_measured_once(
         measured.append((view.participant.session_id, view.participant.participant_id))
         return original(view)
 
-    monkeypatch.setattr(decode_module, "_extent_and_gaps", count_measurements)
+    monkeypatch.setattr(zpf.reassembly.StreamView, "extent_and_gaps", count_measurements)
 
     sink = io.BytesIO()
     sessionize_tunnel(sink, per_flow=True)
