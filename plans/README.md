@@ -31,6 +31,7 @@ the test suite.
 | [`SPEC-0.20-MIGRATION-PLAN.md`](SPEC-0.20-MIGRATION-PLAN.md) | The 0.19 → 0.20 port. |
 | [`SPEC-0.21-MIGRATION-PLAN.md`](SPEC-0.21-MIGRATION-PLAN.md) | The 0.20 → 0.21 port, phases 0–8: the unwrapping walk and the `adjacency` body field. |
 | [`V0.6.0-RELEASE-PLAN.md`](V0.6.0-RELEASE-PLAN.md) | The 0.21 → 0.23 port and the fan-out sessionization stage, as the `0.6.0` release plan: acks as positions, a record's end by the sequence numbers it occupies, the `net:` scheme, `sessionize_stage`, and two rounds of downstream review. `0.22` was never released by this library. Shipped in `0.6.0` on 2026-10-18; the version the library implements today. |
+| [`SIMPLIFICATION-IMPACT.md`](SIMPLIFICATION-IMPACT.md) | What the spec repository's simplification analysis would remove from this library, and what it would cost. `0.19` answered it by taking the three packages it supports; historical, and its header says what it missed. |
 
 ## API and documentation design
 
@@ -40,11 +41,17 @@ the test suite.
 | [`CONTENT_TYPE_API.md`](CONTENT_TYPE_API.md) | Reading a record's payload per its `content_type` label. |
 | [`DOCS_STRUCTURE.md`](DOCS_STRUCTURE.md) | The guides layer, and how the documentation tree is arranged. |
 
-## Open work
+## Release plans
+
+A release whose work was issues rather than a spec port. The plans that *were*
+ports are above, and several of those carried issues too — the split is by what
+drove the release, not by what it contained.
+
+This section was called *Open work* until `0.7.0` closed, by which point it
+held three shipped plans and nothing open.
 
 | Document | What it is |
 | --- | --- |
-| [`V0.7.0-RELEASE-PLAN.md`](V0.7.0-RELEASE-PLAN.md) | The five issues on the `0.7.0` milestone (#87, #93, #96, #97, #98), themed on streamability and cost: bounded-memory derived writes, the reader's redundant passes, an opt-out of the checker, `ts_first` in `decode_stage`, and the guide that over-promised. Not a spec port. **Live.** |
+| [`V0.7.0-RELEASE-PLAN.md`](V0.7.0-RELEASE-PLAN.md) | The five issues on the `0.7.0` milestone (#87, #93, #96, #97, #98), themed on streamability and cost: bounded-memory derived writes, the reader's redundant passes, an opt-out of the checker, `ts_first` in `decode_stage`, and the guide that over-promised. Not a spec port. Shipped in `0.7.0` on 2026-10-23; the version the library implements today. |
 | [`V0.3.0-RELEASE-PLAN.md`](V0.3.0-RELEASE-PLAN.md) | The `0.16` → `0.19` port and the four issues open at `0.2.0` (#58, #59, #62, #63), including the API break that makes `0.3.0` a minor. Shipped in `0.3.0` on 2026-09-06; historical. |
-| [`SIMPLIFICATION-IMPACT.md`](SIMPLIFICATION-IMPACT.md) | What the spec repository's simplification analysis would remove from this library, and what it would cost. `0.19` answered it by taking the three packages it supports; historical, and its header says what it missed. |
 | [`V0.2.0-ISSUES-PLAN.md`](V0.2.0-ISSUES-PLAN.md) | The four issues on the `v0.2.0` milestone (#47, #48, #49, #50). Shipped in `0.2.0`; historical. |
