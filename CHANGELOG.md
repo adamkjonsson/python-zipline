@@ -22,6 +22,183 @@ it back from the installed distribution metadata.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-23
+
+Implements spec **v0.23** (`SPEC_VERSION == (0, 23)`), unchanged from `0.6.0`.
+**The first minor in four that is not a spec port**, and the one difference
+that follows from it: the file format does not move, so files written by
+`0.6.0` and by this release are read by both — verified in both directions,
+including a `ts_first` this release writes where `0.6.0` would not have. What
+makes it a minor is the API and the bytes a decode stage emits, not the gate.
+
+Its subject is **streamability and cost**. The format's goals promise a
+writer can flush a finished session and forget it, keeping memory bounded on
+unbounded input; three of the five issues were places this library did not
+deliver that, and they were found by measuring rather than by reading.
+Recorded in `plans/V0.7.0-RELEASE-PLAN.md`.
+
+| | `0.6.0` | `0.7.0` |
+| --- | --- | --- |
+| Write a derived file, 100k records | 13.7 MB | **0.2 MB** |
+| `zpf.open()` a derived file, 100k records | 20.1 MB | **4.9 MB** |
+| One unit of a 20k-record unit sequence | 22.4 MB | **1.1 MB** |
+| A decode stage's parse passes over its input | 5 | **4** |
+| `zpf.open()` with `check=False` | — | **30% faster** |
+
+### Added
+
+**`zpf.open(..., check=False)` declines the conformance checker**
+([#97](https://github.com/adamkjonsson/python-zipline/issues/97)). Every read
+ran the checker over every block, which is **~30% of the indexing pass**
+(measured: 0.465 s → 0.328 s over 60,000 records), with no way to opt out.
+It stays on by default and should, for any file you did not produce — it is
+what populates `diagnostics` and `unplaceable`, and what `strict=`
+escalates. `check=False` is for a file whose conformance you already know:
+one the same process just wrote, a stage reading its own predecessor's
+output inside one run, or a caller about to drive `zpf.ConformanceChecker`
+itself.
+
+What is given up is everything the checker finds — no `"nonconformant"`
+diagnostics, no advisory findings, an empty `unplaceable`, because nothing
+looked rather than because the file was clean. What is kept is the
+structural tier, which belongs to the flat reader: truncation, trailing
+bytes and a malformed frame raise or report exactly as before. The
+self-derivation check is kept too, being a path comparison over the Source
+table rather than part of the checker. `strict=True` with `check=False`
+raises `ValueError`, since strict mode's whole content is to raise on what
+the checker found.
+
+### Changed
+
+**A decode stage derives `ts_first`, as a sessionization stage already did**
+([#87](https://github.com/adamkjonsson/python-zipline/issues/87)).
+`DecodeStage.record` wrote `ts_first` only when given one; it now works it
+out alongside `ts` from what a record cites — the earliest arrival among the
+cited input records, each counting its own `ts_first` where it has one — and
+writes it only where it is earlier than `ts`. So a unit built from one input
+record still carries none, and a unit reassembled from several now carries
+the time it started.
+
+**This changes the bytes an existing `decode_stage` caller writes**, which is
+why it waited: the option appears on every decoded unit drawn from more than
+one input record, which is the ordinary case — a message spread over several
+TCP records, a TLS record split across segments. `0.6.0` derived it in
+`FlowSession.record` only, because `sessionize_stage` was new there and
+deriving it could not change anything anyone had written, while doing it in
+both would have moved output a downstream had just reviewed
+([#86](https://github.com/adamkjonsson/python-zipline/issues/86)). That
+release has shipped, and the two stages answer the specification's timestamp
+rule the same way again.
+
+An explicit `ts_first=` is still written as given. An explicit `ts=` still
+leaves `ts_first` to the caller, in both stages, because deriving one half of
+the pair against the caller's other half could place the first arrival after
+the last.
+
+**`zpf.stream_layer` takes an iterator**
+([#93](https://github.com/adamkjonsson/python-zipline/issues/93)). Its
+`records` parameter widens from `Sequence[Record]` to `Iterable[Record]`. It
+reads each record's `decoder_id` and keeps nothing, so an iterator was always
+enough; a caller passing a list is unaffected.
+
+### Fixed
+
+**A block naming an undeclared session no longer crashes the indexing pass.**
+Found while building the above. `_file_into_index` looked its session up
+directly, relying on the checker having already isolated such a block — so
+with the checker declined, a record naming a session the file never declared
+raised `KeyError` out of `zpf.open`. It is now dropped from the index
+instead, which is what isolation did: a reader that cannot resolve the
+reference has nothing to file the block against, and inventing the session
+would be inventing structure the file does not have. Unreachable with
+`check=True`, so no checked read changes.
+
+**`SessionReader.layer()` no longer holds a whole participant in memory**
+([#93](https://github.com/adamkjonsson/python-zipline/issues/93)). It
+materialised every record of a participant to resolve one answer, which undid
+the laziness `StreamView` promises for anything reaching it through
+`is_unit_sequence` — so the *first* read of a `units` stream held the whole
+stream before yielding its first record. It streams the records now. Taking a
+single unit from a 20,000-record unit sequence: **22.4 MB → 1.1 MB**.
+
+**A stage no longer re-reads its input to measure it**
+([#93](https://github.com/adamkjonsson/python-zipline/issues/93)). The extent
+a stage declares on each Session End, and the holes that decide which
+auto-filled regions are `gap` rather than `skipped`, were measured by a fresh
+walk of every input stream at the first Session End — a second full read of
+data the stage's own caller had just read. Any complete walk of a
+`StreamView` now records both numbers as it goes, and the new
+`StreamView.extent_and_gaps()` reuses them; a view nothing walked is still
+walked on demand, so the answer is the same either way. Measured on a
+20,000-record unit-sequence input, a decode stage's parse calls fall from
+five passes over the input to four.
+
+The numbers are unchanged, including the two places it would be easy to
+change them: a Discontinuity *after* the last record does not extend the
+extent (as `zpf.stream_extent` already declined to count one), and an
+abandoned walk records nothing, so a partial read cannot leave a partial
+measurement behind.
+
+**A derived file's write is bounded-memory again**
+([#96](https://github.com/adamkjonsson/python-zipline/issues/96)). The
+coverage ledger — which both the writer and the reader run, to check that
+every offset of an input stream is either cited or marked — appended one
+interval per span and merged none of them, so writing or reading a derived
+file grew with its record count. The format's goals promise the opposite:
+a writer *flushes a finished session and forgets it, keeping memory bounded
+on unbounded input*. Session state was already dropped at Session End; this
+sat behind it.
+
+Both ledgers now hold their ranges coalesced — sorted, disjoint, touching
+ranges fused — maintained as each range arrives. For the ordinary case of a
+stage citing its input in order, that is **one range per input stream**
+however many records cite it. Measured, 100,000 records with a 64-byte
+payload:
+
+| | `0.6.0` | now |
+| --- | --- | --- |
+| Write a derived file | 13.7 MB | **0.2 MB** |
+| `zpf.open()` a derived file | 20.1 MB | **4.9 MB** |
+
+The read-side figure is now the same as for a capture-sourced file of the
+same size: what remains is the reader's structural index, which is eager by
+design and is what buys independent per-session iterators and O(1) random
+access.
+
+No verdict changes — the ranges were only ever consumed merged, and nothing
+asks either ledger *which* range covered an offset. One error message can
+now name a wider range than before: where auto-fill reports a range both
+cited and explicitly marked, coalesced inputs report the whole clash where
+unmerged ones reported its first fragment. The raise, and the ranges it
+covers, are unchanged.
+
+Two notes for anyone reading the issue alongside this entry. The flag it
+proposed for *did any record cite this stream* proved unnecessary:
+coalescing never empties a non-empty set, so the existing emptiness test
+still answers the question. And the saving is per **input stream**, which is
+where the guarantee is scoped — a file deriving 10,000 input streams still
+holds a ledger each.
+
+### Documentation
+
+**The reading guide no longer promises flat memory**
+([#98](https://github.com/adamkjonsson/python-zipline/issues/98)). Its
+*Laziness* section said *"nothing buffers the whole file, so memory stays
+flat regardless of size"*. Three parts of that were wrong: the JSON-Lines
+face holds every block, because a text stream cannot be seeked back to one;
+the binary index keeps a locator per record; and a `_SessionIndex` per
+session costs considerably more than a record does. The page now states what
+the reader is — lazy in payloads, eager in structure — with the measured
+costs (~50 bytes per record, ~1.9 kB per session, nothing per byte of
+payload; ~384 bytes per record on the JSONL face), and points at
+`BlockReader`/`JsonlReader` as the bounded-memory path for input whose size
+you do not control.
+
+`concepts.md`'s *Streamable by construction* is a statement about the
+**format** and stays as it was, with one addition: this library's writer
+takes the flush-and-forget option and its reader deliberately does not, so
+the two pages cannot be read as one promise.
+
 ## [0.6.0] - 2026-10-18
 
 Implements spec **v0.23** (`SPEC_VERSION == (0, 23)`), up from `0.21`. Files
@@ -741,7 +918,8 @@ as "1.0" and renumbered without rewriting its bytes.
 - The streaming causal merge and `SEQUENCED` verification.
 - The merge transform, the coverage validator, and the `zpf` CLI.
 
-[Unreleased]: https://github.com/adamkjonsson/python-zipline/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/python-zipline/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/adamkjonsson/python-zipline/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/adamkjonsson/python-zipline/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/adamkjonsson/python-zipline/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/adamkjonsson/python-zipline/compare/v0.5.0...v0.5.1

@@ -80,6 +80,36 @@ See [Errors: StructuralError](../errors.md#structuralerror-reject-the-file).
 | Recover what's readable, inspect the rest | Lenient (default): check `reader.truncated` and `reader.diagnostics`. |
 | Fail on any truncation or semantic violation | `zpf.open(..., strict=True)`, catch {class}`~zpf.ZpfError`. |
 | A pass/fail exit code from the shell | [`zpf validate`](validate.md) (`--strict` to stop at the first fault). |
+| Skip the semantic checks for a file you produced | `zpf.open(..., check=False)` — see below. |
+
+## Declining the checker
+
+Every `zpf.open` runs the conformance checker over every block, and that is
+~30% of the work of opening a file. `check=False` skips it:
+
+```python
+with zpf.open(mine, check=False) as reader:   # a file this process just wrote
+    ...
+```
+
+Use it only where you already know the answer: a file this same process
+wrote, a stage reading its own predecessor's output inside one run, or code
+about to drive {class}`zpf.ConformanceChecker` itself. It is **not** a speed
+switch for input you did not produce — that is the case the checker exists
+for.
+
+What you give up is everything the checker finds: no `"nonconformant"`
+diagnostics, no advisory findings, and an empty `reader.unplaceable` — empty
+because nothing looked, not because the file was clean. A block the checker
+would have isolated is instead admitted unexamined, except that one naming a
+session the file never declared is still dropped, since there is nothing to
+file it against.
+
+What you keep is the whole structural tier, which belongs to the flat reader
+and not the checker: truncation, trailing bytes and a malformed frame behave
+exactly as above. `zpf.open(..., strict=True, check=False)` raises
+`ValueError` — strict mode's content is to raise on what the checker found,
+so it cannot be combined with not looking.
 
 ## Where to go next
 

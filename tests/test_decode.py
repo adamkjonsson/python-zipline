@@ -1397,7 +1397,7 @@ def test_a_decoded_stage_still_carries_a_unit_sequence_forward():
 
 
 def test_a_decode_stage_passes_ts_first_through():
-    """#86: written as given; a decode stage never derives it."""
+    """#86, #87: an explicit ``ts_first`` is written as given, derivation or not."""
     sink = io.BytesIO()
     with zpf.decode_stage(
         io.BytesIO(raw_file()), sink, decoder="http/1.1", produced_by="t 1.0", produced_at=1
@@ -1408,4 +1408,59 @@ def test_a_decode_stage_passes_ts_first_through():
     with zpf.open(io.BytesIO(sink.getvalue())) as out:
         request, response = out.session(7).records()
         assert (request.timestamp, request.ts_first) == (10, 7)
+        # One input record, so the derived ts_first is not earlier than ts and
+        # nothing is written — as the specification advises.
         assert response.ts_first is None
+
+
+# --- ts_first, derived as it is for a sessionization stage (#87) ----------------------
+
+
+def split_message_input() -> bytes:
+    """One HTTP request arriving in two TCP records, 100 ticks apart."""
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1_000_000, time_epoch=0) as writer:
+        writer.add_source("capture", uri="split.pcap")
+        with writer.begin_session(proto="tcp", key="c <-> s", session_id=7) as session:
+            client = session.participant("10.0.0.1:51000", isn=1000)
+            session.record(client, ts=100, payload=b"GET /a HT", hints=zpf.Hints(seq_start=1001))
+            session.record(
+                client, ts=200, payload=b"TP/1.1\r\n\r\n", hints=zpf.Hints(seq_start=1010)
+            )
+    return sink.getvalue()
+
+
+def decode_whole_stream(**kwargs: int) -> zpf.Record:
+    """Decode the split message as one unit, and return the record written."""
+    sink = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(split_message_input()), sink, decoder="http/1.1",
+        produced_by="t 1.0", produced_at=1,
+    ) as dec:
+        stream = dec.streams()[0]
+        whole = stream.view.reassembled()
+        dec.record(stream, whole, cites=(0, len(whole)), content_type="dec:request", **kwargs)
+    with zpf.open(io.BytesIO(sink.getvalue())) as out:
+        (record,) = out.session(7).records()
+        return record
+
+
+def test_a_unit_built_from_two_records_derives_ts_first():
+    """The rule both stages now answer the same way: first in, last in."""
+    record = decode_whole_stream()
+    assert (record.timestamp, record.ts_first) == (200, 100)
+
+
+def test_an_explicit_ts_leaves_ts_first_to_the_caller():
+    """An explicit ``ts`` leaves its partner alone.
+
+    Deriving one half of the pair against the caller's other half could write
+    a ts_first later than ts — as for `FlowSession.record`.
+    """
+    record = decode_whole_stream(ts=1500)
+    assert (record.timestamp, record.ts_first) == (1500, None)
+
+
+def test_an_explicit_ts_first_beats_the_derivation():
+    record = decode_whole_stream(ts_first=42)
+    assert (record.timestamp, record.ts_first) == (200, 42)

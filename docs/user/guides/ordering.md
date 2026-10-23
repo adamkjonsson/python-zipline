@@ -188,13 +188,21 @@ That records a response which *completed* at `5.0 s` having *started* at `3.0 s`
 Leave it off when a record came from a single packet, where it would only repeat
 `ts`.
 
-A **sessionization stage** derives it for you. {meth}`FlowSession.record
-<zpf.sessionize.FlowSession.record>` works out `ts` and `ts_first` together
-from what a record cites, the last and the first arrival among the input
-packets, and writes `ts_first` only for a record drawn from more than one. A
-decode stage takes `ts_first=` too, but writes it only as given; to derive it,
-read {meth}`StreamView.ts_first_for <zpf.reassembly.StreamView.ts_first_for>`
-over the range you cite, the mirror of the `ts_for` it already uses.
+**Both stages derive it for you.** {meth}`FlowSession.record
+<zpf.sessionize.FlowSession.record>` and {meth}`DecodeStage.record
+<zpf.decode.DecodeStage.record>` work out `ts` and `ts_first` together from
+what a record cites — the last and the first arrival among the input records
+it draws on — and write `ts_first` only where it is earlier than `ts`, so a
+unit built from one input record carries none. Pass either explicitly and it
+is written as given; pass `ts=` alone and `ts_first` is left to you, since
+deriving one half against the caller's other half could place the first
+arrival after the last.
+
+A decode stage held back from deriving it in `0.6.0`, when the sessionization
+stage was new and doing it in both would have moved bytes a downstream had
+just reviewed. Where you want the number without letting the stage derive it,
+{meth}`StreamView.ts_first_for <zpf.reassembly.StreamView.ts_first_for>` over
+the range you cite is the mirror of the `ts_for` it already uses.
 
 `ts_first` is an optional TLV: nothing requires it, no reader may depend on it,
 and it takes no part in ordering. In particular it is not a second ordering key

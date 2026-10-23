@@ -35,7 +35,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import IO, TYPE_CHECKING, Literal
 
-from zpf._intervals import complement, intersections
+from zpf._intervals import add, coalesce, complement, intersections
 from zpf.blocks import Adjacency, InputExtent, OutputLayer, Span
 from zpf.errors import SemanticError, ZpfError
 from zpf.reader import FileReader
@@ -236,9 +236,8 @@ class _Ledger:
         """Count the ranges of ``spans`` that cite this stage's input source."""
         for span in spans:
             if span.source_id == self._source.source_id and span.off_start < span.off_end:
-                self._cited.setdefault((span.session_id, span.participant_id), []).append(
-                    (span.off_start, span.off_end)
-                )
+                into = self._cited.setdefault((span.session_id, span.participant_id), [])
+                add(into, span.off_start, span.off_end)
 
     def mark(self, stream: InputStream, off_start: int, off_end: int) -> None:
         """Count a range of ``stream`` an Undecoded block has just named.
@@ -246,9 +245,7 @@ class _Ledger:
         Called after the block is written, never before (see the class note).
         """
         if off_start < off_end:
-            self._marked.setdefault((stream.session_id, stream.pid), []).append(
-                (off_start, off_end)
-            )
+            add(self._marked.setdefault((stream.session_id, stream.pid), []), off_start, off_end)
 
     def extent(self, stream: InputStream) -> InputExtent:
         """Return ``stream``'s whole extent, as a Session End declares it.
@@ -274,8 +271,11 @@ class _Ledger:
         """
         for stream in streams:
             key = (stream.session_id, stream.pid)
-            cited = sorted(self._cited.get(key, []))
-            marked = sorted(self._marked.get(key, []))
+            # Both are already coalesced, so neither needs sorting. They stay
+            # apart: `intersections` is what catches a range both cited and
+            # marked, and merging them would be merging away the clash.
+            cited = self._cited.get(key, [])
+            marked = self._marked.get(key, [])
             clash = intersections(cited, marked)
             if clash:
                 start, end = clash[0]
@@ -286,7 +286,7 @@ class _Ledger:
                 )
                 raise ZpfError(msg)
             extent, gaps = self._input_metrics_for(stream)
-            uncovered = complement(sorted(cited + marked), extent)
+            uncovered = complement(coalesce(cited + marked), extent)
             for start, end, reason in _label_fills(uncovered, gaps):
                 self._writer.undecoded(
                     self._source,
@@ -303,7 +303,7 @@ class _Ledger:
         key = (stream.session_id, stream.pid)
         metrics = self._input_metrics.get(key)
         if metrics is None:
-            metrics = _extent_and_gaps(stream.view)
+            metrics = stream.view.extent_and_gaps()
             self._input_metrics[key] = metrics
         return metrics
 
@@ -457,13 +457,24 @@ class DecodeStage:
                 a run's :attr:`Segment.ts <zpf.reassembly.Segment.ts>` being
                 right only for a unit that spans the whole run.
             ts_first: Time of the **first** input record the unit draws on,
-                where ``ts`` is the last; optional, and meaningful only for a
-                unit built from several. Written as given and never derived
-                here (`#86 <https://github.com/adamkjonsson/python-zipline/issues/86>`_):
-                a decode stage that wants it reads it from its input, e.g.
-                :meth:`InputStream.view.ts_first_for
-                <zpf.reassembly.StreamView.ts_first_for>` over the range it
-                cites.
+                where ``ts`` is the last; meaningful only for a unit built
+                from several. **Derived along with** ``ts`` when both are
+                omitted: the earliest arrival among the cited input records,
+                each counting its own ``ts_first`` where it has one. It is
+                written only when it is earlier than ``ts``, so a unit built
+                from one input record carries none, as the specification
+                advises. Given explicitly, it is written as given.
+
+                `0.6.0` derived it in
+                :meth:`FlowSession.record <zpf.sessionize.FlowSession.record>`
+                and not here
+                (`#86 <https://github.com/adamkjonsson/python-zipline/issues/86>`_,
+                `#87 <https://github.com/adamkjonsson/python-zipline/issues/87>`_):
+                the sessionization stage was new, so deriving it there changed
+                nothing anyone had written, while doing it here would have moved
+                the bytes of decode-stage output a downstream had just reviewed.
+                That release has shipped, and the two stages answer the
+                timestamp rule the same way again.
 
                 Pass it explicitly for a record citing no single range of one
                 input stream, where there is nothing to derive from.
@@ -528,8 +539,11 @@ class DecodeStage:
             )
             raise SemanticError(msg)
         if ts is None:
-            ts = _derive_ts(self.derived.source, {(stream.session_id, stream.pid): stream},
-                            all_spans)
+            inputs = {(stream.session_id, stream.pid): stream}
+            ts = _derive_ts(self.derived.source, inputs, all_spans)
+            if ts_first is None:
+                first = _derive_ts_first(self.derived.source, inputs, all_spans)
+                ts_first = first if first is not None and first < ts else None
         if seam is not None and stream.pid in self._emitted:
             stream.session.discontinuity(
                 stream.handle, width=seam.width, reason=seam.reason
@@ -1067,27 +1081,6 @@ def _is_offset_pair(value: object) -> bool:
         and len(value) == _PAIR
         and all(isinstance(item, int) for item in value)
     )
-
-
-def _extent_and_gaps(view: StreamView) -> tuple[int, list[tuple[int, int]]]:
-    """Return an input stream's hole-inclusive extent and its gap ranges.
-
-    Matches the extent model :func:`zpf.check_coverage` uses: the last
-    offset of the reassembled space for a stream-oriented participant, the
-    cumulative payload length for a packet-oriented one (which has no gaps).
-    """
-    if not view.is_stream_oriented:
-        extent = 0
-        for datagram in view.datagrams():
-            extent = datagram.off_end
-        return extent, []
-    extent = 0
-    gaps: list[tuple[int, int]] = []
-    for chunk in view.chunks():
-        extent = chunk.off_end
-        if isinstance(chunk, Gap):
-            gaps.append((chunk.off_start, chunk.off_end))
-    return extent, gaps
 
 
 def _label_fills(

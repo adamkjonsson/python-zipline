@@ -979,3 +979,131 @@ def test_the_stream_answers_the_same_question_for_absolute_offsets():
     assert view.ts_for(4, 8) == 2000
     assert view.ts_for(0, 8) == 2000
     assert view.ts_for(8, 12) is None  # nothing there to have a time
+
+
+# --- extent_and_gaps: the walk and the memo must give one answer (#93) ----------------
+
+
+def fresh_and_walked(
+    fill: Callable[[SessionWriter], None], **kwargs: str
+) -> tuple[tuple[int, list[tuple[int, int]]], tuple[int, list[tuple[int, int]]]]:
+    """Measure the same stream twice: cold, and after a full walk recorded it.
+
+    The two routes into `extent_and_gaps` — it walks the stream itself, or it
+    reuses what the caller's own complete walk measured on the way past. They
+    must not be able to disagree, which is the whole risk of keeping the
+    numbers: a stage declares `input_extents` from this, and `check_coverage`
+    measures the same stream independently.
+    """
+    cold = only_view(fill, **kwargs).extent_and_gaps()
+    warm = only_view(fill, **kwargs)
+    if warm.is_stream_oriented:
+        for _chunk in warm.chunks():
+            pass
+    else:
+        for _datagram in warm.datagrams():
+            pass
+    return cold, warm.extent_and_gaps()
+
+
+def test_a_contiguous_stream_measures_the_same_either_way():
+    def fill(session: SessionWriter) -> None:
+        part = session.participant("a", isn=1000)
+        session.record(part, ts=1, payload=b"AAAA", hints=zpf.Hints(seq_start=1001))
+        session.record(part, ts=2, payload=b"BBBB", hints=zpf.Hints(seq_start=1005))
+
+    cold, warm = fresh_and_walked(fill)
+    assert cold == warm == (8, [])
+
+
+def test_an_interior_hole_measures_the_same_either_way():
+    def fill(session: SessionWriter) -> None:
+        part = session.participant("a", isn=1000)
+        session.record(part, ts=1, payload=b"AAAA", hints=zpf.Hints(seq_start=1001))
+        session.record(part, ts=2, payload=b"BBBB", hints=zpf.Hints(seq_start=1009))
+
+    cold, warm = fresh_and_walked(fill)
+    assert cold == warm == (12, [(4, 8)])
+
+
+def test_a_leading_hole_measures_the_same_either_way():
+    """The gap before the first captured byte counts in both routes."""
+    def fill(session: SessionWriter) -> None:
+        part = session.participant("a", isn=1000)
+        session.record(part, ts=1, payload=b"AAAA", hints=zpf.Hints(seq_start=1005))
+
+    cold, warm = fresh_and_walked(fill)
+    assert cold == warm == (8, [(0, 4)])
+
+
+def test_a_packet_oriented_stream_measures_the_same_either_way():
+    def fill(session: SessionWriter) -> None:
+        part = session.participant("a")
+        session.record(part, ts=1, payload=b"AAAA")
+        session.record(part, ts=2, payload=b"BBBBBB")
+
+    cold, warm = fresh_and_walked(fill, proto="udp")
+    assert cold == warm == (10, [])
+
+
+def test_an_empty_stream_measures_the_same_either_way():
+    cold, warm = fresh_and_walked(lambda session: session.participant("a", isn=1000))
+    assert cold == warm == (0, [])
+
+
+def test_a_partial_walk_does_not_record_a_partial_measurement():
+    """The memo is set after the loop, so an abandoned walk cannot poison it."""
+    def fill(session: SessionWriter) -> None:
+        part = session.participant("a", isn=1000)
+        session.record(part, ts=1, payload=b"AAAA", hints=zpf.Hints(seq_start=1001))
+        session.record(part, ts=2, payload=b"BBBB", hints=zpf.Hints(seq_start=1009))
+
+    view = only_view(fill)
+    next(view.chunks())  # one chunk of three, then abandoned
+    assert view.extent_and_gaps() == (12, [(4, 8)])
+
+
+def decoded_stream_with_trailing_break() -> tuple[zpf.FileReader, zpf.StreamView]:
+    """Build a decoded, packet-oriented stream whose last block is a Discontinuity.
+
+    Needs its own builder: `build` declares no Decoder, and a *transport*
+    stream may not carry a Discontinuity at all — its offsets already express
+    the hole.
+    """
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1_000_000) as writer:
+        writer.add_source("capture")
+        decoder = writer.add_decoder("d", version="1")
+        with writer.begin_session(proto="http", session_id=7) as session:
+            part = session.participant("a")
+            session.record(part, ts=1, payload=b"AAAA", decoded=zpf.Decoded(decoder=decoder))
+            session.discontinuity(part, width=16, reason="stream-gap")
+    reader = zpf.open(io.BytesIO(sink.getvalue()))
+    (view,) = reader.session(7).reassemble()
+    return reader, view
+
+
+def test_a_trailing_break_does_not_extend_either_measurement():
+    """Why the walk keeps the last record's end and not its cursor.
+
+    A Discontinuity after the last record displaces nothing — there is no
+    record left to displace — so it must not extend the stream.
+    :func:`zpf.stream_extent` says so for the range table, and these two
+    numbers are the ones a stage *declares*; all three have to agree, or a
+    file contradicts itself at its own Session End.
+    """
+    _reader, cold_view = decoded_stream_with_trailing_break()
+    cold = cold_view.extent_and_gaps()
+
+    _reader, warm_view = decoded_stream_with_trailing_break()
+    for _datagram in warm_view.datagrams():
+        pass
+    warm = warm_view.extent_and_gaps()
+
+    assert cold == warm == (4, [])
+
+    # The independent definition, which is the one that has to agree.
+    reader, view = decoded_stream_with_trailing_break()
+    blocks = list(reader.session(7).stream_blocks(view.participant.participant_id))
+    assert any(isinstance(block, zpf.Discontinuity) for block in blocks)  # it is really there
+    assert zpf.stream_extent(view.participant, blocks, zpf.OutputLayer.DECODED) == 4

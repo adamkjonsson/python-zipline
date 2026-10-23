@@ -805,3 +805,58 @@ def test_as_datetime_is_exact_at_a_nanosecond_tick_hz():
         microseconds=exact
     )
     assert zpf.as_datetime(value, header) != naive_float  # the bug this avoids
+
+
+# --- check=False: declining the conformance checker (#97) ----------------------------
+
+
+def test_check_false_admits_a_block_the_checker_would_isolate():
+    """The same file the lenient mode test isolates a record from."""
+    with open_bytes(nonconformant_file(), check=False) as f:
+        (session,) = f.sessions()
+        # The record naming session 9 is still not in session 0 — it never was.
+        assert [r.payload for r in session.records()] == [b"ok", b"ok2"]
+        # But nothing was *reported*, because nothing looked.
+        assert f.diagnostics == []
+        assert f.unplaceable == []
+        assert f.check is False
+
+
+def test_check_false_keeps_the_structural_tier():
+    """Truncation is the flat reader's finding, not the checker's."""
+    data = nonconformant_file()[:-4]  # cut inside the last block
+    with open_bytes(data, check=False) as f:
+        assert f.truncated
+        assert not f.complete
+        assert [d.category for d in f.diagnostics] == ["truncated"]
+
+
+def test_check_false_still_raises_on_a_malformed_frame():
+    """Structural corruption is not something the checker was asked about."""
+    with pytest.raises(zpf.StructuralError):
+        open_bytes(b"ZPF\x00not a file at all", check=False)
+
+
+def test_check_false_is_refused_with_strict():
+    with pytest.raises(ValueError, match="strict=True needs check=True"):
+        open_bytes(nonconformant_file(), strict=True, check=False)
+
+
+def test_check_false_still_refuses_a_self_derived_file(tmp_path: Path):
+    """The one check that is not the checker's, and is kept for that reason."""
+    path = tmp_path / "self.zpf"
+    sink = io.BytesIO()
+    with zpf.BlockWriter(sink) as w:
+        w.write(zpf.FileHeader(tick_hz=1, produced_by="t 1", produced_at=1))
+        w.write(zpf.Source(source_id=0, kind=zpf.SourceKind.ZPF_INPUT, uri="self.zpf"))
+    path.write_bytes(sink.getvalue())
+    with zpf.open(path, check=False) as f:
+        (diag,) = f.diagnostics
+        assert diag.category == "nonconformant"
+        assert "which is this file" in diag.message
+
+
+def test_check_true_remains_the_default():
+    with open_bytes(nonconformant_file()) as f:
+        assert f.check is True
+        assert [d.category for d in f.diagnostics] == ["nonconformant"]
