@@ -18,6 +18,8 @@ Hypothesis property tests. Every test must stay green on every change.
 | `test_reader.py` | The session-first reader `zpf.open`: sessions, lazy records, strict/lenient modes. |
 | `test_writer.py` | The ergonomic handle-based writer `zpf.create`. |
 | `test_transform.py` | The merge transform and the coverage validator. |
+| `test_intervals.py` | The shared half-open interval arithmetic: coalescing, and the properties the two coverage ledgers depend on. |
+| `test_memory.py` | The bounded-memory guarantees — that a derived file's write does not grow with its record count. |
 | `test_roundtrip_property.py` | **Property tests** (below): random files round-trip; arbitrary bytes never crash the reader. |
 | `test_cli.py` | The `zpf` command-line tool, driving `main()` directly. |
 | `test_tutorial_examples.py` | The docs' example scripts, run for real so they can't rot. |

@@ -22,6 +22,48 @@ it back from the installed distribution metadata.
 
 ## [Unreleased]
 
+### Fixed
+
+**A derived file's write is bounded-memory again**
+([#96](https://github.com/adamkjonsson/python-zipline/issues/96)). The
+coverage ledger — which both the writer and the reader run, to check that
+every offset of an input stream is either cited or marked — appended one
+interval per span and merged none of them, so writing or reading a derived
+file grew with its record count. The format's goals promise the opposite:
+a writer *flushes a finished session and forgets it, keeping memory bounded
+on unbounded input*. Session state was already dropped at Session End; this
+sat behind it.
+
+Both ledgers now hold their ranges coalesced — sorted, disjoint, touching
+ranges fused — maintained as each range arrives. For the ordinary case of a
+stage citing its input in order, that is **one range per input stream**
+however many records cite it. Measured, 100,000 records with a 64-byte
+payload:
+
+| | `0.6.0` | now |
+| --- | --- | --- |
+| Write a derived file | 13.7 MB | **0.2 MB** |
+| `zpf.open()` a derived file | 20.1 MB | **4.9 MB** |
+
+The read-side figure is now the same as for a capture-sourced file of the
+same size: what remains is the reader's structural index, which is eager by
+design and is what buys independent per-session iterators and O(1) random
+access.
+
+No verdict changes — the ranges were only ever consumed merged, and nothing
+asks either ledger *which* range covered an offset. One error message can
+now name a wider range than before: where auto-fill reports a range both
+cited and explicitly marked, coalesced inputs report the whole clash where
+unmerged ones reported its first fragment. The raise, and the ranges it
+covers, are unchanged.
+
+Two notes for anyone reading the issue alongside this entry. The flag it
+proposed for *did any record cite this stream* proved unnecessary:
+coalescing never empties a non-empty set, so the existing emptiness test
+still answers the question. And the saving is per **input stream**, which is
+where the guarantee is scoped — a file deriving 10,000 input streams still
+holds a ledger each.
+
 ## [0.6.0] - 2026-10-18
 
 Implements spec **v0.23** (`SPEC_VERSION == (0, 23)`), up from `0.21`. Files

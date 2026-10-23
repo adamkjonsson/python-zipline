@@ -83,7 +83,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from zpf._intervals import complement
+from zpf._intervals import add, coalesce, complement
 from zpf.blocks import (
     REASON_CLASSES,
     UNDECODED_REASONS,
@@ -220,7 +220,15 @@ class _SessionState:
 
 @dataclass
 class _StreamLedger:
-    """What one **input** participant stream was said about, across the file."""
+    """What one **input** participant stream was said about, across the file.
+
+    Both range lists are kept **coalesced** by :func:`zpf._intervals.add`, so
+    the ledger costs one entry per disjoint region rather than one per span —
+    for a stage citing its input in order, one entry per stream. They are held
+    apart rather than as one set because the two say different things: a gap
+    is only reported for a stream some record *cited*, and the stages' own
+    ledger must still catch a range both cited and marked.
+    """
 
     spans: list[tuple[int, int]] = field(default_factory=list)
     undecoded: list[tuple[int, int]] = field(default_factory=list)
@@ -231,7 +239,7 @@ class _StreamLedger:
     @property
     def covered(self) -> list[tuple[int, int]]:
         """Every range this file accounts for, decoded or marked, in order."""
-        return sorted(self.spans + self.undecoded)
+        return coalesce(self.spans + self.undecoded)
 
 
 class CoverageLedger:
@@ -268,7 +276,7 @@ class CoverageLedger:
             for span in block.spans:
                 if span.off_start < span.off_end:
                     key = (span.source_id, span.session_id, span.participant_id)
-                    self._for(key).spans.append((span.off_start, span.off_end))
+                    add(self._for(key).spans, span.off_start, span.off_end)
         elif isinstance(block, Undecoded):
             # Against a `capture` source the block discharges no coverage
             # obligation and creates none: the guarantee is scoped within
@@ -279,7 +287,7 @@ class CoverageLedger:
             capture = self._sources.get(block.source_id) == SourceKind.CAPTURE
             if block.off_start < block.off_end and not capture:
                 key = (block.source_id, block.session_id, block.participant_id)
-                self._for(key).undecoded.append((block.off_start, block.off_end))
+                add(self._for(key).undecoded, block.off_start, block.off_end)
         elif isinstance(block, SessionEnd):
             for extent in block.input_extents:
                 key = (extent.source_id, extent.session_id, extent.participant_id)

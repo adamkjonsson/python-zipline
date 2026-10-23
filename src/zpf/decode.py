@@ -35,7 +35,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import IO, TYPE_CHECKING, Literal
 
-from zpf._intervals import complement, intersections
+from zpf._intervals import add, coalesce, complement, intersections
 from zpf.blocks import Adjacency, InputExtent, OutputLayer, Span
 from zpf.errors import SemanticError, ZpfError
 from zpf.reader import FileReader
@@ -236,9 +236,8 @@ class _Ledger:
         """Count the ranges of ``spans`` that cite this stage's input source."""
         for span in spans:
             if span.source_id == self._source.source_id and span.off_start < span.off_end:
-                self._cited.setdefault((span.session_id, span.participant_id), []).append(
-                    (span.off_start, span.off_end)
-                )
+                into = self._cited.setdefault((span.session_id, span.participant_id), [])
+                add(into, span.off_start, span.off_end)
 
     def mark(self, stream: InputStream, off_start: int, off_end: int) -> None:
         """Count a range of ``stream`` an Undecoded block has just named.
@@ -246,9 +245,7 @@ class _Ledger:
         Called after the block is written, never before (see the class note).
         """
         if off_start < off_end:
-            self._marked.setdefault((stream.session_id, stream.pid), []).append(
-                (off_start, off_end)
-            )
+            add(self._marked.setdefault((stream.session_id, stream.pid), []), off_start, off_end)
 
     def extent(self, stream: InputStream) -> InputExtent:
         """Return ``stream``'s whole extent, as a Session End declares it.
@@ -274,8 +271,11 @@ class _Ledger:
         """
         for stream in streams:
             key = (stream.session_id, stream.pid)
-            cited = sorted(self._cited.get(key, []))
-            marked = sorted(self._marked.get(key, []))
+            # Both are already coalesced, so neither needs sorting. They stay
+            # apart: `intersections` is what catches a range both cited and
+            # marked, and merging them would be merging away the clash.
+            cited = self._cited.get(key, [])
+            marked = self._marked.get(key, [])
             clash = intersections(cited, marked)
             if clash:
                 start, end = clash[0]
@@ -286,7 +286,7 @@ class _Ledger:
                 )
                 raise ZpfError(msg)
             extent, gaps = self._input_metrics_for(stream)
-            uncovered = complement(sorted(cited + marked), extent)
+            uncovered = complement(coalesce(cited + marked), extent)
             for start, end, reason in _label_fills(uncovered, gaps):
                 self._writer.undecoded(
                     self._source,
