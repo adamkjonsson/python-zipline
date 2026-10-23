@@ -57,6 +57,26 @@ reference has nothing to file the block against, and inventing the session
 would be inventing structure the file does not have. Unreachable with
 `check=True`, so no checked read changes.
 
+### Documentation
+
+**The reading guide no longer promises flat memory**
+([#98](https://github.com/adamkjonsson/python-zipline/issues/98)). Its
+*Laziness* section said *"nothing buffers the whole file, so memory stays
+flat regardless of size"*. Three parts of that were wrong: the JSON-Lines
+face holds every block, because a text stream cannot be seeked back to one;
+the binary index keeps a locator per record; and a `_SessionIndex` per
+session costs considerably more than a record does. The page now states what
+the reader is — lazy in payloads, eager in structure — with the measured
+costs (~50 bytes per record, ~1.9 kB per session, nothing per byte of
+payload; ~384 bytes per record on the JSONL face), and points at
+`BlockReader`/`JsonlReader` as the bounded-memory path for input whose size
+you do not control.
+
+`concepts.md`'s *Streamable by construction* is a statement about the
+**format** and stays as it was, with one addition: this library's writer
+takes the flush-and-forget option and its reader deliberately does not, so
+the two pages cannot be read as one promise.
+
 ### Changed
 
 **A decode stage derives `ts_first`, as a sessionization stage already did**

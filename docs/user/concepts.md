@@ -62,6 +62,14 @@ references it**. Nothing is listed up front, so:
 - a reader builds its tables incrementally as it reads, and may drop a
   session's state at its Session End.
 
+Both halves are what the **format** permits, and this library's writer takes
+the first: {func}`zpf.create` holds nothing per record once it is written.
+Its *reader* deliberately declines the second — {func}`zpf.open` indexes the
+whole file up front, in exchange for independent iterators and random access,
+and {class}`~zpf.BlockReader` is the bounded-memory path when that trade is
+wrong. What each costs is in
+[Reading § Laziness](guides/reading.md#laziness-and-what-it-costs).
+
 A file *may* end with an *End* block; if present, the file is known
 complete. A file without one (a live stream, a crashed writer) is still
 valid — see [Robustness](#robustness-truncation-unknown-blocks-and-errors).

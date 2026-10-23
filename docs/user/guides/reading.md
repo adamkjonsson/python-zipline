@@ -83,15 +83,63 @@ To consume a participant's bytes as reassembled application streams rather than
 raw records, use {meth}`~zpf.SessionReader.reassemble` — see the
 [decoding guide](decoding.md).
 
-## Laziness
+## Laziness, and what it costs
 
-The reader indexes block boundaries on open but reads record *payloads* only as
-you iterate, straight from the file. Iterators are independent — you can hold one
-per session and interleave them — and nothing buffers the whole file, so memory
-stays flat regardless of size. This is the read-side half of the format's
-[streamable design](../concepts.md#streamable-by-construction-declare-on-first-use):
-just remember the reader is a context manager, and a lazy iterator stops working
+`zpf.open` is **lazy in payloads and eager in structure**. One indexing pass
+runs on open and keeps a locator per record; record payloads are then read
+from the file as you iterate, and are not retained. So iterators are
+independent — hold one per session and interleave them freely — and
+re-reading a session costs the same as reading it the first time. Just
+remember the reader is a context manager, and a lazy iterator stops working
 once the file is closed.
+
+What the index costs, measured with 64-byte payloads on the binary face:
+
+| | Retained on open |
+| --- | --- |
+| Per record | ~50 bytes |
+| Per session | ~1.9 kB |
+| **Per byte of payload** | **nothing** |
+
+So memory is flat in the *size* of a file and linear in its *block count*:
+100,000 records cost about 5 MB, and a file of 10,000 short sessions costs
+more than one of 100,000 records in a single session. That is the trade the
+eager index buys — independent iterators, `record_count` without a walk, and
+O(1) random access through {meth}`~zpf.SessionReader.ranges`.
+
+**The JSON-Lines face is eager in payloads too**, and holds the whole file:
+a text stream cannot be seeked back to a block, so there is nothing for a
+locator to point at and every block is kept in memory. Expect roughly
+**384 bytes per record** rather than 50 — 19 MB for 50,000 records. `zpf.open`
+picks the face by sniffing, so this applies whenever what you opened turns out
+to be JSONL, which {attr}`~zpf.FileReader.face` reports.
+
+### Reading in bounded memory
+
+For input whose size you do not control — an unbounded capture, a pipe, a live
+tail — the session-first reader is the wrong tool, and no option makes it the
+right one. Drop to {class}`~zpf.BlockReader` or {class}`~zpf.JsonlReader`,
+which yield one block at a time in constant memory and need no seeking:
+
+```python
+with zpf.BlockReader("huge.zpf") as blocks:
+    for block in blocks:
+        if isinstance(block, zpf.Record):
+            handle(block.payload)        # constant memory, whatever the size
+```
+
+What you give up is everything the index provides: no sessions, no
+participants, no reassembly, no `timeline()` — you are reading a block stream
+and keeping whatever state you need yourself, dropping each session's at its
+{class}`~zpf.SessionEnd`, exactly as the format's
+[streamable design](../concepts.md#streamable-by-construction-declare-on-first-use)
+intends. [Faces and I/O](faces-and-io.md) covers both readers.
+
+That design is a statement about the **format** — a reader *may* build its
+tables incrementally and drop a session's state at its Session End. `zpf.open`
+deliberately does not take that option: it reads the whole structure up front
+so that everything above can be random-access and independent. The two
+statements are easy to read as one promise, and they are not.
 
 ## See also
 
