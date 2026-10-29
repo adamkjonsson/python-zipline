@@ -52,6 +52,7 @@ held three shipped plans and nothing open.
 
 | Document | What it is |
 | --- | --- |
+| [`V0.8.0-RELEASE-PLAN.md`](V0.8.0-RELEASE-PLAN.md) | The seven issues on the `0.8.0` milestone: the `0.23` → `0.24` port (#108, #104–#107), the write path's per-record cost (#101), and the distribution name (#102). **Open**, not started. |
 | [`V0.7.0-RELEASE-PLAN.md`](V0.7.0-RELEASE-PLAN.md) | The five issues on the `0.7.0` milestone (#87, #93, #96, #97, #98), themed on streamability and cost: bounded-memory derived writes, the reader's redundant passes, an opt-out of the checker, `ts_first` in `decode_stage`, and the guide that over-promised. Not a spec port. Shipped in `0.7.0` on 2026-10-23; the version the library implements today. |
 | [`V0.3.0-RELEASE-PLAN.md`](V0.3.0-RELEASE-PLAN.md) | The `0.16` → `0.19` port and the four issues open at `0.2.0` (#58, #59, #62, #63), including the API break that makes `0.3.0` a minor. Shipped in `0.3.0` on 2026-09-06; historical. |
 | [`V0.2.0-ISSUES-PLAN.md`](V0.2.0-ISSUES-PLAN.md) | The four issues on the `v0.2.0` milestone (#47, #48, #49, #50). Shipped in `0.2.0`; historical. |
