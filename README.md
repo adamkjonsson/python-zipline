@@ -30,14 +30,12 @@ belongs to an unrelated project.
 
 ## Features
 
-- 0.24 support: the binary container and the JSON-Lines projection,
+- Complete 0.24 support: the binary container and the JSON-Lines projection,
   captured and derived streams at the transport and decoded layers, with
-  lossless converters. *(The `0.8.0` port is in progress; until it lands,
-  `0.24`'s `copy` rules and its transport extent are not yet implemented.
-  See [`plans/V0.8.0-RELEASE-PLAN.md`](plans/V0.8.0-RELEASE-PLAN.md).)*
+  lossless converters.
 - Verified against the specification's own 77 conformance vectors, vendored in
-  [`tests/vectors/`](tests/vectors/) and run by the test suite, negative tiers
-  included. Eight vector defects have been found from here and reported
+  [`tests/vectors/`](tests/vectors/) and run by the test suite — every one of
+  them passing, negative tiers included. Eight vector defects have been found from here and reported
   upstream, seven of them fixed ([`VECTOR-DEFECTS.md`](VECTOR-DEFECTS.md)).
 - An ergonomic writer (`zpf.create`) that makes non-conformant files hard to
   write, and a session-first reader (`zpf.open`) with lazy record access.

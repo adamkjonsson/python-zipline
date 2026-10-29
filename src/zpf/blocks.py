@@ -237,9 +237,14 @@ class RecordFlags(IntFlag):
     On a decoded record it has no meaning in `0.24`, and is preserved, never
     interpreted.
 
-    This library round-trips the bit and its JSONL token ``copy``. The two
-    rules are not yet enforced on write or checked on read (`#106
-    <https://github.com/adamkjonsson/python-zipline/issues/106>`_).
+    The conformance checker holds both rules on transport-layer records, so
+    the writer refuses a ``copy`` that breaks one and the reader isolates
+    it, with a diagnostic naming the rule (`#106
+    <https://github.com/adamkjonsson/python-zipline/issues/106>`_). On a
+    decoded record the bit round-trips unchecked.
+    :meth:`StreamView.datagrams(copies=False)
+    <zpf.reassembly.StreamView.datagrams>` reads a stream as sent, skipping
+    copies.
     """
 
 

@@ -586,6 +586,14 @@ class Datagram:
         ts: The record's timestamp, in the file's ``tick_hz`` ticks.
         record: The underlying :class:`~zpf.blocks.Record`, for the rare
             decoder that needs ``seq_start``/``ack``/``flags``.
+        copy: Whether the capture point saw this datagram's transmission
+            twice and this is the repeat (``RecordFlags.COPY``, since
+            ``0.24``): the sender sent once. Read as *messages as sent*, it
+            is skipped; read as *what the capture saw*, it is kept. Both are
+            the specification's readings, and
+            :meth:`StreamView.datagrams` takes ``copies=`` to choose. Only
+            ever true on a transport-layer stream: on a decoded record the
+            flag has no meaning in ``0.24``, so it is not read as one.
 
     """
 
@@ -594,6 +602,7 @@ class Datagram:
     off_end: int
     ts: int
     record: Record
+    copy: bool = False
 
 
 class StreamView:
@@ -816,13 +825,23 @@ class StreamView:
             parts.append(chunk.data)
         return b"".join(parts)
 
-    def datagrams(self) -> Iterator[Datagram]:
+    def datagrams(self, *, copies: bool = True) -> Iterator[Datagram]:
         """Iterate the stream one record at a time, as whole datagrams.
 
         The natural idiom for a packet-oriented stream, but defined for any
         stream: offsets are logical when the stream is stream-oriented and
         cumulative otherwise. Every record is yielded, pure-ACK records
         included.
+
+        Args:
+            copies: Keep a datagram the capture point saw twice (see
+                :attr:`Datagram.copy`). ``True``, the default, reads the
+                stream as the capture saw it, which is what this method
+                returned before ``0.24``. ``False`` reads it as the sender
+                sent it: one query and one answer where a mirror port saw the
+                answer twice. Either way a copy is content of the stream, so
+                it keeps its offsets, and skipping it moves no other
+                datagram.
 
         Yields:
             One :class:`Datagram` per record, in stored order. A
@@ -839,7 +858,7 @@ class StreamView:
 
         """
         for unit in self.units():
-            if isinstance(unit, Datagram):
+            if isinstance(unit, Datagram) and (copies or not unit.copy):
                 yield unit
 
     def units(self) -> Iterator[Datagram | Break]:
@@ -879,6 +898,9 @@ class StreamView:
         hinted = self.is_stream_oriented
         placer = self._placer() if hinted else None
         seams = self.is_unit_sequence
+        # `copy` means something on a transport-layer record only (0.24). A
+        # view built without a layer falls back to the record's own answer.
+        transport = None if self._layer is None else self._layer() is OutputLayer.TRANSPORT
         cursor = 0
         emitted = False
         last_end = 0
@@ -903,12 +925,14 @@ class StreamView:
                 off = cursor
                 cursor += len(record.payload)
             last_end = off + len(record.payload)
+            at_transport = record.decoder_id is None if transport is None else transport
             yield Datagram(
                 data=record.payload,
                 off_start=off,
                 off_end=off + len(record.payload),
                 ts=record.timestamp,
                 record=record,
+                copy=at_transport and bool(int(record.flags) & RecordFlags.COPY),
             )
         if not hinted:
             # A packet-oriented stream has no holes, and its extent is the

@@ -30,8 +30,8 @@ Under the `0.x` rule every minor is a separate format, so files written by
 `0.7.0` (stamped `0.23`) are no longer readable, and `0.7.0` refuses files this
 release writes. The conformance vectors are re-vendored at `v0.24`: 77 entries,
 90 files, nine of them new. A multi-file entry now declares its merged orders
-per member file, and the harness checks them. The port is in progress; its
-normative changes land under #104–#107.
+per member file, and the harness checks them. Every vector passes. The
+normative changes are the entries below (#104–#107) and `copy` under *Added*.
 
 **A transport stream's extent counts sequence numbers, and a FIN's position is
 owed nothing** ([#104](https://github.com/adamkjonsson/python-zipline/issues/104),
@@ -96,9 +96,22 @@ and `record_ranges` do. The method comes from the same walk that measures
 `0.24` assigns to a capture point's copy of a datagram
 ([zipline#169](https://github.com/adamkjonsson/zipline/issues/169)). Until
 this release the bit was reserved and rendered as the hex token `"0x0100"`.
-The reserved mask is now `0xFE20`. The bit round-trips. Its two writer rules
-and the reader's check land with
-[#106](https://github.com/adamkjonsson/python-zipline/issues/106).
+The reserved mask is now `0xFE20`
+([#106](https://github.com/adamkjonsson/python-zipline/issues/106)).
+
+- **Both rules are held by the conformance checker**, so the writer refuses
+  and the reader isolates a transport-layer `copy` whose payload is not
+  byte-identical to its participant's preceding record's (or that has no
+  preceding record), or that sits on a stream whose records carry
+  `seq_start`. The last is caught at the copy itself, or, when `seq_start`
+  arrives later, when the participant closes. The reader drops the flagged
+  record with a diagnostic naming the rule. On a decoded record the flag has
+  no meaning in `0.24` and round-trips unchecked.
+- **`StreamView.datagrams(copies=True)` and `Datagram.copy`.** `copies=False`
+  reads a stream as the sender sent it, skipping copies; the default is what
+  the capture saw, which is what `datagrams()` returned before. A copy is
+  content of the stream either way, so it keeps its offsets and counts toward
+  the extent (`udp-capture-copy`: 58, twice the answer).
 
 ## [0.7.0] - 2026-10-23
 

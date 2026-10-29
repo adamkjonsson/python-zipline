@@ -32,6 +32,20 @@ rule binds a producer writing from a capture with {func}`zpf.create`
 sessionization stage reading a `.zpf` writes the same block with
 {meth}`SessionizeStage.incomplete <zpf.sessionize.SessionizeStage.incomplete>`.
 
+A third trace is new in `0.24`: the **`copy`** flag
+({attr}`zpf.RecordFlags.COPY`), the capture point's act where `retransmit` is
+the sender's. On a TCP stream the reassembler discards a copy of a segment the
+capture saw twice. A UDP stream has no sequence numbers to discard it by, so the
+copy is content of the stream and is written, and the flag says the sender sent
+once. Two rules make it checkable from the file alone: it repeats its
+participant's preceding record byte for byte, and it never appears on a stream
+whose records carry `seq_start`. The writer refuses, and the reader isolates, a
+`copy` that breaks either. A reader chooses between the specification's two
+readings with {meth}`StreamView.datagrams <zpf.reassembly.StreamView.datagrams>`:
+`copies=True`, the default, is what the capture saw, and `copies=False` is
+what the sender sent. On a decoded record the flag has no meaning in `0.24`,
+and is preserved, never interpreted.
+
 Three nesting levels organize that data:
 
 ```

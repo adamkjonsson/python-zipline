@@ -71,11 +71,11 @@ VECTORS = Path(__file__).parent / "vectors"
 #: (`#106 <https://github.com/adamkjonsson/python-zipline/issues/106>`_). So
 #: did the pairwise ``isolate-transport-splice``: its record carries neither
 #: ``seq_start`` nor ``message``, and ``check_splice`` already reported such a
-#: crossing. Held out:
-#: ``decoded-past-fin/decoded``, whose FIN position this library's coverage
-#: check reports as a gap
+#: crossing. The last two were **earned**: ``decoded-past-fin/decoded``, whose
+#: FIN position this library's coverage check reported as a gap until Phase 2
 #: (`#104 <https://github.com/adamkjonsson/python-zipline/issues/104>`_), and
-#: ``isolate-copy-differs``, which nothing isolates yet (#106).
+#: ``isolate-copy-differs``, which nothing isolated until Phase 5 (#106). So
+#: at the end of Phase 5 every ``v0.24`` case is in this set.
 #:
 #: **68 names, 76 files, and every case in this set at the ``0.23`` port.**
 #: ``0.23`` added two, both earned by its one rule (a record's end is one past
@@ -139,6 +139,7 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "filtered-decoded",
         "handshake-at-origin",
         "hintless-merge-backwards-ts",
+        "isolate-copy-differs",
         "isolate-coverage-gap",
         "isolate-discontinuity-in-raw",
         "isolate-duplicate-id",
@@ -309,6 +310,7 @@ _REJECT_REASONS: dict[str, str] = {
 #: specification states the pass-through obligation as the same guarantee
 #: seen from a file that cites its input, not as a rule of its own.
 _ISOLATE_REASONS: dict[str, str] = {
+    "isolate-copy-differs": "differs from its participant's preceding record",
     "isolate-coverage-gap": "neither decoded nor marked",
     "isolate-discontinuity-in-raw": "discontinuity",
     "isolate-duplicate-id": "twice",

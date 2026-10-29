@@ -169,6 +169,15 @@ class _ParticipantState:
         candidates: Adjacent pairs whose input regions leave a gap and which
             carry no Discontinuity — the only pairs the predicate can fire
             on, held until the holes are all in.
+        prev_payload: The preceding record's payload, which a record flagged
+            ``copy`` must repeat byte for byte. A reference, not a digest:
+            it costs nothing per record and holds one payload per
+            participant until Session End.
+        seq_anchored: Whether any record so far carried ``seq_start``. A
+            ``copy`` is barred from such a stream.
+        first_copy: The first transport-layer record flagged ``copy``, for
+            the case the record-time check cannot see: a ``seq_start``
+            arriving after it.
 
     """
 
@@ -185,6 +194,9 @@ class _ParticipantState:
     prev_reach: dict[tuple[int, int, int], int] = field(default_factory=dict)
     broke_since: bool = False
     candidates: list[_BreakCandidate] = field(default_factory=list)
+    prev_payload: bytes | None = None
+    seq_anchored: bool = False
+    first_copy: str | None = None
 
 
 @dataclass(frozen=True)
@@ -681,9 +693,14 @@ class ConformanceChecker:
         self._note(_handshake_placement(block, stream, described))
         self._check_placement(block, stream, described)
         self._check_record_order(block, stream, described)
+        copy = self._check_copy(block, stream, described)
         self._classify_record(block, stream, described)
         if block.seq_start is not None:
             stream.last_seq = block.seq_start
+            stream.seq_anchored = True
+        if copy and stream.first_copy is None:
+            stream.first_copy = described
+        stream.prev_payload = block.payload
 
     def _on_discontinuity(self, block: Discontinuity) -> None:
         described = _describe(block)
@@ -985,6 +1002,56 @@ class ConformanceChecker:
             f"this file supports"
         )
 
+    def _check_copy(self, block: Record, stream: _ParticipantState, described: str) -> bool:
+        """Check (without mutating) a record flagged ``copy``; say whether it is one.
+
+        Since ``0.24`` (`zipline#169
+        <https://github.com/adamkjonsson/zipline/issues/169>`_) ``copy`` says
+        the capture point saw this record's transmission twice: it repeats
+        its participant's preceding record, and the sender sent once. Two
+        writer ``MUST NOT`` s make it checkable from the file alone, and a
+        reader MAY isolate what breaks either. This one isolates the
+        record, the smallest unit: a falsely flagged record is the one whose
+        claim is wrong.
+
+        Defined on **transport-layer** records only. On a decoded record the
+        flag has no meaning in ``0.24`` and is preserved, never interpreted,
+        like a reserved bit, so it is not checked. A record whose decoder is
+        undeclared is left to :meth:`_classify_record`, which refuses it.
+
+        Returns:
+            Whether the record is a transport-layer ``copy``, for the
+            caller to remember once every check has passed.
+
+        """
+        if not int(block.flags) & RecordFlags.COPY:
+            return False
+        if block.decoder_id is not None and (
+            self._decoders.get(block.decoder_id) is not OutputLayer.TRANSPORT
+        ):
+            return False
+        if stream.prev_payload is None:
+            msg = (
+                f"{described} is flagged copy, but it is its participant's first "
+                f"record, so there is no preceding record for it to repeat"
+            )
+            raise SemanticError(msg)
+        if block.payload != stream.prev_payload:
+            msg = (
+                f"{described} is flagged copy, but its payload differs from its "
+                f"participant's preceding record's; a writer MUST NOT set copy "
+                f"unless the two are byte-identical"
+            )
+            raise SemanticError(msg)
+        if block.seq_start is not None or stream.seq_anchored:
+            msg = (
+                f"{described} is flagged copy on a stream whose records carry "
+                f"seq_start; a writer MUST NOT, since such a copy is the "
+                f"reassembler's to discard"
+            )
+            raise SemanticError(msg)
+        return True
+
     def _check_record_order(
         self, block: Record, stream: _ParticipantState, described: str
     ) -> None:
@@ -1104,6 +1171,15 @@ class ConformanceChecker:
                     f"stream's offset space cannot be computed and MUST NOT be guessed"
                 )
                 raise SemanticError(msg)
+        if stream.first_copy is not None and stream.seq_anchored:
+            # The order the record-time check cannot see: seq_start arriving
+            # after the copy. The copy is the record in the wrong.
+            msg = (
+                f"{stream.first_copy} is flagged copy on a stream whose records "
+                f"carry seq_start; a writer MUST NOT, since such a copy is the "
+                f"reassembler's to discard"
+            )
+            raise SemanticError(msg)
         if stream.has_discontinuity is not None and OutputLayer.DECODED not in stream.layers:
             msg = (
                 f"{stream.has_discontinuity} names a transport-layer stream, which "

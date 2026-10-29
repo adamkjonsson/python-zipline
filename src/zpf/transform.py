@@ -90,7 +90,10 @@ def merge_files(
     ``digest`` when the input is a path), the output session carries the
     SEQUENCED flag, and records are re-emitted byte-identically — payloads,
     timestamps, ``seq_start``/``ack`` hints, flags, and unknown options
-    preserved.
+    preserved. That includes ``copy`` (``0.24``), which a stage must clear
+    when it does not carry the flagged record's predecessor forward: a merge
+    keeps every record of each participant, in that participant's stored
+    order, so the predecessor is always there.
 
     Each record additionally carries an **identity span**, the same range in
     as out, which since `0.19` is how a pass-through states its provenance;
@@ -915,6 +918,11 @@ def rewrite_decoded(
       inherited and their Decoder Descriptors re-declared. This stage
       declares no decoder of its own — a filtered HTTP message is still an
       HTTP message — and identifies itself through ``produced_by``.
+
+    Flags are carried as written. Since ``0.24`` a stage that drops a
+    ``copy`` record's predecessor must clear ``copy``, but that rule is about
+    transport-layer records. This stage reads only decoded layers, where the
+    flag has no meaning in ``0.24``, so it neither clears nor checks it.
 
     A reordering stage's spans will *not* ascend with stored order. That is
     expected: coverage depends on which ranges are covered, not on the order

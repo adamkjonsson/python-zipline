@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import io
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -1219,3 +1220,39 @@ def test_a_decoded_stream_has_no_fin_positions():
     blocks = list(reader.session(7).stream_blocks(view.participant.participant_id))
     assert zpf.fin_positions(view.participant, blocks, zpf.OutputLayer.DECODED) == ()
     assert view.fin_positions() == []
+
+
+# --- copy: messages as sent, or what the capture saw (0.24, zipline#169, #106) ----
+
+UDP_CAPTURE_COPY = (
+    Path(__file__).parent / "vectors" / "udp-capture-copy" / "udp-capture-copy.zpf"
+)
+
+
+def test_the_capture_saw_the_answer_twice_and_the_sender_sent_it_once():
+    """`udp-capture-copy`'s two readings, both the specification's."""
+    with zpf.open(UDP_CAPTURE_COPY) as reader:
+        _client, server = reader.session(9).reassemble()
+        seen = list(server.datagrams())
+        sent = list(server.datagrams(copies=False))
+        assert [(d.off_start, d.copy) for d in seen] == [(0, False), (29, True)]
+        assert sent == seen[:1]
+        # The copy is content either way: it keeps its offsets and its extent.
+        assert server.extent_and_gaps() == (58, [])
+
+
+def test_copy_on_a_decoded_record_is_not_read_as_one():
+    """The flag means nothing on a decoded record in 0.24, so the view ignores it."""
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1_000_000) as writer:
+        writer.add_source("capture")
+        decoder = writer.add_decoder("d", version="1")
+        with writer.begin_session(proto="dns", session_id=7) as session:
+            part = session.participant("a")
+            for ts in (1, 2):
+                session.record(part, ts=ts, payload=b"x", flags=zpf.RecordFlags.COPY,
+                               decoded=zpf.Decoded(decoder=decoder))
+    with zpf.open(io.BytesIO(sink.getvalue())) as reader:
+        (view,) = reader.session(7).reassemble()
+        assert [d.copy for d in view.datagrams()] == [False, False]
+        assert len(list(view.datagrams(copies=False))) == 2

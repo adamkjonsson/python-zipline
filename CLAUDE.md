@@ -77,12 +77,11 @@ sessionizer vectors) is in conformant files, so it holds nothing out, and
 fixture is wrong, it goes in `DEFECTIVE` by name and is reported upstream —
 never bend the implementation to match a fixture in `DEFECTIVE`.
 
-The 0.23 → 0.24 port is **in progress**, as the `0.8.0` release
+The 0.23 → 0.24 port is **implemented** on the way to the `0.8.0` release
 (`plans/V0.8.0-RELEASE-PLAN.md`, issues #104–#108); the earlier ports are in
 `plans/` too, and `docs/dev/contributing.md` § *Porting to a new spec version*
-is the checklist. The vectors are vendored at `v0.24` — 77 of them, 90 files.
-Every name is in `KNOWN_PASSING` except `decoded-past-fin/decoded` (#104) and
-`isolate-copy-differs` (#106), which the port's later phases earn. Ten of them
+is the checklist. The vectors are vendored at `v0.24` — 77 of them, 90 files —
+and every name is in `KNOWN_PASSING`. Ten of them
 declare a `merged` order, which the harness compares `timeline()` against; since
 `0.24` a multi-file entry's items name their member file. The ratchet in
 `tests/test_vectors.py` stays as the regression guard: a name is never removed
