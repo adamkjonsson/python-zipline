@@ -2,15 +2,15 @@
 
 ## The product
 
-This code is a Python implementation of v0.23 of the Zipline Payload Format,
+This code is a Python implementation of v0.24 of the Zipline Payload Format,
 which is defined in
-`https://github.com/adamkjonsson/zipline/blob/v0.23/docs/zipline-payload-format.md`.
+`https://github.com/adamkjonsson/zipline/blob/v0.24/docs/zipline-payload-format.md`.
 A checkout of the spec repository lives at `~/projs/zipline`; a new spec release
 is a new tag there, and `v1.0` is the *old* one (see the first trap below).
 It is a module that readers and writers of zpf-files use to access and create
 files.
 
-"The standard" in this file always means **0.23**, and `zpf.SPEC_VERSION` is the
+"The standard" in this file always means **0.24**, and `zpf.SPEC_VERSION` is the
 single source of truth for it in code. The format is in `0.x`, where **every
 minor is a separate format**: a reader must reject a `version_minor` it does not
 implement, and no upgrade path between `0.x` versions is guaranteed. So this is
@@ -21,8 +21,8 @@ Five traps worth naming, because each looks like a bug and is not:
 
 - A **0.9** file stamps `version_major = 1`, `version_minor = 0` — that version
   was published as "1.0" and renumbered without rewriting its bytes, so the
-  `v1.0` tag sorts *above* every `0.x` tag and is the oldest of them. 0.23
-  stamps `0`/`23`. A 0.9 file is correctly rejected at the version gate.
+  `v1.0` tag sorts *above* every `0.x` tag and is the oldest of them. 0.24
+  stamps `0`/`24`. A 0.9 file is correctly rejected at the version gate.
 - `decoder_id` decides **neither** axis. It does not say a record is decoded —
   reassembly is a decoder too, so the layer comes from that decoder's declared
   `output_layer` — and it does not say which stage ran, since a pass-through
@@ -65,22 +65,26 @@ Five traps worth naming, because each looks like a bug and is not:
 The conformance vectors in `tests/vectors/` are vendored verbatim from the spec
 repository and are the acceptance criteria — do not edit them to make a test
 pass. `VECTOR-DEFECTS.md` records seven defects found against them, all closed
-upstream; `DEFECTIVE` in `tests/test_vectors.py` is empty at `v0.23`. When a
+upstream; `DEFECTIVE` in `tests/test_vectors.py` is empty at `v0.24`. When a
 fixture is wrong, it goes in `DEFECTIVE` by name and is reported upstream —
 never bend the implementation to match a fixture in `DEFECTIVE`.
 
-The 0.21 → 0.23 port is **complete** (`plans/V0.6.0-RELEASE-PLAN.md`; `0.22`
-was never released by this library, `0.23` followed it within days); the
-earlier ports are in `plans/` too, and `docs/dev/contributing.md` § *Porting to
-a new spec version* is the checklist. The vectors are vendored at `v0.23` — 68
-of them, 76 files — and every name is in `KNOWN_PASSING`. Six of them declare
-a `merged` order, which the harness compares `timeline()` against. The ratchet in
+The 0.23 → 0.24 port is **in progress**, as the `0.8.0` release
+(`plans/V0.8.0-RELEASE-PLAN.md`, issues #104–#108); the earlier ports are in
+`plans/` too, and `docs/dev/contributing.md` § *Porting to a new spec version*
+is the checklist. The vectors are vendored at `v0.24` — 77 of them, 90 files.
+Every name is in `KNOWN_PASSING` except `decoded-past-fin/decoded` (#104) and
+`isolate-copy-differs` (#106), which the port's later phases earn. Ten of them
+declare a `merged` order, which the harness compares `timeline()` against; since
+`0.24` a multi-file entry's items name their member file. The ratchet in
 `tests/test_vectors.py` stays as the regression guard: a name is never removed
 from that set while its vector exists.
 
-One vector is judged as a **pair**: `splice` ships two files that are each
-conformant alone, so its violation is only visible to `zpf.check_splice`. The
-harness routes any multi-file vector in a negative tier that way.
+Two vectors are judged as a **pair**: `splice` and `isolate-transport-splice`
+each ship two files that are conformant alone, so the violation is only visible
+to `zpf.check_splice`. The harness routes any multi-file vector in a negative
+tier that way. The multi-file *accept* vectors get the mirror check: each hop
+upstream vouches for must pass `check_coverage` and `check_splice` as a pair.
 
 The API should be easy to use and feel logical. It must always follow the standard. The support for the standard should be complete. Always warn if a feature requires the code to go beyond the standard.
 

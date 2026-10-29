@@ -1,0 +1,7 @@
+{"type":"file","format":"zipline-payload/0.24","tick_hz":1000000}
+{"type":"source","source_id":1,"kind":"capture","uri":"wg-inner.pcap","link_type":1}
+{"type":"session","session_id":9,"proto":"udp"}
+{"type":"participant","session_id":9,"pid":0,"adjacency":"contiguous","endpoint":["10.8.0.2:5001"]}
+{"type":"record","session_id":9,"sender_pid":0,"source_id":1,"ts":1100,"flags":["message"],"payload":"ZWVlZWVlZWVlZWVl"}
+{"type":"undecoded","source_id":1,"session_id":0,"pid":0,"off_start":40,"off_end":106,"reason":"undecodable","comment":"fragment 1 of 2 of datagram id 0x1234; fragment 2 never arrived"}
+{"type":"end"}

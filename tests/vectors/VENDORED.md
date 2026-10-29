@@ -7,16 +7,18 @@ specification repository. They are not ours to edit.
 |---|---|
 | Source | <https://github.com/adamkjonsson/zipline> |
 | Path | `vectors/` |
-| Tag | `v0.23` |
-| Commit | `38084399c3913e7d13b286d4e88c0a1871c0d995` |
-| Vendored | 2026-10-14 |
+| Tag | `v0.24` |
+| Commit | `f15bb815c5fe67563b8792c2c78bd4172be2c10d` |
+| Vendored | 2026-10-29 |
 
 ## What was and was not copied
 
-Copied: `manifest.json`, `README.md`, and all 68 vector directories — verified
+Copied: `manifest.json`, `README.md`, and all 77 vector directories — verified
 byte-identical to the tag with `diff -r`, extracted with `git archive` from the
-tag rather than copied from a working tree. 68 entries expand to 76 files, because
-`chain` and `merge` ship three each, `splice` two and `tunnel` four.
+tag rather than copied from a working tree. 77 entries expand to 90 files:
+`chain` and `merge` ship three each, `tunnel` four, and six pairs two each
+(`splice`, `decoded-past-fin`, `isolate-transport-splice` and three
+`sessionized-*`).
 
 **Not** copied: `build.py` and `check.py`. Those are the upstream *generator* and
 self-consistency checker — tooling for maintaining the vectors, not fixtures for
@@ -88,6 +90,38 @@ else). Six vectors carry it, and the harness compares `timeline()` against it
 sequence number it occupies. Every other file changed only its version stamp
 and the input digests that follow from it.
 
+`0.24` changes one manifest key and adds nine vectors. **`merged` reaches
+multi-file entries**
+([zipline#163](https://github.com/adamkjonsson/zipline/issues/163)). The files
+of one entry share session ids, so each item names its member by the stem
+`files` lists: `{"file", "session_id", "order"}`. The key is required on a
+multi-file entry and refused on a single-file one. The harness reads it per
+member (`_merged_params`). Ten vectors carry `merged` now, `chain` among them.
+The nine new vectors:
+
+- `closed-final-ack` and the pair `decoded-past-fin/`, for a transport extent
+  counted in sequence numbers and a FIN's position that is owed nothing
+  (zipline#168);
+- the pairs `sessionized-fragments/` and `sessionized-fragment-lost/`, and
+  `capture-fragment-lost`, for a `message` record crossing its input's seams
+  and for an incomplete reassembly (zipline#166, #170);
+- the pairs `sessionized-across-break/` and `isolate-transport-splice/`, for a
+  transport record crossing a *declared* break, with and without evidence
+  (zipline#167);
+- `udp-capture-copy` and `isolate-copy-differs`, for the new `copy` flag,
+  `0x0100` (zipline#169).
+
+`isolate-transport-splice` is the suite's second pairwise vector after
+`splice`, and the harness routes it the same way. The multi-file *accept*
+pairs gained a check of their own, `test_an_accept_pair_is_clean_as_a_pair`,
+over the hops upstream's `check.py` vouches for. Every other file changed only
+its version stamp and the input digests that follow from it.
+
+`0.24` was the first release this library reviewed as a candidate
+([`plans/SPEC-0.24-REVIEW.md`](../../plans/SPEC-0.24-REVIEW.md)). Its first
+finding added a `MUST` and the vector `capture-fragment-lost`, so the count is
+77 where the candidate had 76.
+
 ## Why they are checked in rather than fetched
 
 Fetching by tag at test time would keep them authoritative, but makes the suite
@@ -102,7 +136,7 @@ vector that seems wrong is a question for the spec repository, not a local patch
 
 ## Known defects
 
-**None open at `v0.23`.** Defects 5 and 6 — three vectors whose `.zpf`
+**None open at `v0.24`.** Defects 5 and 6 — three vectors whose `.zpf`
 disagreed with their own `.jsonl`, found at the `0.19` re-vendor by projecting
 every file and diffing — were fixed upstream in `0.20`
 ([zipline#141](https://github.com/adamkjonsson/zipline/issues/141)), which also
@@ -115,8 +149,8 @@ Seven have been found in all — two against `v0.12`, one against `v0.15`, one
 against `v0.16`, two against `v0.19` and one against the `0.22` release
 candidate — and every one was fixed upstream;
 [`VECTOR-DEFECTS.md`](../../VECTOR-DEFECTS.md) is the closed record of them.
-The projection sweep was repeated at this re-vendor: 55 files carry both faces,
-and none disagree on any key this library projects. (At `0.21`, 49 files; the
+The projection sweep was repeated at the `0.24` re-vendor: 69 files carry both
+faces, and none disagree on any key this library projects. (At `0.23`, 55.) (At `0.21`, 49 files; the
 new `adjacency` key was then also checked the other way, its byte in all 61
 Participant blocks against the `.jsonl` line, 0 mismatches.)
 

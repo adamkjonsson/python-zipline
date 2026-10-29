@@ -2,7 +2,7 @@
 
 Small `.zpf` files, each with its expected JSON-Lines projection or its expected
 failure, for testing an implementation of the
-[Zipline Payload Format](../docs/zipline-payload-format.md) `0.23`.
+[Zipline Payload Format](../docs/zipline-payload-format.md) `0.24`.
 
 Run `python3 check.py` to verify the tree is self-consistent.
 Run `python3 build.py` to regenerate it.
@@ -139,6 +139,13 @@ A sequenced session owes none, because its answer is stored order. As with
 merge is semantics. `check.py` checks their shape: exactly the owed sessions are
 named, and each order is a permutation of the session's records that keeps each
 participant's own order.
+
+**A multi-file `accept` entry owes the same, file by file**, since `0.24`
+(#163). The files of one entry share session ids, so each item also names its
+file by the stem `files` lists: `{"file", "session_id", "order"}`. `file` is
+required on a multi-file entry and absent on a single-file one. Only `chain`
+owes the key today. Its three orders (`raw` 1 2 3, `decoded` 1 2, `annotated`
+1 2) each equal stored order.
 
 **Every capability the format defines is exercised by some vector**, and since
 `0.14` that is enforced too. `check.py` parses the option-id registry and the
@@ -398,13 +405,78 @@ implementations only.
 | `sequenced-pure-ack-and-fin` | *(accept)* A **SEQUENCED** session: handshake, eight bytes of data, the server's pure ACK, the client's zero-length FIN, and the server's pure ACK of the FIN. Pure ACKs are stored as zero-length records, as *Caveats* advises. Ends: SYN 0, SYN-ACK 0, data 8, FIN **9**, pure ACKs **none**. Every edge runs forward in stored order. A reader that gives a pure ACK an end at its offset draws `pure ACK → data` against `data → pure ACK`, a cycle, and refuses the order or stalls. One that ends the FIN at its offset draws `FIN → pure ACK` against the stored order. Extents 8 and 0. |
 | `merge-pure-ack-and-fin` | *(accept)* The same six records, **unsequenced**, stored server first, with the server's clock 50 ticks behind, so the timestamp tie-break pulls a server record too early wherever an edge is missing. Merged: client SYN, SYN-ACK, data, pure ACK, FIN, pure ACK. Each wrong reading gives its own answer: a SYN given no end puts the SYN-ACK first, a pure ACK ended at its offset **stalls**, and a FIN ended at its offset overtakes the pure ACK that acknowledged only the data. A reader returning stored order has not merged. Extents 8 and 0. |
 
+### Added in `0.24`
+
+A transport stream's extent is the furthest point its placeable records reach,
+and like every transport offset it counts **sequence numbers**, not delivered
+bytes. A closing side's final pure ACK is stored at the sequence number its
+segment carries, one past that side's FIN, so the stream reaches one past its
+last byte, and the position between is the FIN's. That position holds no byte,
+and the coverage guarantee owes it nothing (#168). Through `0.23` the extent was
+never defined, and python-zipline's decode stage and its own coverage check
+disagreed on every closed connection zpfwire wrote.
+
+| Vector | What it carries |
+|--------|-----------------|
+| `closed-final-ack` | *(accept)* A closed connection: each side's FIN rides on its data, and the server's final pure ACK is stored at 5006, one past its FIN at 5005. Server: `PONG` at `[0,4)`, FIN at offset 4, pure ACK at 5. Client: `PING`, `QUIT` at `[0,8)`, FIN at 8 with nothing past it. Extents **8 and 5**: a reader that counts bytes measures the server's stream as 4. The asymmetry is deliberate, since only the side with something stored past its FIN reaches past it. Merged order is stored order. |
+| `decoded-past-fin/` | *(accept, two files)* A decode stage over the same capture that leaves the server's FIN position bare and declares extent 5. See [The closed stream](#the-closed-stream). |
+
+A transport-layer record may cross its input's seams when it carries the
+evidence of its own join. Since `0.22` that meant `seq_start`. Since `0.24` it
+also means the **`message`** flag: the record is exactly one transport message,
+so the units it cites are that message's fragments (#166). An IP-fragmented UDP
+datagram over a unit sequence had no conformant record before.
+
+| Vector | What it carries |
+|--------|-----------------|
+| `sessionized-fragments/` | *(accept, two files)* A unit sequence of three real IPv4 packets: fragment 1 of a UDP datagram, another flow's datagram, fragment 2. The reassembly is one `message` record citing both fragments across two seams, with no `seq_start`. See [The fragmented datagram](#the-fragmented-datagram). |
+
+`0.22`'s permission has two halves: a sequence-anchored record may cross input
+units, **or an input Discontinuity**. Only the first half had a vector, and
+`sessionized-across-units` crosses unit seams, which no splice check examines as
+declared blocks. The second half now has a pair, and so does its mirror (#167).
+The mirror's record carries neither kind of evidence, `seq_start` or
+`message`, so it tests the rule as `0.24` leaves it.
+
+| Vector | What it carries |
+|--------|-----------------|
+| `sessionized-across-break/` | *(accept, two files)* A contiguous packet stream (flow A, flow B, a declared Discontinuity, flow A) and a sessionizer whose flow-A record carries `seq_start` and crosses the break. See [The declared break](#the-declared-break). |
+| `isolate-transport-splice/` | *(isolate, two files)* The same pair with flow A's record stripped of `isn`, `seq_start` and `ack`. Nothing in it evidences the join, so the crossing violates the carry duty. It is the pairwise twin of `isolate-unmarked-break`. |
+
+A stream without a sequence anchor cannot discard a capture-point copy, because
+the withholding rule makes the copy content of the stream. So the copy is
+written, and since `0.24` the **`copy`** flag (`0x0100`) says the sender sent
+once (#169). A writer must not set it unless the payload is byte-identical to
+the participant's preceding record's, nor on a record of a stream whose records
+carry `seq_start`.
+`check.py` holds the suite to both: every `copy` in an accept vector keeps them,
+and a `copy` in a negative vector breaks one.
+
+| Vector | What it carries |
+|--------|-----------------|
+| `udp-capture-copy` | *(accept)* A DNS query and its answer over UDP through a mirror port, the answer seen twice. The second answer is flagged `message` and `copy` (`0x0180`). Read as sent, the exchange is one query and one answer. Read as captured, it is three records. The copy is content either way, so the server's extent is **58**, twice the answer's 29. Merged order is stored order. |
+| `isolate-copy-differs` | *(isolate)* The same file with the copy's last byte changed. The flag asserts a repeat the bytes contradict. A reader that trusted it would skip a different answer. |
+
+An incomplete reassembly is not content of a message-oriented stream. A
+fragment whose datagram never completed was never a message of the stream, so
+leaving it out withholds nothing. It is still owed an Undecoded block, the
+trace: by the coverage guarantee from a stage reading a `.zpf`, and by a
+**must** from a reassembler reading a capture, which owes no coverage. The block
+**should** say `undecodable` (#170).
+
+| Vector | What it carries |
+|--------|-----------------|
+| `sessionized-fragment-lost/` | *(accept, two files)* `sessionized-fragments` with the second fragment lost: no record for the datagram, `[0,52)` of `packets.zpf` marked `undecodable` with a comment naming the missing fragment, and flow B as before. See [The fragmented datagram](#the-fragmented-datagram). |
+| `capture-fragment-lost` | *(accept)* The same shape from a **capture**: a head-of-pipeline reassembler that owes no coverage. It writes the other flow's datagram, and an Undecoded block against the `capture` source naming the orphan fragment's frame (bytes `[40,106)` of the pcap), `undecodable`. The block is what the `MUST` requires, since nothing else would show the fragment was there. Like the withholding rule, the `MUST` cannot be checked from the file. The vector shows the shape a conformant producer writes. |
+
 ## Multi-file fixtures
 
-Four directories are **fixtures** rather than vectors: several files that only
+Nine directories are **fixtures** rather than vectors: several files that only
 mean anything together, because what they test is a relationship *between*
 files. `check.py` walks each member exactly as it walks a single-file vector —
 framing, projection, the lot — and adds arithmetic specific to `chain/`,
-`tunnel/` and `merge/` on top: one function each, sharing the digest check, the
+`tunnel/`, `merge/`, `decoded-past-fin/`, the two fragment pairs and the two
+across-break pairs on top: one function each, sharing the digest check, the
 unwrapping extent arithmetic (signed serial delta from the last placeable record,
 the origin `isn + 1` first — `stream-wraps-seq` is what keeps it honest) and the
 coverage union.
@@ -571,6 +643,110 @@ real rather than asserted), `merged.zpf`'s spans plus Undecoded block covering
 each input stream exactly, per source, and its declared `input_extents` equal to
 the derived numbers. It was seen to fail on a `merged.jsonl` with the `gap` line
 removed before it was trusted.
+
+### The closed stream
+
+`decoded-past-fin/` is the pair #168 asked for: **the position a FIN occupies,
+inside an extent, is owed nothing**.
+
+```
+capture.zpf   closed-final-ack                decoded.zpf
+  server  PONG [0,4) + FIN at 4                 spans [0,4); nothing at 4
+          pure ACK at 5 (seq 5006)               declares extent 5
+```
+
+`capture.zpf` is `closed-final-ack`, byte for byte. Its server stream reaches 5,
+because the final pure ACK is stored at its wire number, one past the FIN.
+`decoded.zpf` spans the server's data and marks nothing at offset 4, the FIN's
+position, which holds no byte.
+
+| Vector | What it carries |
+|--------|-----------------|
+| `decoded-past-fin/` | *(accept, two files)* The pair above. A coverage check that reports `[4,5)` as a gap, or a decode stage that declares 4, has counted bytes where the extent counts sequence numbers. Marking the position Undecoded is not required. |
+
+`check.py` verifies the pair: each input's extent re-derived from its sequence
+numbers, the server's FIN position seen to lie **inside** its extent and seen
+**not** to be covered by `decoded.zpf` (so the exemption is really exercised),
+coverage exact with that position exempt, and the declared `input_extents` equal
+to the derived numbers. It was seen to fail without the exemption, on a declared
+extent of 4, and on a span reaching over the FIN before it was trusted.
+
+### The fragmented datagram
+
+`sessionized-fragments/` is the pair #166 asked for: **a record flagged
+`message` may cross a unit sequence's seams, as one message's reassembly**.
+
+```
+packets.zpf (units)                         inner.zpf (transport)
+  [0,52)    id 0x1234, MF, offset 0           session 20: one message record,
+  [52,92)   flow B's datagram                   spans [0,52) and [92,128),
+  [92,128)  id 0x1234, offset 32                no seq_start
+                                              session 21: flow B, [52,92)
+```
+
+`packets.zpf` is a decryptor's output with no predecessor file, so it cites a
+capture and carries no spans. Its three `net:ip` records have real headers. The
+datagram's two fragments share one identification, DF is clear, MF is set on the
+first only, and every checksum is true. `inner.zpf`'s session 20 is that datagram
+reassembled, 40 bytes of data. Both sessions declare `packets.zpf`'s full extent,
+128.
+
+| Vector | What it carries |
+|--------|-----------------|
+| `sessionized-fragments/` | *(accept, two files)* The pair above. A splice check that requires `seq_start` before a record may cross a unit sequence's seams reports a violation that is not there. |
+| `sessionized-fragment-lost/` | *(accept, two files)* The same with fragment 2 never arriving (#170). `packets.zpf` is `[0,52)` fragment 1 and `[52,92)` flow B. `inner.zpf` writes flow B only and marks `[0,52)` `undecodable`. A check that calls the missing datagram withheld content is wrong: pieces of a message are not content of the stream. `check.py` confirms the orphan's datagram does not reassemble from what is present, that no record cites it, and that one `undecodable` block marks exactly its range. It was seen to fail on a fragment that is not one, on a record citing the orphan, on `dropped`, on a missing block, and on a wrong extent. |
+
+`check.py` verifies the pair: `packets.zpf` is seen to be a unit sequence, a
+record of `inner.zpf` is seen to cite two or more of its units, and that record
+carries `message` and no `seq_start`. The join is then **shown rather than
+asserted**. The cited packets' IPv4 headers share one identification, their
+offsets close from 0 to a fragment without More Fragments, and their IP payloads
+joined at those offsets, less the UDP header, are the record's payload. Coverage
+and the declared extents are checked as for the other pairs. It was seen to fail
+without the flag, with a `seq_start`, on a fragment of another datagram, on a gap
+in the offsets, with More Fragments on the last fragment, on a payload that is
+not the reassembly, on a contiguous input, and on a record that crosses nothing.
+
+### The declared break
+
+`sessionized-across-break/` and `isolate-transport-splice/` are the pair and
+mirror #167 asked for: **a transport record may cross a declared break only
+with the evidence of its join**.
+
+```
+packets.zpf (contiguous)                    inner.zpf (transport)
+  [0,80)     flow A, seq 1001, 40 B           session 10: flow A, one record,
+  [80,140)   flow B, seq 5001, 20 B             spans [0,80) and [140,210)
+  BREAK at 140 (decrypt-failed, no width)     session 11: flow B, [80,140)
+  [140,210)  flow A, seq 1041, 30 B
+```
+
+Both `packets.zpf` files are the same: a decryptor's output citing a capture,
+three `net:ip` records with real TCP headers, and a Discontinuity before flow
+A's second packet. Flow A's sequence numbers join across it (1001 + 40 = 1041),
+so what was lost belonged to another flow, which is #152's own example. In
+`sessionized-across-break` session 10's record carries `seq_start` 1001, and the
+crossing is permitted. In `isolate-transport-splice` it carries neither
+`seq_start` nor `message`, and its participant has no `isn`, so nothing in the
+record says the two packets join. That crossing is the pair's one violation.
+
+| Vector | What it carries |
+|--------|-----------------|
+| `sessionized-across-break/` | *(accept, two files)* Accept both. A splice check that applies the decoded layer's carry duty to a `seq_start` record reports a violation that is not there. |
+| `isolate-transport-splice/` | *(isolate, two files)* Accept `packets.zpf`. Isolate or reject `inner.zpf`'s session 10. Its record crosses a declared break with no evidence, and a transport stream has neither recourse, a Discontinuity or `units`. Only judgeable with `packets.zpf` in hand, as `splice/` is. |
+
+`check.py` verifies both with one function. `packets.zpf` is seen to be
+contiguous, so the crossing is of a declared block. A record of `inner.zpf` is
+seen to have spans on both sides of the break. Its cited packets' TCP headers
+show the join is real: one flow, sequence numbers running on without a gap, and
+the TCP payloads joining to the record's payload. The pairs then differ in one
+thing. The accept pair's record carries `seq_start` at the first segment's
+number. The mirror's carries neither `seq_start` nor `message`. Coverage and
+declared extents are checked as for the other pairs. It was seen to fail nine
+ways before it was trusted: no `seq_start`, a wrong `seq_start`, segments whose
+numbers do not join, a packet of another flow, a payload that is not the join,
+a `units` input, a missing break, and a mirror that gained `seq_start` or
+`message`.
 
 ## Coverage this does not have
 

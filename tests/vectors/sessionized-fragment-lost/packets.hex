@@ -1,0 +1,114 @@
+# sessionized-fragment-lost/packets
+#
+# Generated from the same description as the .zpf -- never edited
+# by hand, so the annotation cannot drift from the bytes.
+
+0000  01 00                    type   = 0x0001  File Header
+0002  00 00                    reserved
+0004  2C 00 00 00              length = 44
+0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
+000C  00 00                    version_major = 0
+000E  18 00                    version_minor = 24
+0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
+0018  12 00 0A 00              option 0x0012 produced_by, len = 10
+001C  7A 70 66 2D 77 67 20 30  "zpf-wg 0.3"
+0024  2E 33
+0026  00 00                    value padding
+0028  13 00 08 00              option 0x0013 produced_at, len = 8  (1719700000)
+002C  20 8A 80 66 00 00 00 00
+
+0034  02 00                    type   = 0x0002  Source Descriptor
+0036  00 00                    reserved
+0038  10 00 00 00              length = 16
+003C  01 00                    source_id = 1
+003E  00                       kind = 0  (capture)
+003F  00                       _reserved
+0040  20 00 07 00              option 0x0020 uri, len = 7
+0044  77 67 2E 70 63 61 70     "wg.pcap"
+004B  00                       value padding
+
+004C  03 00                    type   = 0x0003  Decoder Descriptor
+004E  00 00                    reserved
+0050  24 00 00 00              length = 36
+0054  01 00                    decoder_id = 1
+0056  00                       output_layer = 0  (decoded)
+0057  00                       _reserved
+0058  41 00 11 00              option 0x0041 name, len = 17
+005C  77 69 72 65 67 75 61 72  "wireguard-decrypt"
+0064  64 2D 64 65 63 72 79 70
+006C  74
+006D  00 00 00                 value padding
+0070  42 00 03 00              option 0x0042 version, len = 3
+0074  30 2E 33                 "0.3"
+0077  00                       value padding
+
+0078  10 00                    type   = 0x0010  Session Descriptor
+007A  00 00                    reserved
+007C  10 00 00 00              length = 16
+0080  05 00 00 00 00 00 00 00  session_id = 5  (u64)
+0088  50 00 02 00              option 0x0050 proto, len = 2
+008C  69 70                    "ip"
+008E  00 00                    value padding
+
+0090  11 00                    type   = 0x0011  Participant Descriptor
+0092  00 00                    reserved
+0094  18 00 00 00              length = 24
+0098  05 00 00 00 00 00 00 00  session_id = 5  (u64)
+00A0  00 00                    participant_id = 0
+00A2  01                       adjacency = 1  (units)
+00A3  00                       _reserved
+00A4  60 00 08 00              option 0x0060 endpoint, len = 8
+00A8  31 30 2E 38 2E 30 2E 32  "10.8.0.2"
+
+00B0  20 00                    type   = 0x0020  Record
+00B2  00 00                    reserved
+00B4  64 00 00 00              length = 100
+00B8  05 00 00 00 00 00 00 00  session_id = 5  (u64)
+00C0  00 00                    sender_pid = 0
+00C2  01 00                    source_id  = 1
+00C4  E8 03 00 00 00 00 00 00  timestamp  = 1000
+00CC  00 00                    _reserved  (u16 = 0)
+00CE  00 00                    flags      = 0x0000
+00D0  34 00 00 00              payload_len = 52
+00D4  45 00 00 34 12 34 20 00
+00DC  40 11 34 6B 0A 08 00 02
+00E4  0A 08 00 09 13 88 14 E9
+00EC  00 30 EB 2A 64 64 64 64
+00F4  64 64 64 64 64 64 64 64
+00FC  64 64 64 64 64 64 64 64
+0104  64 64 64 64
+0108  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
+010C  01 00
+010E  00 00                    value padding
+0110  91 00 06 00              option 0x0091 content_type, len = 6
+0114  6E 65 74 3A 69 70        "net:ip"
+011A  00 00                    value padding
+
+011C  20 00                    type   = 0x0020  Record
+011E  00 00                    reserved
+0120  58 00 00 00              length = 88
+0124  05 00 00 00 00 00 00 00  session_id = 5  (u64)
+012C  00 00                    sender_pid = 0
+012E  01 00                    source_id  = 1
+0130  4C 04 00 00 00 00 00 00  timestamp  = 1100
+0138  00 00                    _reserved  (u16 = 0)
+013A  00 00                    flags      = 0x0000
+013C  28 00 00 00              payload_len = 40
+0140  45 00 00 28 00 00 40 00
+0148  40 11 26 AB 0A 08 00 02
+0150  0A 08 00 09 13 89 00 35
+0158  00 14 77 8D 65 65 65 65
+0160  65 65 65 65 65 65 65 65
+0168  90 00 02 00              option 0x0090 decoder_id, len = 2  (1)
+016C  01 00
+016E  00 00                    value padding
+0170  91 00 06 00              option 0x0091 content_type, len = 6
+0174  6E 65 74 3A 69 70        "net:ip"
+017A  00 00                    value padding
+
+017C  41 00                    type   = 0x0041  End of file
+017E  00 00                    reserved
+0180  04 00 00 00              length = 4
+0184  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
+
+0188                           (end of file, 392 bytes)

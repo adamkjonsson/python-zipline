@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 # "A first example": a 3-party chat room, dave joins mid-stream. Blank lines
 # appear exactly as in the spec (they must be skipped).
 CHAT_EXAMPLE = """\
-{"type":"file","format":"zipline-payload/0.23","tick_hz":1000000}
+{"type":"file","format":"zipline-payload/0.24","tick_hz":1000000}
 {"type":"source","source_id":1,"kind":"capture","uri":"chat.pcap"}
 
 {"type":"session","session_id":8,"proto":"irc","key":"#zipline@irc.example.net"}
@@ -40,7 +40,7 @@ CHAT_EXAMPLE = """\
 
 # "Worked example: a skewed two-file capture".
 SKEWED_EXAMPLE = """\
-{"type":"file","format":"zipline-payload/0.23","tick_hz":1000000}
+{"type":"file","format":"zipline-payload/0.24","tick_hz":1000000}
 {"type":"source","source_id":1,"kind":"capture","uri":"sideA.pcap"}
 {"type":"source","source_id":2,"kind":"capture","uri":"sideB.pcap"}
 {"type":"session","session_id":7,"proto":"tcp","key":"10.0.0.1:51000 <-> 93.184.216.34:80"}
@@ -53,7 +53,7 @@ SKEWED_EXAMPLE = """\
 # The merged pass-through file derived from the skewed capture.
 MERGED_EXAMPLE = "\n".join(
     [
-        '{"type":"file","format":"zipline-payload/0.23","tick_hz":1000000,'
+        '{"type":"file","format":"zipline-payload/0.24","tick_hz":1000000,'
         '"produced_by":"zpf-merge 1.2","produced_at":1719510000}',
         '{"type":"source","source_id":1,"kind":"zpf-input","uri":"sideA.zpf","digest":"sha256:11aa…"}',
         '{"type":"source","source_id":2,"kind":"zpf-input","uri":"sideB.zpf","digest":"sha256:22bb…"}',
@@ -76,7 +76,7 @@ MERGED_EXAMPLE = "\n".join(
 # "A decoded file, end to end" (payload placeholders replaced with real base64).
 DECODED_EXAMPLE = "\n".join(
     [
-        '{"type":"file","format":"zipline-payload/0.23","tick_hz":1000000,'
+        '{"type":"file","format":"zipline-payload/0.24","tick_hz":1000000,'
         '"produced_by":"zpf-decode 0.4","produced_at":1719500000}',
         '{"type":"source","source_id":1,"kind":"zpf-input","uri":"raw.zpf","digest":"sha256:9f2c…"}',
         '{"type":"decoder","decoder_id":1,"output_layer":"decoded","name":"http/1.1",'
@@ -294,7 +294,7 @@ def test_tick_hz_is_a_rate_never_a_unit_label(tick_hz: int):
 
 def test_tick_hz_accepts_decimal_strings():
     header = obj_to_block(
-        {"type": "file", "format": "zipline-payload/0.23", "tick_hz": str(2**60)}
+        {"type": "file", "format": "zipline-payload/0.24", "tick_hz": str(2**60)}
     )
     assert header.tick_hz == 2**60
 
@@ -302,13 +302,13 @@ def test_tick_hz_accepts_decimal_strings():
 def test_time_units_is_no_longer_accepted():
     """0.10 removed the key outright rather than deprecating it."""
     with pytest.raises(ValueError, match="tick_hz"):
-        obj_to_block({"type": "file", "format": "zipline-payload/0.23", "time_units": "us"})
+        obj_to_block({"type": "file", "format": "zipline-payload/0.24", "time_units": "us"})
 
 
 def test_format_string_round_trips_the_supported_version():
     header = zpf.FileHeader(tick_hz=1)
     obj = block_to_obj(header)
-    assert obj["format"] == "zipline-payload/0.23"
+    assert obj["format"] == "zipline-payload/0.24"
     assert obj_to_block(obj) == header
 
 
@@ -376,11 +376,13 @@ def test_reserved_record_flag_bits_escape_as_hex_tokens():
 
 
 def test_several_reserved_flag_bits_each_get_their_own_token():
+    # 0x0020 and 0x0200, both inside the reserved mask 0xFE20. Through 0.23
+    # this used 0x0100, which 0.24 assigned to ``copy``.
     record = zpf.Record(
-        session_id=1, sender_pid=0, source_id=0, timestamp=0, flags=zpf.RecordFlags(0x0120)
+        session_id=1, sender_pid=0, source_id=0, timestamp=0, flags=zpf.RecordFlags(0x0220)
     )
     obj = block_to_obj(record)
-    assert obj["flags"] == ["0x0020", "0x0100"]
+    assert obj["flags"] == ["0x0020", "0x0200"]
     assert obj_to_block(obj).flags == record.flags
 
 
@@ -517,7 +519,7 @@ def test_reader_requires_a_file_line_first():
 
 
 def test_reader_rejects_second_file_line():
-    line = '{"type":"file","format":"zipline-payload/0.23","tick_hz":1000000}\n'
+    line = '{"type":"file","format":"zipline-payload/0.24","tick_hz":1000000}\n'
     with pytest.raises(zpf.StructuralError):
         read_all(line + line)
 

@@ -1,0 +1,89 @@
+# capture-fragment-lost
+#
+# Generated from the same description as the .zpf -- never edited
+# by hand, so the annotation cannot drift from the bytes.
+
+0000  01 00                    type   = 0x0001  File Header
+0002  00 00                    reserved
+0004  10 00 00 00              length = 16
+0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
+000C  00 00                    version_major = 0
+000E  18 00                    version_minor = 24
+0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
+
+0018  02 00                    type   = 0x0002  Source Descriptor
+001A  00 00                    reserved
+001C  20 00 00 00              length = 32
+0020  01 00                    source_id = 1
+0022  00                       kind = 0  (capture)
+0023  00                       _reserved
+0024  20 00 0D 00              option 0x0020 uri, len = 13
+0028  77 67 2D 69 6E 6E 65 72  "wg-inner.pcap"
+0030  2E 70 63 61 70
+0035  00 00 00                 value padding
+0038  22 00 02 00              option 0x0022 link_type, len = 2  (1)
+003C  01 00
+003E  00 00                    value padding
+
+0040  10 00                    type   = 0x0010  Session Descriptor
+0042  00 00                    reserved
+0044  10 00 00 00              length = 16
+0048  09 00 00 00 00 00 00 00  session_id = 9  (u64)
+0050  50 00 03 00              option 0x0050 proto, len = 3
+0054  75 64 70                 "udp"
+0057  00                       value padding
+
+0058  11 00                    type   = 0x0011  Participant Descriptor
+005A  00 00                    reserved
+005C  20 00 00 00              length = 32
+0060  09 00 00 00 00 00 00 00  session_id = 9  (u64)
+0068  00 00                    participant_id = 0
+006A  00                       adjacency = 0  (contiguous)
+006B  00                       _reserved
+006C  60 00 0D 00              option 0x0060 endpoint, len = 13
+0070  31 30 2E 38 2E 30 2E 32  "10.8.0.2:5001"
+0078  3A 35 30 30 31
+007D  00 00 00                 value padding
+
+0080  20 00                    type   = 0x0020  Record
+0082  00 00                    reserved
+0084  28 00 00 00              length = 40
+0088  09 00 00 00 00 00 00 00  session_id = 9  (u64)
+0090  00 00                    sender_pid = 0
+0092  01 00                    source_id  = 1
+0094  4C 04 00 00 00 00 00 00  timestamp  = 1100
+009C  00 00                    _reserved  (u16 = 0)
+009E  80 00                    flags      = 0x0080
+00A0  0C 00 00 00              payload_len = 12
+00A4  65 65 65 65 65 65 65 65  "eeeeeeeeeeee"
+00AC  65 65 65 65
+
+00B0  21 00                    type   = 0x0021  Undecoded
+00B2  00 00                    reserved
+00B4  70 00 00 00              length = 112
+00B8  01 00                    source_id = 1  (in the capture file)
+00BA  00 00                    participant_id = 0  (unused)
+00BC  00 00 00 00 00 00 00 00  session_id = 0  (unused)
+00C4  28 00 00 00 00 00 00 00  off_start = 40  (capture byte offset)
+00CC  6A 00 00 00 00 00 00 00  off_end   = 106  (capture byte offset)
+00D4  A0 00 0B 00              option 0x00A0 reason, len = 11
+00D8  75 6E 64 65 63 6F 64 61  "undecodable"
+00E0  62 6C 65
+00E3  00                       value padding
+00E4  01 00 3F 00              option 0x0001 comment, len = 63
+00E8  66 72 61 67 6D 65 6E 74  "fragment 1 of 2 of datagram id 0x1234; fragment 2 never arrived"
+00F0  20 31 20 6F 66 20 32 20
+00F8  6F 66 20 64 61 74 61 67
+0100  72 61 6D 20 69 64 20 30
+0108  78 31 32 33 34 3B 20 66
+0110  72 61 67 6D 65 6E 74 20
+0118  32 20 6E 65 76 65 72 20
+0120  61 72 72 69 76 65 64
+0127  00                       value padding
+
+0128  41 00                    type   = 0x0041  End of file
+012A  00 00                    reserved
+012C  04 00 00 00              length = 4
+0130  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
+
+0134                           (end of file, 308 bytes)

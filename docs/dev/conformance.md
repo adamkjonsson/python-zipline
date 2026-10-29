@@ -163,10 +163,10 @@ subject, from the reader's side.
 ## Going beyond the standard
 
 Per `CLAUDE.md`, support must stay complete *and* must not silently exceed the
-v0.23 spec: any behavior beyond the standard has to be flagged to the user with
+v0.24 spec: any behavior beyond the standard has to be flagged to the user with
 an explicit callout. The checker's rules are the spec's, and the two out-of-band
 checks (sequenced order, coverage) are spec requirements enforced elsewhere,
-not extensions. A new rule that isn't in v0.23 does not belong in the
+not extensions. A new rule that isn't in v0.24 does not belong in the
 `ConformanceChecker`.
 
 **Three things exceed the standard.** Two are on the write side. The first:

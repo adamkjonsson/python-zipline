@@ -1,0 +1,107 @@
+# udp-capture-copy
+#
+# Generated from the same description as the .zpf -- never edited
+# by hand, so the annotation cannot drift from the bytes.
+
+0000  01 00                    type   = 0x0001  File Header
+0002  00 00                    reserved
+0004  10 00 00 00              length = 16
+0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
+000C  00 00                    version_major = 0
+000E  18 00                    version_minor = 24
+0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
+
+0018  02 00                    type   = 0x0002  Source Descriptor
+001A  00 00                    reserved
+001C  14 00 00 00              length = 20
+0020  01 00                    source_id = 1
+0022  00                       kind = 0  (capture)
+0023  00                       _reserved
+0024  20 00 0B 00              option 0x0020 uri, len = 11
+0028  6D 69 72 72 6F 72 2E 70  "mirror.pcap"
+0030  63 61 70
+0033  00                       value padding
+
+0034  10 00                    type   = 0x0010  Session Descriptor
+0036  00 00                    reserved
+0038  10 00 00 00              length = 16
+003C  09 00 00 00 00 00 00 00  session_id = 9  (u64)
+0044  50 00 03 00              option 0x0050 proto, len = 3
+0048  75 64 70                 "udp"
+004B  00                       value padding
+
+004C  11 00                    type   = 0x0011  Participant Descriptor
+004E  00 00                    reserved
+0050  20 00 00 00              length = 32
+0054  09 00 00 00 00 00 00 00  session_id = 9  (u64)
+005C  00 00                    participant_id = 0
+005E  00                       adjacency = 0  (contiguous)
+005F  00                       _reserved
+0060  60 00 0E 00              option 0x0060 endpoint, len = 14
+0064  31 30 2E 30 2E 30 2E 31  "10.0.0.1:53000"
+006C  3A 35 33 30 30 30
+0072  00 00                    value padding
+
+0074  11 00                    type   = 0x0011  Participant Descriptor
+0076  00 00                    reserved
+0078  1C 00 00 00              length = 28
+007C  09 00 00 00 00 00 00 00  session_id = 9  (u64)
+0084  01 00                    participant_id = 1
+0086  00                       adjacency = 0  (contiguous)
+0087  00                       _reserved
+0088  60 00 0C 00              option 0x0060 endpoint, len = 12
+008C  31 30 2E 30 2E 30 2E 35  "10.0.0.53:53"
+0094  33 3A 35 33
+
+0098  20 00                    type   = 0x0020  Record
+009A  00 00                    reserved
+009C  2C 00 00 00              length = 44
+00A0  09 00 00 00 00 00 00 00  session_id = 9  (u64)
+00A8  00 00                    sender_pid = 0
+00AA  01 00                    source_id  = 1
+00AC  E8 03 00 00 00 00 00 00  timestamp  = 1000
+00B4  00 00                    _reserved  (u16 = 0)
+00B6  80 00                    flags      = 0x0080
+00B8  0F 00 00 00              payload_len = 15
+00BC  51 20 65 78 61 6D 70 6C  "Q example.com A"
+00C4  65 2E 63 6F 6D 20 41
+00CB  00                       payload padding
+
+00CC  20 00                    type   = 0x0020  Record
+00CE  00 00                    reserved
+00D0  3C 00 00 00              length = 60
+00D4  09 00 00 00 00 00 00 00  session_id = 9  (u64)
+00DC  01 00                    sender_pid = 1
+00DE  01 00                    source_id  = 1
+00E0  4C 04 00 00 00 00 00 00  timestamp  = 1100
+00E8  00 00                    _reserved  (u16 = 0)
+00EA  80 00                    flags      = 0x0080
+00EC  1D 00 00 00              payload_len = 29
+00F0  52 20 65 78 61 6D 70 6C  "R example.com A 93.184.216.34"
+00F8  65 2E 63 6F 6D 20 41 20
+0100  39 33 2E 31 38 34 2E 32
+0108  31 36 2E 33 34
+010D  00 00 00                 payload padding
+
+0110  20 00                    type   = 0x0020  Record
+0112  00 00                    reserved
+0114  3C 00 00 00              length = 60
+0118  09 00 00 00 00 00 00 00  session_id = 9  (u64)
+0120  01 00                    sender_pid = 1
+0122  01 00                    source_id  = 1
+0124  4D 04 00 00 00 00 00 00  timestamp  = 1101
+012C  00 00                    _reserved  (u16 = 0)
+012E  80 01                    flags      = 0x0180
+0130  1D 00 00 00              payload_len = 29
+0134  52 20 65 78 61 6D 70 6C  "R example.com A 93.184.216.34"
+013C  65 2E 63 6F 6D 20 41 20
+0144  39 33 2E 31 38 34 2E 32
+014C  31 36 2E 33 34
+0151  00 00 00                 payload padding
+
+0154  41 00                    type   = 0x0041  End of file
+0156  00 00                    reserved
+0158  04 00 00 00              length = 4
+015C  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
+
+0160                           (end of file, 352 bytes)

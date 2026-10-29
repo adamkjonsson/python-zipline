@@ -22,6 +22,27 @@ it back from the installed distribution metadata.
 
 ## [Unreleased]
 
+### Changed
+
+**Implements spec v0.24** (`SPEC_VERSION == (0, 24)`), the sessionizer
+release ([#108](https://github.com/adamkjonsson/python-zipline/issues/108)).
+Under the `0.x` rule every minor is a separate format, so files written by
+`0.7.0` (stamped `0.23`) are no longer readable, and `0.7.0` refuses files this
+release writes. The conformance vectors are re-vendored at `v0.24`: 77 entries,
+90 files, nine of them new. A multi-file entry now declares its merged orders
+per member file, and the harness checks them. The port is in progress; its
+normative changes land under #104–#107.
+
+### Added
+
+**`RecordFlags.COPY` (`0x0100`) and its JSONL token `copy`**, the Record flag
+`0.24` assigns to a capture point's copy of a datagram
+([zipline#169](https://github.com/adamkjonsson/zipline/issues/169)). Until
+this release the bit was reserved and rendered as the hex token `"0x0100"`.
+The reserved mask is now `0xFE20`. The bit round-trips. Its two writer rules
+and the reader's check land with
+[#106](https://github.com/adamkjonsson/python-zipline/issues/106).
+
 ## [0.7.0] - 2026-10-23
 
 Implements spec **v0.23** (`SPEC_VERSION == (0, 23)`), unchanged from `0.6.0`.

@@ -42,7 +42,7 @@ _SWAPPED_MAGIC = 0x4650495A
 #: ``(version_major, version_minor)``. A writer stamps the version it
 #: implements; there is no obligation to compute the lowest version whose
 #: features a file happens to use.
-SPEC_VERSION: tuple[int, int] = (0, 23)
+SPEC_VERSION: tuple[int, int] = (0, 24)
 
 
 #: The canonical :class:`Undecoded` ``reason`` values, mapped to their
@@ -223,6 +223,24 @@ class RecordFlags(IntFlag):
     producer already resolved.
     """
     MESSAGE = 0x0080
+    COPY = 0x0100
+    """The **capture point** saw this record's transmission twice: it repeats
+    its participant's preceding record, and the sender sent once.
+
+    Since `0.24` (`zipline#169
+    <https://github.com/adamkjonsson/zipline/issues/169>`_). It names the
+    capture point's act where :attr:`RETRANSMIT` names the sender's, and it is
+    for a stream without a sequence anchor, such as UDP. There a copy cannot
+    be discarded, so it is content and is written. A writer MUST NOT set it
+    unless the payload is byte-identical to the participant's preceding
+    record's, nor on a record of a stream whose records carry ``seq_start``.
+    On a decoded record it has no meaning in `0.24`, and is preserved, never
+    interpreted.
+
+    This library round-trips the bit and its JSONL token ``copy``. The two
+    rules are not yet enforced on write or checked on read (`#106
+    <https://github.com/adamkjonsson/python-zipline/issues/106>`_).
+    """
 
 
 def _check_uint(value: int, bits: int, name: str) -> None:
