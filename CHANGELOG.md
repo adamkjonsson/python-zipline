@@ -22,6 +22,74 @@ it back from the installed distribution metadata.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-30
+
+Implements spec **v0.24** (`SPEC_VERSION == (0, 24)`), the sessionizer
+release, and it is a break in three ways, the first two of them for anyone
+who installs it:
+
+- **The format.** Under the `0.x` rule every minor is a separate format: files
+  written by `0.7.0` (stamped `0.23`) are refused by this release, and `0.7.0`
+  refuses the files it writes.
+- **The distribution name**, now `python-zipline`, so every dependency string
+  changes. The import is still `zpf`.
+- **Bytes a stage writes.** A decode or sessionize stage over a closed TCP
+  stream whose final pure ACK is stored declares that input's extent one
+  larger, as `0.24` defines it.
+
+Every one of the 77 `v0.24` conformance vectors passes. The port found three
+things upstream, all reported: a spec paragraph that claims more than one file
+can show
+([zipline#174](https://github.com/adamkjonsson/zipline/issues/174)), three
+vectors that stamp a reassembled record with the wrong time (defect 8,
+[zipline#175](https://github.com/adamkjonsson/zipline/issues/175)), and a
+missing vector
+([zipline#176](https://github.com/adamkjonsson/zipline/issues/176)). Writing a
+record also costs 45% less. Verified downstream before the tag: zpfwire's
+output is byte-identical but for the version stamp and converts 12% faster,
+and kober's suite passes unchanged. Recorded in `plans/V0.8.0-RELEASE-PLAN.md`.
+
+### Added
+
+**`RecordFlags.COPY` (`0x0100`) and its JSONL token `copy`**, the Record flag
+`0.24` assigns to a capture point's copy of a datagram
+([zipline#169](https://github.com/adamkjonsson/zipline/issues/169)). Until
+this release the bit was reserved and rendered as the hex token `"0x0100"`.
+The reserved mask is now `0xFE20`
+([#106](https://github.com/adamkjonsson/python-zipline/issues/106)).
+
+- **Both rules are held by the conformance checker**, so the writer refuses
+  and the reader isolates a transport-layer `copy` whose payload is not
+  byte-identical to its participant's preceding record's (or that has no
+  preceding record), or that sits on a stream whose records carry
+  `seq_start`. The last is caught at the copy itself, or, when `seq_start`
+  arrives later, when the participant closes. The reader drops the flagged
+  record with a diagnostic naming the rule. On a decoded record the flag has
+  no meaning in `0.24` and round-trips unchecked.
+- **`StreamView.datagrams(copies=True)` and `Datagram.copy`.** `copies=False`
+  reads a stream as the sender sent it, skipping copies; the default is what
+  the capture saw, which is what `datagrams()` returned before. A copy is
+  content of the stream either way, so it keeps its offsets and counts toward
+  the extent (`udp-capture-copy`: 58, twice the answer).
+
+**`SessionizeStage.incomplete(cites, *, comment=None)`** marks the pieces of a
+message that never completed, such as a UDP datagram that lost an IP fragment
+([#107](https://github.com/adamkjonsson/python-zipline/issues/107),
+[zipline#170](https://github.com/adamkjonsson/zipline/issues/170)). Since
+`0.24` such pieces are not content of the stream, so they get no record, but
+their input ranges are still owed coverage, and the specification asks for
+`reason = undecodable` there. This writes one such block per range. Left to
+auto-fill, the same ranges would be marked `skipped`, which says the stage
+passed them over. For a reassembler reading a *capture* the block is a
+**MUST** since `0.24`. That binds producers built on `zpf.create`, since this
+library holds no packet reassembler, and the concepts page says so.
+
+**`zpf.fin_positions()` and `StreamView.fin_positions()`**, the positions
+inside a stream's extent that a FIN occupies, which the coverage guarantee owes
+nothing. The function works from a participant's blocks, as `stream_extent`
+and `record_ranges` do. The method comes from the same walk that measures
+`extent_and_gaps`, so a stage pays nothing more for it.
+
 ### Changed
 
 **The distribution is now `python-zipline`; the import is still `zpf`**
@@ -64,7 +132,10 @@ byte: `check_coverage` exempts it, and auto-fill marks neither `gap` nor
 
 - A pure ACK stored after a **lost tail** now shows it: the range up to the
   ACK is a hole, yielded by `chunks()` as a trailing `Gap` and filled `gap`.
-  A FIN whose segment was lost leaves the same one-wide hole.
+  A FIN whose segment was lost leaves the same one-wide hole. A consumer that
+  assumed `chunks()` never ends on a `Gap` should check (zpfwire's fidelity
+  scorer did). **`StreamView.reassembled()` now raises on such a stream**,
+  as it does on any gap, where `0.7.0` returned the bytes before the loss.
 - **The single-file extent check tolerates exactly one position.** A FIN is
   found only in the input, so from a derived file alone a one-wide uncovered
   tail may be its position or one dropped byte. `extent-exceeds-coverage`
@@ -109,47 +180,6 @@ Three changes, none of them a change of behaviour:
 taken before the change, and the writer's guarantee is unchanged: every block
 still goes through the conformance checker, which is now ~28% of what a
 record costs.
-
-### Added
-
-**`SessionizeStage.incomplete(cites, *, comment=None)`** marks the pieces of a
-message that never completed, such as a UDP datagram that lost an IP fragment
-([#107](https://github.com/adamkjonsson/python-zipline/issues/107),
-[zipline#170](https://github.com/adamkjonsson/zipline/issues/170)). Since
-`0.24` such pieces are not content of the stream, so they get no record, but
-their input ranges are still owed coverage, and the specification asks for
-`reason = undecodable` there. This writes one such block per range. Left to
-auto-fill, the same ranges would be marked `skipped`, which says the stage
-passed them over. For a reassembler reading a *capture* the block is a
-**MUST** since `0.24`. That binds producers built on `zpf.create`, since this
-library holds no packet reassembler, and the concepts page says so.
-
-**`zpf.fin_positions()` and `StreamView.fin_positions()`**, the positions
-inside a stream's extent that a FIN occupies, which the coverage guarantee owes
-nothing. The function works from a participant's blocks, as `stream_extent`
-and `record_ranges` do. The method comes from the same walk that measures
-`extent_and_gaps`, so a stage pays nothing more for it.
-
-**`RecordFlags.COPY` (`0x0100`) and its JSONL token `copy`**, the Record flag
-`0.24` assigns to a capture point's copy of a datagram
-([zipline#169](https://github.com/adamkjonsson/zipline/issues/169)). Until
-this release the bit was reserved and rendered as the hex token `"0x0100"`.
-The reserved mask is now `0xFE20`
-([#106](https://github.com/adamkjonsson/python-zipline/issues/106)).
-
-- **Both rules are held by the conformance checker**, so the writer refuses
-  and the reader isolates a transport-layer `copy` whose payload is not
-  byte-identical to its participant's preceding record's (or that has no
-  preceding record), or that sits on a stream whose records carry
-  `seq_start`. The last is caught at the copy itself, or, when `seq_start`
-  arrives later, when the participant closes. The reader drops the flagged
-  record with a diagnostic naming the rule. On a decoded record the flag has
-  no meaning in `0.24` and round-trips unchecked.
-- **`StreamView.datagrams(copies=True)` and `Datagram.copy`.** `copies=False`
-  reads a stream as the sender sent it, skipping copies; the default is what
-  the capture saw, which is what `datagrams()` returned before. A copy is
-  content of the stream either way, so it keeps its offsets and counts toward
-  the extent (`udp-capture-copy`: 58, twice the answer).
 
 ## [0.7.0] - 2026-10-23
 
@@ -1047,7 +1077,8 @@ as "1.0" and renumbered without rewriting its bytes.
 - The streaming causal merge and `SEQUENCED` verification.
 - The merge transform, the coverage validator, and the `zpf` CLI.
 
-[Unreleased]: https://github.com/adamkjonsson/python-zipline/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/python-zipline/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/adamkjonsson/python-zipline/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/adamkjonsson/python-zipline/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/adamkjonsson/python-zipline/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/adamkjonsson/python-zipline/compare/v0.5.1...v0.5.2

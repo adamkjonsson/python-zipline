@@ -12,19 +12,21 @@ by the transform that owns them.
 | ---------- | -------- | ----------- | ---- |
 | Structural framing | magic, version, `tick_hz != 0`, block length a multiple of 4, lengths within bounds | `binary.py` (`BlockReader`) while decoding | `StructuralError` — always fatal |
 | Value encodability | integer range, option ≤ 65 535 bytes, `Custom` length a multiple of 4 | `blocks.py` / `_frame.py` at construction/serialization | `EncodeError` — write side |
-| Semantic (single-pass) | declare-before-use, id uniqueness, session lifetime, per-participant `seq_start` order, an `adjacency` this version does not define | `conformance.py` (`ConformanceChecker`) | `SemanticError` — isolate or reject |
+| Semantic (single-pass) | declare-before-use, id uniqueness, session lifetime, per-participant `seq_start` order, an `adjacency` this version does not define, a transport-layer `copy` that does not repeat its predecessor or sits on a `seq_start` stream | `conformance.py` (`ConformanceChecker`) | `SemanticError` — isolate or reject |
 | Semantic, writer-only | reserved flag bits, `prim:` payload widths and token vocabulary, a label or `units` on a transport-layer participant | `conformance.py` (`ConformanceChecker`) | `AdvisoryError` — report, but keep the block |
 | Placement | a record the offset space cannot place — below the record it is measured from, or hint-less on an anchored stream | `conformance.py` `_check_placement`, on the same anchor `order._Placer` walks | `unplaceable` notes — reported, never a violation |
 | Sequenced order | a SEQUENCED session's stored order really is a causal linearization | `order.py` `_StoredOrder`, driven by `SessionWriter` while writing and by `verify_sequenced` / `SessionReader.verify()` on request | `SemanticError` — write side always, read side opt-in |
-| Coverage, from the file alone | an interior range neither decoded nor marked; a declared `input_extents` its own spans contradict | `conformance.py` (`CoverageLedger`), ruled on at `finish()` | end-of-stream property |
-| Coverage, against the input | every input offset decoded or marked Undecoded, never both; a declared extent the input disagrees with | `transform.py` `check_coverage` | needs a second file |
+| Coverage, from the file alone | an interior range neither decoded nor marked; a declared `input_extents` its own spans contradict, by more than one position | `conformance.py` (`CoverageLedger`), ruled on at `finish()` | end-of-stream property |
+| Coverage, against the input | every input offset decoded or marked Undecoded, never both, except a FIN's position (`fin_positions`); a declared extent the input disagrees with | `transform.py` `check_coverage` | needs a second file |
 | The splice duty | a unit whose spans cross an input's declared break | `transform.py` `check_splice` | needs a second file |
 
 **Coverage is settled in two places, and the split is the point.** Some of it a
 file can be checked for alone: a hole *between* two covered ranges is visible
 without opening anything, and since `0.14` a Session End's `input_extents`
 makes a *trailing* hole visible too — without a declared length, coverage that
-stops early is indistinguishable from a stream that was that short. That much
+stops early is indistinguishable from a stream that was that short. Since
+`0.24` that holds to within one position (see *What one file cannot decide*,
+below). That much
 the `ConformanceChecker` gathers as it observes and rules on at `finish()`, so
 `zpf.open` reports it. The rest genuinely needs the input in hand, and stays in
 the transform helpers.
@@ -290,7 +292,7 @@ bytes side.
 
 ## Conformance vectors
 
-The specification ships 62 hand-built vectors, vendored verbatim into
+The specification ships 77 hand-built vectors at `v0.24`, vendored verbatim into
 [`tests/vectors/`](https://github.com/adamkjonsson/python-zipline/tree/main/tests/vectors)
 and run by `tests/test_vectors.py` across the three tiers — `accept` (a
 conformant file, with its expected JSONL projection), `reject` (structural
@@ -314,13 +316,18 @@ that wrong reason during the 0.12 port, and two did again at the start of the
 moved. And
 a vector is never edited to make a test pass: they are subordinate to the
 normative text, so a vector that looks wrong is a question for the spec
-repository. Six have been found so far, every one fixed upstream;
-`VECTOR-DEFECTS.md` records them.
+repository. Eight have been found so far, seven fixed upstream and the
+eighth reported (zipline#175); `VECTOR-DEFECTS.md` records them.
 
-One vector is judged as a **pair**. `splice` ships two files that are each
+Two vectors are judged as a **pair**. `splice` ships two files that are each
 individually conformant — stage 1 declares a break, stage 2 spans across it —
 so the violation belongs to neither on its own and a harness testing files
-individually passes it. The manifest's `files` key marks such a fixture, and
+individually passes it. `isolate-transport-splice`, since `0.24`, is the same
+shape at the transport layer: a record carrying neither `seq_start` nor
+`message` that crosses a declared break. The mirror check runs on the
+multi-file *accept* vectors: each hop upstream's `check.py` vouches for must
+pass `check_coverage` and `check_splice` as a pair
+(`test_an_accept_pair_is_clean_as_a_pair`). The manifest's `files` key marks such a fixture, and
 the harness routes it to {func}`zpf.check_splice` instead of the per-file
 tiers.
 

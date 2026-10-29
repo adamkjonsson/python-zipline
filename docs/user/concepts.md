@@ -378,7 +378,11 @@ one input record's framing can feed an inner unit in each of two output
 sessions. Checkable with {func}`zpf.check_coverage
 <zpf.transform.check_coverage>` when the input is at hand, and with
 {func}`zpf.check_extents <zpf.transform.check_extents>` from the derived
-file alone.
+file alone, to within one position. Since `0.24` a closed TCP stream's
+extent can include its FIN's position, which holds no byte and is owed
+nothing. Only the input shows where a FIN is, so from the derived file a
+one-wide uncovered tail could be either that or one dropped byte, and only
+`check_coverage` can tell.
 
 A decoded stream may also declare a **Discontinuity**: a break in the file's
 *own* output, saying the records either side do not join. It is the mirror

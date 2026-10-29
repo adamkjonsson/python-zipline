@@ -184,5 +184,5 @@ full.
 
 ```console
 $ zpf --version
-zpf 0.1.0
+zpf 0.8.0
 ```

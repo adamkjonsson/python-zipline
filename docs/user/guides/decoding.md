@@ -50,6 +50,16 @@ for stream in session.reassemble():
             parse(datagram.data)       # one whole message
 ```
 
+**A datagram the capture saw twice.** Since `0.24` a producer may flag a
+UDP datagram that a mirror port or a two-interface capture saw twice with
+`copy`: the sender sent once. The copy is content of the stream, so
+`datagrams()` yields it by default, as the capture saw it, with
+{attr}`Datagram.copy <zpf.reassembly.Datagram.copy>` set. A decoder that
+wants the messages as the sender sent them, one DNS answer where the mirror
+saw two, iterates `stream.datagrams(copies=False)`. Both are the
+specification's readings, and the copy keeps its offsets either way, so a
+citation is unaffected.
+
 ### Segments, chunks, and gaps
 
 For a byte stream, three methods offer different views of the same bytes:
@@ -58,10 +68,14 @@ For a byte stream, three methods offer different views of the same bytes:
   a decoder parses each run and cites offsets within it.
 - {meth}`~zpf.StreamView.chunks` — the runs **and** the {class}`~zpf.Gap`s
   between them, in order. Use it when a hole matters — e.g. to mark the gap
-  explicitly, or to reset parser state across it.
+  explicitly, or to reset parser state across it. Since `0.24` a gap can also
+  come **last**: a pure ACK stored after a lost tail shows the tail was sent,
+  so the range up to it is a hole too.
 - {meth}`~zpf.StreamView.reassembled` — the whole stream as one `bytes`. A
   convenience for the gap-free case; it raises if the stream has a gap, since
-  joining across a hole would misalign every offset after it.
+  joining across a hole would misalign every offset after it. That includes a
+  trailing gap, so since `0.24` it raises on a stream whose tail was lost
+  before a captured ACK, where `0.7.0` returned the bytes before the loss.
 
 A `Gap` occupies logical offset space (the coordinate system counts missing
 bytes as if present), so offsets stay stable whether or not a segment was lost —
@@ -207,7 +221,10 @@ how long each input stream it drew on was. That is what lets a consumer check
 the guarantee **from your output alone**, with {func}`~zpf.check_extents` and
 without opening the input: a hole at the *end* of a stream is otherwise
 invisible, because coverage that stops early looks exactly like a stream that
-was that short.
+was that short. Since `0.24` this holds to within one position: a closed TCP
+stream's FIN can sit at its last offset, owed nothing, and only the input
+shows it, so a one-wide shortfall there is left to
+{func}`~zpf.check_coverage`.
 
 ### Saying your own output breaks
 
