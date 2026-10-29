@@ -1107,3 +1107,115 @@ def test_a_trailing_break_does_not_extend_either_measurement():
     blocks = list(reader.session(7).stream_blocks(view.participant.participant_id))
     assert any(isinstance(block, zpf.Discontinuity) for block in blocks)  # it is really there
     assert zpf.stream_extent(view.participant, blocks, zpf.OutputLayer.DECODED) == 4
+
+
+# --- 0.24: an extent counts sequence numbers, and a FIN's position is owed nothing ----
+#
+# zipline#168, and #104 here. A zero-length record reaches its own offset, so
+# a closing side's final pure ACK, stored at its wire number one past its FIN,
+# puts the FIN's position inside the extent. Every case below is measured
+# three ways that must agree: cold, after a walk, and by the independent
+# definition, `stream_extent` / `fin_positions` over the raw blocks.
+
+PSH_FIN = zpf.RecordFlags.PSH | zpf.RecordFlags.FIN
+
+
+def measured_three_ways(
+    fill: Callable[[SessionWriter], None],
+) -> tuple[int, list[tuple[int, int]], list[int]]:
+    """Measure one stream cold, warm and from its blocks; insist they agree."""
+    cold, warm = fresh_and_walked(fill)
+    view = only_view(fill)
+    fins = view.fin_positions()
+    reader = build(fill)
+    session = reader.session(7)
+    (participant,) = session.participants
+    blocks = list(session.stream_blocks(participant.participant_id))
+    layer = session.layer(participant.participant_id)
+    assert cold == warm
+    assert zpf.stream_extent(participant, blocks, layer) == cold[0]
+    assert list(zpf.fin_positions(participant, blocks, layer)) == fins
+    return cold[0], cold[1], fins
+
+
+def test_a_pure_ack_past_the_fin_reaches_one_past_the_last_byte():
+    """`closed-final-ack`'s server: PONG at [0,4), FIN at 4, the ACK at 5."""
+    def fill(session: SessionWriter) -> None:
+        part = session.participant("server", isn=5000)
+        session.record(part, ts=1, payload=b"PONG", flags=PSH_FIN,
+                       hints=zpf.Hints(seq_start=5001))
+        session.record(part, ts=2, hints=zpf.Hints(seq_start=5006))
+
+    # The FIN's position is in the extent and not among the holes.
+    assert measured_three_ways(fill) == (5, [], [4])
+
+
+def test_a_fin_with_nothing_past_it_ends_the_stream_at_its_last_byte():
+    """`closed-final-ack`'s client: the FIN is at the extent, outside the stream."""
+    def fill(session: SessionWriter) -> None:
+        part = session.participant("client", isn=1000)
+        session.record(part, ts=1, payload=b"PINGQUIT", flags=PSH_FIN,
+                       hints=zpf.Hints(seq_start=1001))
+
+    assert measured_three_ways(fill) == (8, [], [])
+
+
+def test_a_zero_length_fin_reaches_its_offset_not_its_end():
+    """Reach is not the merge's end: the FIN at 8 ends at 9, and the extent is 8.
+
+    The shape of `sequenced-pure-ack-and-fin`'s client. A reader that took
+    the extent as the furthest end would measure 9.
+    """
+    def fill(session: SessionWriter) -> None:
+        part = session.participant("client", isn=1000)
+        session.record(part, ts=1, payload=b"HELLO 1\r", hints=zpf.Hints(seq_start=1001))
+        session.record(part, ts=2, flags=zpf.RecordFlags.FIN,
+                       hints=zpf.Hints(seq_start=1009))
+
+    assert measured_three_ways(fill) == (8, [], [])
+
+
+def test_a_zero_length_fin_with_an_ack_past_it_is_owed_nothing_either():
+    """The position of a zero-length FIN is its offset, as the spec says."""
+    def fill(session: SessionWriter) -> None:
+        part = session.participant("client", isn=1000)
+        session.record(part, ts=1, payload=b"HELLO 1\r", hints=zpf.Hints(seq_start=1001))
+        session.record(part, ts=2, flags=zpf.RecordFlags.FIN,
+                       hints=zpf.Hints(seq_start=1009))
+        session.record(part, ts=3, hints=zpf.Hints(seq_start=1010))
+
+    assert measured_three_ways(fill) == (9, [], [8])
+
+
+def test_a_lost_fin_leaves_an_ordinary_one_wide_hole():
+    """No record marks the position, so it is the hole it then is."""
+    def fill(session: SessionWriter) -> None:
+        part = session.participant("server", isn=5000)
+        session.record(part, ts=1, payload=b"PONG", hints=zpf.Hints(seq_start=5001))
+        session.record(part, ts=2, hints=zpf.Hints(seq_start=5006))
+
+    assert measured_three_ways(fill) == (5, [(4, 5)], [])
+
+
+def test_a_pure_ack_after_a_lost_tail_is_the_evidence_of_it():
+    """The rationale's case for counting sequence numbers: [100,150) was sent.
+
+    Counted in bytes, the extent would be 100 and the loss would vanish.
+    The hole is yielded as a trailing Gap, so a decoder walking the chunks
+    sees it too.
+    """
+    def fill(session: SessionWriter) -> None:
+        part = session.participant("a", isn=1000)
+        session.record(part, ts=1, payload=b"A" * 100, hints=zpf.Hints(seq_start=1001))
+        session.record(part, ts=2, hints=zpf.Hints(seq_start=1151))
+
+    assert measured_three_ways(fill) == (150, [(100, 150)], [])
+    assert list(only_view(fill).chunks())[-1] == zpf.Gap(100, 150)
+
+
+def test_a_decoded_stream_has_no_fin_positions():
+    """A FIN's sequence number is a transport idea; decoded offsets have none."""
+    reader, view = decoded_stream_with_trailing_break()
+    blocks = list(reader.session(7).stream_blocks(view.participant.participant_id))
+    assert zpf.fin_positions(view.participant, blocks, zpf.OutputLayer.DECODED) == ()
+    assert view.fin_positions() == []

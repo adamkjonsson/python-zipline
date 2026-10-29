@@ -311,6 +311,21 @@ class CoverageLedger:
         still the right one, and a file that declares a ``zpf-input`` Source
         only to resolve an inherited reference cites nothing through it.
 
+        **A declared extent one past the coverage is not reported**, since
+        `0.24`. The position a FIN occupies lies inside a closed stream's
+        extent wherever its final pure ACK is stored past it, and is owed
+        nothing (`zipline#168
+        <https://github.com/adamkjonsson/zipline/issues/168>`_). That
+        position is always the stream's last offset, and it is found in the
+        input, which this file does not hold. So from this file a one-wide
+        uncovered tail is either a FIN's position (conformant, as
+        ``decoded-past-fin`` requires) or one dropped byte, and nothing here
+        tells them apart. This check declines to guess. The cost is a blind
+        spot of exactly one byte at the tail of each input stream, which
+        :func:`zpf.check_coverage` closes, because it has the input. The
+        specification does not say this yet (`zipline#174
+        <https://github.com/adamkjonsson/zipline/issues/174>`_).
+
         Returns:
             ``(offset, category, message)`` per finding, in stream order.
 
@@ -356,7 +371,15 @@ class CoverageLedger:
 
         if values:
             extent = next(iter(values))
-            if extent > reach:
+            # One position short is not decidable from this file. Since 0.24
+            # the position a FIN occupies is inside the extent wherever a
+            # pure ACK is stored past it, holds no byte and is owed nothing.
+            # It can only be the stream's last offset, since nothing is
+            # stored beyond FIN + 1. The FIN is in the *input*, which this
+            # file does not hold, so a one-wide shortfall at the tail may be
+            # exactly that, and `decoded-past-fin` requires accepting it.
+            # `check_coverage`, which has the input, still decides it.
+            if extent > reach + 1:
                 findings.append((
                     reach,
                     "extent-exceeds-coverage",

@@ -238,6 +238,29 @@ declines to test may still be one where the duty binds. On the write side
 and {func}`~zpf.decode_stage` takes `adjacency=` for the stage at which every
 seam is a break.
 
+### What one file cannot decide, since `0.24`
+
+**A declared extent one position past the coverage.** `input_extents` exists
+so that a derived file can show, alone, that no tail was silently dropped
+(`extent-exceeds-coverage`). `0.24` made one position undecidable that way. A
+closed transport stream whose final pure ACK is stored past its FIN reaches
+one past its last byte, and the position between is the FIN's: it holds no
+byte and the coverage guarantee owes it nothing
+([zipline#168](https://github.com/adamkjonsson/zipline/issues/168)). It is
+always the stream's last offset, since nothing is stored beyond FIN + 1, and
+the specification says a checker finds it **in the input**. So from the
+derived file, a one-wide uncovered tail is either that position (conformant:
+`decoded-past-fin` is an accept vector) or one dropped byte.
+
+The checker declines to guess: `extent-exceeds-coverage` fires on a shortfall
+of more than one, in the reader and in {func}`zpf.check_extents` alike. This
+is not exceeding the standard but stopping short of a check one file used to
+afford. {func}`zpf.check_coverage`, which holds the input, still decides the
+position with {func}`zpf.fin_positions`, and reports a one-wide hole where the
+FIN's segment was lost. The specification's `input_extents` paragraph still
+calls the check self-verifiable without this qualification, which is reported
+as [zipline#174](https://github.com/adamkjonsson/zipline/issues/174).
+
 ### One recommendation the standard declined, then took
 
 Our [review of `0.15`](https://github.com/adamkjonsson/python-zipline/blob/main/plans/SPEC-0.15-REVIEW.md)

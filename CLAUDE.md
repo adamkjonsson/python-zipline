@@ -47,7 +47,13 @@ Five traps worth naming, because each looks like a bug and is not:
   `0.23` a record's end is one past the last **sequence number** it occupies:
   data ends at offset + length, a zero-length SYN at its offset, a zero-length
   FIN at offset + 1, and a pure ACK or bare RST has **no end**, so no edge runs
-  from it (`_sequence_end` in `order.py`). Both walks
+  from it (`_sequence_end` in `order.py`). **An extent is reach, not end**
+  (since `0.24`): a record reaches offset + length, so a zero-length one
+  reaches its own offset, and a zero-length FIN ends one further than it
+  reaches. A final pure ACK stored one past its FIN puts the FIN's position
+  inside the extent, and that position is owed no coverage
+  (`fin_positions` in `reassembly.py`). One file cannot tell it from a
+  dropped byte, so the single-file extent check tolerates exactly one. Both walks
   are `_Walk` in `order.py` (`_Placer` for offsets, `_AckWalk` for acks), and
   the checker and the writer's guard use the same anchor. A stream past
   2 GiB, or one whose sequence numbers pass through 2³², is conformant,

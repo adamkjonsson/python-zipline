@@ -33,7 +33,39 @@ release writes. The conformance vectors are re-vendored at `v0.24`: 77 entries,
 per member file, and the harness checks them. The port is in progress; its
 normative changes land under #104–#107.
 
+**A transport stream's extent counts sequence numbers, and a FIN's position is
+owed nothing** ([#104](https://github.com/adamkjonsson/python-zipline/issues/104),
+[zipline#168](https://github.com/adamkjonsson/zipline/issues/168)). This changes
+bytes a stage writes. A zero-length record now reaches its own offset, so on a
+closed TCP stream whose final pure ACK is stored one past its FIN,
+`StreamView.extent_and_gaps` measures one more than `0.7.0` did, and a
+decode or sessionize stage declares that extent on its Session End. Through
+`0.7.0` the stage declared one short while `check_coverage` measured the
+spec's number, so the stage's own output failed its own check (`[4, 5)` on
+`closed-final-ack`). The FIN's position between is not a hole and not a
+byte: `check_coverage` exempts it, and auto-fill marks neither `gap` nor
+`skipped` there.
+
+- A pure ACK stored after a **lost tail** now shows it: the range up to the
+  ACK is a hole, yielded by `chunks()` as a trailing `Gap` and filled `gap`.
+  A FIN whose segment was lost leaves the same one-wide hole.
+- **The single-file extent check tolerates exactly one position.** A FIN is
+  found only in the input, so from a derived file alone a one-wide uncovered
+  tail may be its position or one dropped byte. `extent-exceeds-coverage`
+  (reader, writer, `check_extents`) fires on a shortfall of more than one,
+  and `check_coverage`, which holds the input, decides the last one.
+- `stream_extent` was already right, and is unchanged. Its docstring now
+  states the definition, and that **reach is not a record's end**: a
+  zero-length FIN ends one past its offset for the merge, but reaches only its
+  offset.
+
 ### Added
+
+**`zpf.fin_positions()` and `StreamView.fin_positions()`**, the positions
+inside a stream's extent that a FIN occupies, which the coverage guarantee owes
+nothing. The function works from a participant's blocks, as `stream_extent`
+and `record_ranges` do. The method comes from the same walk that measures
+`extent_and_gaps`, so a stage pays nothing more for it.
 
 **`RecordFlags.COPY` (`0x0100`) and its JSONL token `copy`**, the Record flag
 `0.24` assigns to a capture point's copy of a datagram

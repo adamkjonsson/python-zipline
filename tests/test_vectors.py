@@ -126,6 +126,7 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "decap-ethernet",
         "decoded-basic",
         "decoded-past-fin/capture",
+        "decoded-past-fin/decoded",
         "decoded-field-roles",
         "descriptive-metadata",
         "discontinuity-known-width",

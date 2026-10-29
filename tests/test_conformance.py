@@ -730,6 +730,27 @@ def test_a_trailing_gap_is_invisible_until_an_extent_declares_it():
     )
 
 
+def _declaring(extent: int) -> zpf.SessionEnd:
+    return zpf.SessionEnd(
+        session_id=5,
+        input_extents=(
+            zpf.InputExtent(source_id=2, session_id=7, participant_id=0, extent=extent),
+        ),
+    )
+
+
+def test_a_one_wide_tail_is_not_decidable_from_one_file():
+    """Since 0.24 it may be a FIN's position, which is owed nothing.
+
+    A closed stream whose final pure ACK is stored past its FIN reaches one
+    past its last byte (`decoded-past-fin`). The FIN is in the input, which
+    this file does not hold, so a one-wide shortfall is accepted here and
+    left to `check_coverage`. Two wide is not a FIN, and is still reported.
+    """
+    finished(*_decode_stage(_cite(0, 20), _declaring(21)))
+    reject_at_end(*_decode_stage(_cite(0, 20), _declaring(22)), match="declared extent 22")
+
+
 def test_a_declared_extent_its_own_spans_overshoot_is_a_contradiction():
     reject_at_end(
         *_decode_stage(

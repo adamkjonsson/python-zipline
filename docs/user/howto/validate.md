@@ -117,7 +117,7 @@ produces most:
 | `coverage-gap` | Input bytes neither decoded nor marked Undecoded. | Add a decoded span or an [Undecoded](decode_stage.md) marker. |
 | `coverage-overlap` | Input bytes both decoded and marked Undecoded. | Drop the redundant Undecoded marker. |
 | `coverage-excess` | A cited range runs past the input stream. | Correct the span's `off_end`. |
-| `extent-exceeds-coverage` | A declared `input_extents` reaches past what the file accounts for. | Cover the tail, or correct the declared extent. |
+| `extent-exceeds-coverage` | A declared `input_extents` reaches more than one position past what the file accounts for. (One position short may be a FIN's, which only the input can show; see `check_coverage`.) | Cover the tail, or correct the declared extent. |
 | `extent-below-coverage` | A declared extent the file's own spans overshoot. | Correct the extent; the citations say the stream was longer. |
 | `extents-disagree` | Two sessions declare different lengths for one input stream. | An input stream has one length — fix the producer. |
 | `extent-mismatch` | A declared extent the opened input disagrees with. | Re-measure against the real input. |

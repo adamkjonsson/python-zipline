@@ -49,7 +49,7 @@ from zpf.conformance import CoverageLedger
 from zpf.errors import Diagnostic, ZpfError
 from zpf.order import causal_merge
 from zpf.reader import FileReader, SessionReader
-from zpf.reassembly import layer_name, stream_extent
+from zpf.reassembly import fin_positions, layer_name, stream_extent
 from zpf.writer import (
     Decoded,
     DecoderHandle,
@@ -346,6 +346,14 @@ def check_coverage(
     offset must be covered either by some decoded record's ``spans`` or by
     an Undecoded block — never silently dropped, never both.
 
+    **Except the position a FIN occupies**, which since `0.24` is owed
+    nothing (`zipline#168
+    <https://github.com/adamkjonsson/zipline/issues/168>`_). Where a closed
+    stream's final pure ACK is stored past its FIN, the extent reaches one
+    past the last byte, and the position between holds no byte. It is
+    found in the input, by :func:`~zpf.reassembly.fin_positions`, which is
+    what this check has and a single-file reader does not.
+
     Args:
         decoded: The decode-stage output file.
         raw: The predecessor input file the decoded file cites.
@@ -365,13 +373,14 @@ def check_coverage(
     with FileReader(decoded) as decoded_reader, FileReader(raw) as raw_reader:
         source_id = _input_source_id(decoded_reader, raw)
         extents = _stream_extents(raw_reader)
+        exempt = _stream_fin_positions(raw_reader)
         spans, undecoded = _cited_intervals(decoded_reader, source_id)
         declared = _declared_extents(decoded_reader, source_id)
         findings: list[Diagnostic] = []
         for key in sorted(set(extents) | set(spans) | set(undecoded)):
             findings.extend(
                 _check_stream(key, extents.get(key, 0), spans.get(key, []),
-                              undecoded.get(key, []))
+                              undecoded.get(key, []), exempt.get(key, ()))
             )
         findings.extend(_check_declared(declared, extents))
         return findings
@@ -794,6 +803,25 @@ def _stream_extents(raw: FileReader) -> dict[tuple[int, int], int]:
     return extents
 
 
+def _stream_fin_positions(raw: FileReader) -> dict[tuple[int, int], tuple[int, ...]]:
+    """Find each input stream's FIN positions inside its extent, which are owed nothing.
+
+    A second pass over the input beside :func:`_stream_extents`, through the
+    same shared rule, so the exemption is found where the specification
+    says a checker finds it: in the input.
+    """
+    positions: dict[tuple[int, int], tuple[int, ...]] = {}
+    for session in raw.sessions():
+        for participant in session.participants:
+            pid = participant.participant_id
+            found = fin_positions(
+                participant, list(session.stream_blocks(pid)), session.layer(pid)
+            )
+            if found:
+                positions[(session.session_id, pid)] = found
+    return positions
+
+
 def _cited_intervals(decoded: FileReader, source_id: int) -> tuple[_Intervals, _Intervals]:
     """Collect decoded-span and Undecoded intervals, keyed by input stream."""
     spans: _Intervals = {}
@@ -816,8 +844,14 @@ def _check_stream(
     extent: int,
     spans: list[tuple[int, int]],
     undecoded: list[tuple[int, int]],
+    exempt: tuple[int, ...] = (),
 ) -> list[Diagnostic]:
-    """Check one input stream's coverage; return its violations."""
+    """Check one input stream's coverage; return its violations.
+
+    ``exempt`` holds the stream's FIN positions, which count as covered for
+    the gap test only: they hold no byte, so nothing cites them, and they
+    take no part in the overlap or excess tests.
+    """
     session_id, pid = key
     where = f"input stream (session {session_id}, pid {pid})"
     findings: list[Diagnostic] = []
@@ -825,7 +859,8 @@ def _check_stream(
         message = f"{where}: [{start}, {end}) is both decoded and marked Undecoded"
         findings.append(Diagnostic(start, "coverage-overlap", message))
     covered = sorted(spans + undecoded)
-    for start, end in complement(covered, extent):
+    owed_nothing = [(position, position + 1) for position in exempt]
+    for start, end in complement(sorted(covered + owed_nothing), extent):
         message = f"{where}: [{start}, {end}) is neither decoded nor marked Undecoded"
         findings.append(Diagnostic(start, "coverage-gap", message))
     for start, end in covered:
