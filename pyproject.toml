@@ -3,7 +3,11 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "zpf"
+# The distribution name, which is not the import name: `import zpf` is unchanged.
+# `zpf` on PyPI belongs to an unrelated project, so depending on `zpf` invited a
+# dependency-confusion install (#102). `src/zpf/__init__.py` looks the version up
+# by this name, and `test_package.py` holds the two together.
+name = "python-zipline"
 # The single source of truth for the library's version. `zpf.__version__`
 # reads it back out of the installed metadata; nothing else states it.
 # This counter is the library's own — it is not the spec version, which

@@ -168,6 +168,9 @@ To cut a release:
    ```bash
    .venv/bin/python -m build          # wheel + sdist into dist/
    ```
+   Since `0.8.0` they are named for the distribution, `python_zipline-X.Y.Z-py3-none-any.whl`
+   and `python_zipline-X.Y.Z.tar.gz`, not `zpf-…` (#102); the import inside
+   is still `zpf`.
 5. Tag the commit `vX.Y.Z` and use that version's changelog section as the
    GitHub release notes.
 

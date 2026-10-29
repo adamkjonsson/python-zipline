@@ -121,7 +121,12 @@ warnings can only be used as a last resort, and **always ask before making such 
 
 ## Project layout
 
-- `src/zpf/` — contains the code (import name `zpf`; the `zipline` name on PyPI belongs to an unrelated project)
+- `src/zpf/` — contains the code. The import name is `zpf`; the distribution
+  name is `python-zipline` since `0.8.0`, because `zipline` and `zpf` on PyPI
+  both belong to unrelated projects (#102). `zpf.__version__` looks the
+  version up by the distribution name, and `test_package.py` holds that to
+  `pyproject.toml`. After a rename the editable install has to be redone
+  (`pip uninstall zpf`, then `pip install -e .`).
 - `docs/` — documentation of the code
 - `tests/` — test suite, native pytest style; run with `.venv/bin/pytest`
 

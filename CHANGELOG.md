@@ -24,6 +24,22 @@ it back from the installed distribution metadata.
 
 ### Changed
 
+**The distribution is now `python-zipline`; the import is still `zpf`**
+([#102](https://github.com/adamkjonsson/python-zipline/issues/102)). `zpf` on
+PyPI belongs to an unrelated project, so a dependency on `zpf` could be
+resolved against it rather than this library: dependency confusion. Nothing in
+your code changes (`import zpf`, the `zpf` command), but **every dependency
+string does**:
+
+```text
+python-zipline @ git+https://github.com/adamkjonsson/python-zipline.git@v0.8.0
+```
+
+The wheel and sdist are `python_zipline-0.8.0-…`. In an existing environment,
+`pip uninstall zpf` before installing, or the old distribution's metadata stays
+behind. The library is not on PyPI; `python-zipline` is the name it would take
+there.
+
 **Implements spec v0.24** (`SPEC_VERSION == (0, 24)`), the sessionizer
 release ([#108](https://github.com/adamkjonsson/python-zipline/issues/108)).
 Under the `0.x` rule every minor is a separate format, so files written by

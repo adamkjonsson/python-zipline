@@ -125,10 +125,12 @@ from zpf.writer import (
 #: The library's version, read from the installed distribution metadata so
 #: that ``pyproject.toml`` states it once and nothing restates it. This is the
 #: version of *this package*, not of the format it implements — for that, see
-#: :data:`SPEC_VERSION`. Requires zpf to be installed (``pip install -e .``);
-#: importing it from an unbuilt source tree raises
-#: :exc:`~importlib.metadata.PackageNotFoundError`.
-__version__: str = _distribution_version("zpf")
+#: :data:`SPEC_VERSION`. Requires the package to be installed
+#: (``pip install -e .``); importing it from an unbuilt source tree raises
+#: :exc:`~importlib.metadata.PackageNotFoundError`. Looked up by the
+#: **distribution** name, ``python-zipline`` since ``0.8.0``, which is not the
+#: import name: ``zpf`` on PyPI is an unrelated project (#102).
+__version__: str = _distribution_version("python-zipline")
 
 __all__ = [
     "AdvisoryError",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.metadata
 import re
 import sys
 from pathlib import Path
@@ -34,6 +35,21 @@ def test_version_is_declared_only_in_pyproject() -> None:
     reintroduces a second source of truth.
     """
     assert _project_table()["version"] == zpf.__version__
+
+
+def test_the_distribution_is_python_zipline_and_the_import_is_zpf() -> None:
+    """The two names differ on purpose, and the version lookup must follow one.
+
+    `zpf` on PyPI belongs to an unrelated project, so since `0.8.0` the
+    distribution is `python-zipline` (#102) while `import zpf` is unchanged.
+    `zpf.__version__` reads the metadata by the distribution name, so a
+    rename in `pyproject.toml` alone would break the import with
+    `PackageNotFoundError`, and a lookup left on `zpf` would read the
+    unrelated project's version wherever that is installed.
+    """
+    name = _project_table()["name"]
+    assert name == "python-zipline"
+    assert importlib.metadata.version(name) == zpf.__version__
 
 
 def test_specification_url_names_the_implemented_spec_version() -> None:

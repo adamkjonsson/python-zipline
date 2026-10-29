@@ -25,8 +25,18 @@ of the format, specified in the
 > storage yet**: keep the captures they were derived from, and regenerate
 > rather than transcode when the format moves.
 
-The package is named `zpf` (not `zipline`) because the `zipline` name on PyPI
-belongs to an unrelated project.
+You import it as `zpf`, and it is distributed as **`python-zipline`**. Both
+`zipline` and `zpf` on PyPI are unrelated projects, so **do not
+`pip install zpf`**. The library is not on PyPI yet; install a tagged release
+from this repository:
+
+```bash
+pip install "python-zipline @ git+https://github.com/adamkjonsson/python-zipline.git@v0.8.0"
+```
+
+Through `0.7.0` the distribution was named `zpf`, which a resolver would match
+against PyPI's unrelated project
+([#102](https://github.com/adamkjonsson/python-zipline/issues/102)).
 
 ## Features
 
