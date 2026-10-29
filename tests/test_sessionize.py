@@ -293,13 +293,21 @@ def whole(pieces: list[tuple[zpf.reassembly.Datagram, Fragment]]) -> bytes | Non
     return b"".join(fragment.payload for _datagram, fragment in ordered)
 
 
-def sessionize_udp(vector: str, sink: io.BytesIO) -> None:
+def sessionize_udp(
+    vector: str, sink: io.BytesIO, *, missing: dict[int, str] | None = None
+) -> None:
     """Rebuild a ``sessionized-*`` pair's ``inner.zpf`` from its ``packets.zpf``.
 
     Each datagram becomes one ``message`` record citing every fragment it
     was built from, which is the shape ``0.24`` permits and ``0.7.0``
     refused. Session ids follow the source port, as in the vector, and the
     sessions are written whole in that order, as the vendored file is laid out.
+
+    A datagram still missing a fragment when the input ends gets no record:
+    its pieces are marked with :meth:`SessionizeStage.incomplete`, before
+    the sessions, as the vendored file is laid out. ``missing`` gives each
+    one's comment by IP identification, since which piece is missing is the
+    caller's knowledge.
     """
     ids = {5000: 20, 5001: 21}
     with zpf.sessionize_stage(
@@ -322,6 +330,11 @@ def sessionize_udp(vector: str, sink: io.BytesIO) -> None:
             cites = [stream.cite(d.off_start, d.off_end) for d, _ in sorted(
                 pieces, key=lambda piece: piece[0].off_start)]
             done.append((sport, f"{fragment.src}:{sport}", udp[8:], cites))
+        for ident, pieces in pending.items():
+            stage.incomplete(
+                [stream.cite(d.off_start, d.off_end) for d, _ in pieces],
+                comment=(missing or {}).get(ident),
+            )
         for sport, endpoint, payload, cites in sorted(done):
             session = stage.session(endpoint, proto="udp", session_id=ids[sport])
             session.record(
@@ -369,6 +382,63 @@ def test_a_fragmented_datagram_is_rebuilt_as_one_message_record():
     packets = VECTORS / "sessionized-fragments" / "packets.zpf"
     assert zpf.check_coverage(io.BytesIO(sink.getvalue()), packets) == []
     assert zpf.check_splice(io.BytesIO(sink.getvalue()), packets) == []
+
+
+def test_a_datagram_that_lost_a_fragment_gets_no_record_and_is_marked_undecodable():
+    """`sessionized-fragment-lost/inner.zpf`, rebuilt (0.24, zipline#170, #107).
+
+    The orphan fragment is not a message, so it gets no record, and its range
+    is marked ``undecodable``, the word the specification pins, not left to
+    auto-fill, which would say ``skipped``. Unlike its sibling this vector
+    has no record built from several packets, so everything matches but the
+    Session ``key``, times included.
+    """
+    sink = io.BytesIO()
+    sessionize_udp("sessionized-fragment-lost", sink, missing={
+        0x1234: "fragment 1 of 2 of datagram id 0x1234; fragment 2 never arrived",
+    })
+    inner = (VECTORS / "sessionized-fragment-lost" / "inner.zpf").read_bytes()
+
+    def keyless(objects: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [{k: v for k, v in o.items() if k != "key"} for o in objects]
+
+    assert keyless(projection(sink.getvalue())) == keyless(projection(inner))
+    packets = VECTORS / "sessionized-fragment-lost" / "packets.zpf"
+    assert zpf.check_coverage(io.BytesIO(sink.getvalue()), packets) == []
+
+
+def test_auto_fill_would_call_the_orphan_skipped():
+    """Why `incomplete` exists: the default names the wrong shape."""
+    packets = VECTORS / "sessionized-fragment-lost" / "packets.zpf"
+    sink = io.BytesIO()
+    with zpf.sessionize_stage(
+        packets, sink, decoder="udp-reassembly", produced_by="t", produced_at=2
+    ) as stage:
+        (stream,) = stage.streams()
+        _orphan, other = stream.datagrams()
+        flow = stage.session("b", proto="udp")
+        flow.record(flow.participant("b"), b"e" * 12, flags=zpf.RecordFlags.MESSAGE,
+                    cites=stream.cite(other.off_start, other.off_end))
+    with zpf.open(io.BytesIO(sink.getvalue())) as out:
+        assert [(u.off_start, u.off_end, u.reason) for u in out.undecoded] == [
+            (0, 52, "skipped"),
+        ]
+
+
+def test_incomplete_refuses_a_range_the_stage_does_not_read():
+    packets = VECTORS / "sessionized-fragment-lost" / "packets.zpf"
+    with zpf.sessionize_stage(
+        packets, io.BytesIO(), decoder="udp-reassembly", produced_by="t", produced_at=2
+    ) as stage:
+        (stream,) = stage.streams()
+        stranger = zpf.Span(source_id=stage.source.source_id, session_id=99,
+                            participant_id=0, off_start=0, off_end=52)
+        with pytest.raises(zpf.SemanticError, match="not a range of an input stream"):
+            stage.incomplete([stream.cite(0, 52), stranger])
+        with pytest.raises(zpf.SemanticError, match="pass the ranges"):
+            stage.incomplete([])
+        # Nothing was written by the refused call, so this one is not a clash.
+        stage.incomplete(stream.cite(0, 52))
 
 
 def test_check_splice_lets_a_message_record_cross_a_declared_break():

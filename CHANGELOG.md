@@ -74,6 +74,18 @@ reported, as before. The refusal's message changed to name both kinds.
 
 ### Added
 
+**`SessionizeStage.incomplete(cites, *, comment=None)`** marks the pieces of a
+message that never completed, such as a UDP datagram that lost an IP fragment
+([#107](https://github.com/adamkjonsson/python-zipline/issues/107),
+[zipline#170](https://github.com/adamkjonsson/zipline/issues/170)). Since
+`0.24` such pieces are not content of the stream, so they get no record, but
+their input ranges are still owed coverage, and the specification asks for
+`reason = undecodable` there. This writes one such block per range. Left to
+auto-fill, the same ranges would be marked `skipped`, which says the stage
+passed them over. For a reassembler reading a *capture* the block is a
+**MUST** since `0.24`. That binds producers built on `zpf.create`, since this
+library holds no packet reassembler, and the concepts page says so.
+
 **`zpf.fin_positions()` and `StreamView.fin_positions()`**, the positions
 inside a stream's extent that a FIN occupies, which the coverage guarantee owes
 nothing. The function works from a participant's blocks, as `stream_extent`

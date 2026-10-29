@@ -21,6 +21,17 @@ range the *sender* resent carries the `retransmit` flag
 so a capture that merely saw every packet twice sets it nowhere), and bytes the
 reassembler *discarded* are marked with an Undecoded block against the capture.
 
+Since `0.24` so are the pieces of a message the reassembler could not
+complete, such as a UDP datagram that lost an IP fragment. Those pieces are not
+content of the stream, so they get no record. A reassembler reading a capture
+**MUST** write the block, `reason = "undecodable"`, because nothing else would
+show the datagram was there. This library holds no packet reassembler, so the
+rule binds a producer writing from a capture with {func}`zpf.create`
+({meth}`FileWriter.undecoded <zpf.FileWriter.undecoded>` against its
+`capture` Source), not the library. A
+sessionization stage reading a `.zpf` writes the same block with
+{meth}`SessionizeStage.incomplete <zpf.sessionize.SessionizeStage.incomplete>`.
+
 Three nesting levels organize that data:
 
 ```

@@ -510,8 +510,26 @@ those bytes join. There are two kinds:
 
 The stage takes your word for either, and so does {func}`zpf.check_splice`,
 which leaves such a record unchecked. A record carrying neither cites one range
-only. A datagram that lost a fragment is not a message and gets no record: mark
-its fragments' ranges with `stage.undecoded(…, reason="undecodable")` instead.
+only.
+
+**A datagram that lost a fragment is not a message**, so it gets no record.
+Since `0.24` that is not withholding content of the stream: what never arrived
+as a message was never content of it. Its fragments' ranges in the input are
+still owed coverage, and the specification asks for `reason = "undecodable"`
+there (a SHOULD). {meth}`stage.incomplete
+<zpf.sessionize.SessionizeStage.incomplete>` writes exactly that:
+
+```python
+# At the end of the input, the fragments still waiting for a partner:
+for ident, pieces in pending.items():
+    stage.incomplete(
+        [stream.cite(dg.off_start, dg.off_end) for dg in pieces],
+        comment=f"datagram id {ident:#06x}: a fragment never arrived",
+    )
+```
+
+Don't leave them to auto-fill, which marks what nothing cited `skipped`, the
+word for bytes the stage chose to pass over.
 
 Both builders, {func}`zpf.sessionize_stage` and {func}`zpf.decode_stage`, take
 `face="jsonl"` to write the JSON-Lines face (with a text sink) and `creator=`

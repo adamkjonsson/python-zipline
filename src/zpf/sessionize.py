@@ -63,7 +63,8 @@ units, or cross a break its input declares. There are two kinds of evidence:
 
 A record carrying neither may cite one range only. A datagram that lost a
 fragment is no message at all, and gets no record: mark its pieces with
-:meth:`SessionizeStage.undecoded` instead (``0.24``, `zipline#170
+:meth:`SessionizeStage.incomplete`, which writes the ``undecodable`` blocks
+the specification asks for (``0.24``, `zipline#170
 <https://github.com/adamkjonsson/zipline/issues/170>`_).
 
 A **pure ACK** is a zero-length record citing its packet, with its ``ack``:
@@ -467,6 +468,60 @@ class SessionizeStage:
             comment=comment,
         )
         self._ledger.mark(stream, off_start, off_end)
+
+    def incomplete(
+        self, cites: Span | Iterable[Span], *, comment: str | None = None
+    ) -> None:
+        """Mark the pieces of a message that never completed.
+
+        A datagram that lost an IP fragment, or an SCTP message that lost a
+        chunk, reached the stage only as pieces of a message. Since ``0.24``
+        (`zipline#170 <https://github.com/adamkjonsson/zipline/issues/170>`_)
+        that is **not content of the stream**: leaving it out withholds
+        nothing, and a record would be false either way. Flagged ``MESSAGE``
+        it claims a whole message, and unflagged it carries bytes no sender
+        sent as a unit. So the pieces get no record. Their input ranges are
+        still owed coverage, and this marks them, one Undecoded block per
+        range, with the word the specification pins (SHOULD):
+        ``reason = undecodable``, since the reassembler tried and failed.
+
+        Leaving the pieces to auto-fill would mark them ``skipped``, which
+        says the stage passed them over. :meth:`undecoded` with
+        ``reason="undecodable"`` writes the same blocks; this names the shape.
+
+        Args:
+            cites: The pieces' input ranges, built as for
+                :meth:`FlowSession.record` with
+                :meth:`InputStream.cite <zpf.decode.InputStream.cite>`.
+            comment: Which piece was missing, e.g. *fragment 2 of 2 of
+                datagram id 0x1234 never arrived*. The specification
+                suggests the comment for exactly this.
+
+        Raises:
+            SemanticError: If ``cites`` is empty, or a range names a source
+                or input stream this stage does not read. Nothing is written
+                then.
+
+        """
+        spans = (cites,) if isinstance(cites, Span) else tuple(cites)
+        if not spans:
+            msg = "an incomplete message has pieces; pass the ranges they occupy as cites="
+            raise SemanticError(msg)
+        streams = []
+        for span in spans:
+            stream = self._inputs.get((span.session_id, span.participant_id))
+            if span.source_id != self.source.source_id or stream is None:
+                msg = (
+                    f"[{span.off_start}, {span.off_end}) of source {span.source_id}, "
+                    f"session {span.session_id}, pid {span.participant_id} is not a "
+                    "range of an input stream this stage reads"
+                )
+                raise SemanticError(msg)
+            streams.append(stream)
+        for span, stream in zip(spans, streams, strict=True):
+            self.undecoded(
+                stream, span.off_start, span.off_end, reason="undecodable", comment=comment
+            )
 
     def close(self, *, end: bool = True) -> None:
         """Close the output, then the input if this stage opened it.
