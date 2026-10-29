@@ -1,4 +1,4 @@
-"""Conformance-vector harness for the upstream 0.22 vectors.
+"""Conformance-vector harness for the upstream 0.24 vectors.
 
 The vectors in ``tests/vectors/`` are hand-built from the specification's
 normative text (see ``tests/vectors/VENDORED.md``). They are the acceptance
@@ -60,6 +60,23 @@ VECTORS = Path(__file__).parent / "vectors"
 #: Vector cases that MUST pass. Grow it as phases land; never remove a name
 #: while its vector exists, because that is the regression guard.
 #:
+#: **At the ``0.24`` re-vendor (Phase 1 of the ``0.8.0`` plan), ten cases
+#: joined on arrival**, passing the moment the gate moved and the ``copy``
+#: token was added: ``closed-final-ack``, ``capture-fragment-lost``,
+#: ``udp-capture-copy``, the members of the three ``sessionized-*`` pairs, and
+#: ``decoded-past-fin/capture``. Several pass without having earned it.
+#: ``sessionized-fragments`` reads cleanly, but ``sessionize_stage`` could not
+#: write it (`#105 <https://github.com/adamkjonsson/python-zipline/issues/105>`_).
+#: ``udp-capture-copy`` projects, but nothing checks the flag's two rules yet
+#: (`#106 <https://github.com/adamkjonsson/python-zipline/issues/106>`_). So
+#: did the pairwise ``isolate-transport-splice``: its record carries neither
+#: ``seq_start`` nor ``message``, and ``check_splice`` already reported such a
+#: crossing. The last two were **earned**: ``decoded-past-fin/decoded``, whose
+#: FIN position this library's coverage check reported as a gap until Phase 2
+#: (`#104 <https://github.com/adamkjonsson/python-zipline/issues/104>`_), and
+#: ``isolate-copy-differs``, which nothing isolated until Phase 5 (#106). So
+#: at the end of Phase 5 every ``v0.24`` case is in this set.
+#:
 #: **68 names, 76 files, and every case in this set at the ``0.23`` port.**
 #: ``0.23`` added two, both earned by its one rule (a record's end is one past
 #: the last sequence number it occupies, so a pure ACK has none):
@@ -100,12 +117,16 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "advisory-transport-content-type",
         "advisory-transport-role",
         "broken-chain",
+        "capture-fragment-lost",
         "chain/annotated",
         "chain/decoded",
         "chain/raw",
+        "closed-final-ack",
         "custom-block",
         "decap-ethernet",
         "decoded-basic",
+        "decoded-past-fin/capture",
+        "decoded-past-fin/decoded",
         "decoded-field-roles",
         "descriptive-metadata",
         "discontinuity-known-width",
@@ -118,6 +139,7 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "filtered-decoded",
         "handshake-at-origin",
         "hintless-merge-backwards-ts",
+        "isolate-copy-differs",
         "isolate-coverage-gap",
         "isolate-discontinuity-in-raw",
         "isolate-duplicate-id",
@@ -127,6 +149,7 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "isolate-merge-unmarked-hole",
         "isolate-mixed-layer-participant",
         "isolate-self-derived",
+        "isolate-transport-splice",
         "isolate-unbound-zpf-stream",
         "isolate-undeclared-session",
         "isolate-unknown-adjacency",
@@ -155,7 +178,13 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "sequenced-session",
         "session-fan-out",
         "session-split-capture-gap",
+        "sessionized-across-break/inner",
+        "sessionized-across-break/packets",
         "sessionized-across-units",
+        "sessionized-fragment-lost/inner",
+        "sessionized-fragment-lost/packets",
+        "sessionized-fragments/inner",
+        "sessionized-fragments/packets",
         "sessionization-stage",
         "splice",
         "stream-past-2gib",
@@ -164,6 +193,7 @@ KNOWN_PASSING: frozenset[str] = frozenset(
         "tunnel/inner",
         "tunnel/outer",
         "tunnel/packets",
+        "udp-capture-copy",
         "undecoded-in-capture",
         "undecoded-reason-class",
         "undecoded-skipped",
@@ -280,6 +310,7 @@ _REJECT_REASONS: dict[str, str] = {
 #: specification states the pass-through obligation as the same guarantee
 #: seen from a file that cites its input, not as a rule of its own.
 _ISOLATE_REASONS: dict[str, str] = {
+    "isolate-copy-differs": "differs from its participant's preceding record",
     "isolate-coverage-gap": "neither decoded nor marked",
     "isolate-discontinuity-in-raw": "discontinuity",
     "isolate-duplicate-id": "twice",
@@ -483,7 +514,7 @@ def _params(tier: str) -> list[Any]:
             marks: tuple[Any, ...] = ()
         else:
             reason = DEFECTIVE.get(case.name) or UNIMPLEMENTED.get(
-                case.name, "not yet ported to 0.23"
+                case.name, "not yet ported to 0.24"
             )
             marks = (pytest.mark.xfail(reason=reason, strict=False),)
         params.append(pytest.param(case, id=case.name, marks=marks))
@@ -551,14 +582,17 @@ def test_manifest_covers_the_tree() -> None:
 
 
 def test_every_case_has_a_file() -> None:
-    """The manifest expands to exactly the files `v0.23` ships.
+    """The manifest expands to exactly the files `v0.24` ships.
 
     The count is exact rather than a floor, so a half-copied re-vendoring
-    fails here instead of quietly shrinking the suite: 68 manifest entries,
-    of which ``chain`` and ``merge`` expand to three files each, ``splice``
-    to two and ``tunnel`` — the largest fixture the suite has — to four.
+    fails here instead of quietly shrinking the suite: 77 manifest entries,
+    of which ``chain`` and ``merge`` expand to three files each, ``tunnel``
+    (the largest fixture the suite has) to four, and the six pairs
+    (``splice``, ``decoded-past-fin``, ``isolate-transport-splice`` and the
+    three ``sessionized-*`` ones) to two each. That is 68 single-file entries
+    and 22 member files.
     """
-    assert len(CASES) == 76
+    assert len(CASES) == 90
     for case in CASES:
         assert case.path.exists(), case.name
 
@@ -742,7 +776,7 @@ def test_an_accept_vector_puts_its_bytes_where_it_says(
 
 
 def _merged_params() -> list[Any]:
-    """Build one param per manifest ``merged`` entry, ratchet-gated.
+    """Build one param per case a manifest ``merged`` entry names, ratchet-gated.
 
     Since ``0.23`` every single-file accept vector with an unsequenced
     session in which two or more participants send records declares that
@@ -753,8 +787,15 @@ def _merged_params() -> list[Any]:
     owe it. Gated by :data:`KNOWN_PASSING`, like the tiers, because a vector
     whose merge is the point is one a port can be behind on.
 
+    **Multi-file entries declare it too, since ``0.24``** (`zipline#163
+    <https://github.com/adamkjonsson/zipline/issues/163>`_). The files of one
+    entry share session ids, so each item names its member file by the stem
+    ``files`` lists: ``{"file", "session_id", "order"}``. Such an entry
+    yields one param per member, gated on that member's own case name, so
+    ``decoded-past-fin/capture`` is asserted while its sibling is held.
+
     Returns:
-        One param per declared vector, carrying its ``merged`` list.
+        One param per declaring case, carrying that case's ``merged`` items.
 
     """
     manifest = json.loads((VECTORS / "manifest.json").read_text())
@@ -762,11 +803,15 @@ def _merged_params() -> list[Any]:
     for entry in manifest["vectors"]:
         if "merged" not in entry:
             continue
-        name = entry["name"]
-        marks: tuple[Any, ...] = ()
-        if name not in KNOWN_PASSING:
-            marks = (pytest.mark.xfail(reason="not yet ported to 0.23", strict=False),)
-        params.append(pytest.param(name, entry["merged"], id=name, marks=marks))
+        by_case: dict[str, list[dict[str, Any]]] = {}
+        for item in entry["merged"]:
+            name = f"{entry['name']}/{item['file']}" if "file" in item else entry["name"]
+            by_case.setdefault(name, []).append(item)
+        for name, items in by_case.items():
+            marks: tuple[Any, ...] = ()
+            if name not in KNOWN_PASSING:
+                marks = (pytest.mark.xfail(reason="not yet ported to 0.24", strict=False),)
+            params.append(pytest.param(name, items, id=name, marks=marks))
     return params
 
 
@@ -851,7 +896,7 @@ def _pairwise_params() -> list[Any]:
     for name in PAIRWISE:
         marks: tuple[Any, ...] = ()
         if name not in KNOWN_PASSING:
-            marks = (pytest.mark.xfail(reason="not yet ported to 0.23", strict=False),)
+            marks = (pytest.mark.xfail(reason="not yet ported to 0.24", strict=False),)
         params.append(pytest.param(name, id=name, marks=marks))
     return params
 
@@ -905,6 +950,65 @@ def test_a_clean_pair_reports_nothing() -> None:
     chain = VECTORS / "chain"
     assert zpf.check_splice(chain / "annotated.zpf", chain / "decoded.zpf") == []
     assert zpf.check_splice(chain / "decoded.zpf", chain / "raw.zpf") == []
+
+
+#: The hops of the multi-file ``accept`` vectors whose coverage upstream's
+#: ``check.py`` asserts, as ``(vector, stage2, stage1)`` stems. The per-file
+#: tiers judge each member alone, so without this a pair whose *relationship*
+#: is the lesson (``decoded-past-fin``, ``sessionized-*``) is accepted by a
+#: library whose ``check_coverage`` or ``check_splice`` gets it wrong.
+#:
+#: A table rather than every sibling a member cites, because two citations are
+#: not coverage claims. ``chain/annotated`` names ``raw.zpf`` as its two-hop
+#: provenance, and decodes ``decoded.zpf``. ``tunnel/http`` decodes flow A of
+#: ``inner.zpf`` only, and ``check.py`` claims ``inner flow A [0,110)`` and
+#: nothing about flow B.
+_ACCEPT_PAIRS: tuple[tuple[str, str, str], ...] = (
+    ("chain", "decoded", "raw"),
+    ("chain", "annotated", "decoded"),
+    ("tunnel", "packets", "outer"),
+    ("tunnel", "inner", "packets"),
+    ("merge", "merged", "a"),
+    ("merge", "merged", "b"),
+    ("decoded-past-fin", "decoded", "capture"),
+    ("sessionized-fragments", "inner", "packets"),
+    ("sessionized-fragment-lost", "inner", "packets"),
+    ("sessionized-across-break", "inner", "packets"),
+)
+
+
+def _accept_pair_params() -> list[Any]:
+    """Build one param per :data:`_ACCEPT_PAIRS` hop, gated on both members.
+
+    Returns:
+        Params carrying an ``xfail`` mark unless both files are known to pass.
+
+    """
+    params = []
+    for vector, stage2, stage1 in _ACCEPT_PAIRS:
+        marks: tuple[Any, ...] = ()
+        if not {f"{vector}/{stage2}", f"{vector}/{stage1}"} <= KNOWN_PASSING:
+            marks = (pytest.mark.xfail(reason="not yet ported to 0.24", strict=False),)
+        params.append(
+            pytest.param(vector, stage2, stage1, id=f"{vector}:{stage2}<-{stage1}", marks=marks)
+        )
+    return params
+
+
+@pytest.mark.parametrize(("vector", "stage2", "stage1"), _accept_pair_params())
+def test_an_accept_pair_is_clean_as_a_pair(vector: str, stage2: str, stage1: str) -> None:
+    """A conformant hop covers its input and splices nothing.
+
+    The mirror of :func:`test_a_pairwise_vector_is_caught`: there the pair is
+    the violation, here the pair is the point. ``decoded-past-fin`` is what
+    this exists for. Each of its files is clean alone, and the lesson is that
+    the FIN's position is owed no coverage, which only ``check_coverage``
+    against the capture can get wrong.
+    """
+    directory = VECTORS / vector
+    downstream, upstream = directory / f"{stage2}.zpf", directory / f"{stage1}.zpf"
+    assert zpf.check_coverage(downstream, upstream) == []
+    assert zpf.check_splice(downstream, upstream) == []
 
 
 def test_the_unmarked_break_predicate_fires_on_exactly_two_vectors() -> None:

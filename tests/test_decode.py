@@ -1464,3 +1464,106 @@ def test_an_explicit_ts_leaves_ts_first_to_the_caller():
 def test_an_explicit_ts_first_beats_the_derivation():
     record = decode_whole_stream(ts_first=42)
     assert (record.timestamp, record.ts_first) == (200, 42)
+
+
+# --- 0.24: the position a FIN occupies is owed nothing (#104, zipline#168) ------------
+
+CLOSED_FINAL_ACK = (
+    Path(__file__).parent / "vectors" / "closed-final-ack" / "closed-final-ack.zpf"
+)
+
+
+def closed_stream(*, fin: bool = True) -> bytes:
+    """`closed-final-ack`'s server alone: PONG, its FIN, and the final ACK one past it.
+
+    Without ``fin`` the FIN's segment was lost and only the ACK was captured,
+    so the position is an ordinary one-wide hole.
+    """
+    flags = zpf.RecordFlags.PSH | (zpf.RecordFlags.FIN if fin else 0)
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1_000_000) as writer:
+        writer.add_source("capture", uri="close.pcap")
+        with writer.begin_session(proto="tcp", session_id=7) as session:
+            server = session.participant("93.184.216.34:80", isn=5000)
+            session.record(server, ts=1, payload=b"PONG", flags=flags,
+                           hints=zpf.Hints(seq_start=5001))
+            session.record(server, ts=2, hints=zpf.Hints(seq_start=5006))
+    return sink.getvalue()
+
+
+def decode_all_data(raw: bytes, *, fill_undecoded: bool = True) -> bytes:
+    """Cite every segment of every stream, and nothing else."""
+    sink = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw), sink, decoder="d", produced_by="t 1.0", produced_at=1,
+        fill_undecoded=fill_undecoded,
+    ) as dec:
+        for stream in dec.streams():
+            for seg in stream.segments():
+                dec.record(stream, seg.data, ts=seg.ts, cites=(seg.off_start, seg.off_end))
+    return sink.getvalue()
+
+
+def declared_extents(data: bytes) -> dict[tuple[int, int], int]:
+    with zpf.open(io.BytesIO(data)) as out:
+        return {
+            (e.session_id, e.participant_id): e.extent
+            for session in out.sessions()
+            for e in session.end.input_extents
+        }
+
+
+def test_a_decode_stage_over_a_closed_stream_owes_the_fin_nothing():
+    """The repro on #104: the stage's own output now passes its own checks.
+
+    Through `0.7.0` the stage declared the server's stream as 4, and
+    `check_coverage` measured 5 and reported `[4, 5)` as a gap.
+    """
+    raw = CLOSED_FINAL_ACK.read_bytes()
+    out = decode_all_data(raw)
+    assert declared_extents(out) == {(7, 0): 8, (7, 1): 5}
+    assert undecoded_by_stream(out) == {}  # nothing at the FIN's position
+    assert zpf.check_coverage(io.BytesIO(out), io.BytesIO(raw)) == []
+    assert zpf.check_extents(io.BytesIO(out)) == []
+
+
+def test_autofill_marks_neither_gap_nor_skipped_at_the_fins_position():
+    """Auto-fill leaves it alone: it is not a hole, and it holds no byte."""
+    raw = closed_stream()
+    sink = io.BytesIO()
+    with zpf.decode_stage(
+        io.BytesIO(raw), sink, decoder="d", produced_by="t 1.0", produced_at=1
+    ):
+        pass  # decode nothing: auto-fill accounts for the whole stream
+
+    marks = undecoded_by_stream(sink.getvalue())
+    assert list(marks) == [(7, 0, 0, 4)]
+    assert marks[7, 0, 0, 4].reason == "skipped"
+    assert declared_extents(sink.getvalue()) == {(7, 0): 5}
+    assert zpf.check_coverage(io.BytesIO(sink.getvalue()), io.BytesIO(raw)) == []
+
+
+def test_a_lost_fin_is_an_ordinary_hole_and_autofill_marks_it_gap():
+    raw = closed_stream(fin=False)
+    out = decode_all_data(raw)
+    marks = undecoded_by_stream(out)
+    assert list(marks) == [(7, 0, 4, 5)]
+    assert marks[7, 0, 4, 5].reason == "gap"
+    assert zpf.check_coverage(io.BytesIO(out), io.BytesIO(raw)) == []
+
+
+def test_check_coverage_exempts_a_fin_but_not_a_lost_one():
+    """The exemption is found in the input, so the two files differ only there.
+
+    Both decoded files cite `[0, 4)` and mark nothing. Against the input
+    with a FIN, `[4, 5)` is that FIN's position and owed nothing; against
+    the input whose FIN was lost, the same range is an unaccounted hole.
+    """
+    with_fin, lost_fin = closed_stream(), closed_stream(fin=False)
+    assert zpf.check_coverage(
+        io.BytesIO(decode_all_data(with_fin, fill_undecoded=False)), io.BytesIO(with_fin)
+    ) == []
+    findings = zpf.check_coverage(
+        io.BytesIO(decode_all_data(lost_fin, fill_undecoded=False)), io.BytesIO(lost_fin)
+    )
+    assert [(f.offset, f.category) for f in findings] == [(4, "coverage-gap")]

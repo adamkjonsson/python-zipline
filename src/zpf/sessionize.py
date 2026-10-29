@@ -46,12 +46,26 @@ What the stage does for you, and :func:`zpf.decode_stage` does too:
 What it does **not** do is parse packets. The format defines what a
 ``net:ip`` payload is, not its fields, so classifying a packet into a flow is
 the caller's code, and the stage takes the caller's word for the sequence
-numbers. They are the stage's assertion, and the next one: since ``0.22``
-(`zipline#152 <https://github.com/adamkjonsson/zipline/issues/152>`_) a
-transport record that carries ``seq_start`` MAY cite several input units, or
-cross a break its input declares — its sequence numbers say the bytes join,
-and a break between them would be a range no record covers, which cannot be
-lost.
+numbers. They are the stage's assertion, and so is the next one. A transport
+record that carries the **evidence of its own join** MAY cite several input
+units, or cross a break its input declares. There are two kinds of evidence:
+
+* **sequence numbers**, a record carrying ``seq_start``, since ``0.22``
+  (`zipline#152 <https://github.com/adamkjonsson/zipline/issues/152>`_). They
+  say the bytes join, and a break between them would be a range no record
+  covers, which cannot be lost;
+* **one message's reassembly**, a record flagged
+  ``RecordFlags.MESSAGE``, since ``0.24``
+  (`zipline#166 <https://github.com/adamkjonsson/zipline/issues/166>`_). The
+  record is exactly one transport message, so the units it cites are that
+  message's fragments: the IP fragments of one datagram, or the SCTP DATA
+  chunks of one message.
+
+A record carrying neither may cite one range only. A datagram that lost a
+fragment is no message at all, and gets no record: mark its pieces with
+:meth:`SessionizeStage.incomplete`, which writes the ``undecodable`` blocks
+the specification asks for (``0.24``, `zipline#170
+<https://github.com/adamkjonsson/zipline/issues/170>`_).
 
 A **pure ACK** is a zero-length record citing its packet, with its ``ack``:
 the packet owes coverage, and the ack orders it. Since ``0.23``
@@ -65,7 +79,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import IO, TYPE_CHECKING, Literal
 
-from zpf.blocks import OutputLayer, SourceKind, Span
+from zpf.blocks import _MESSAGE_BIT, OutputLayer, SourceKind, Span
 from zpf.decode import (
     InputStream,
     _declare_decoder,
@@ -220,17 +234,22 @@ class FlowSession:
                 the record MAY cite several input units, or cross a break the
                 input declares (`zipline#152
                 <https://github.com/adamkjonsson/zipline/issues/152>`_).
-            flags: Record flags.
+            flags: Record flags. With
+                ``RecordFlags.MESSAGE`` the record is exactly
+                one transport message, and MAY cite several input units, or
+                cross a declared break, as that message's fragments: a UDP
+                datagram reassembled from IP fragments, say (`zipline#166
+                <https://github.com/adamkjonsson/zipline/issues/166>`_).
             comment: Free-text note on the record.
 
         Raises:
             SemanticError: If the record cites nothing, or cites more than
-                one range without ``seq_start``.
+                one range with neither ``seq_start`` nor ``MESSAGE``.
             ZpfError: If the session has ended.
 
         """
         spans = (cites,) if isinstance(cites, Span) else tuple(cites)
-        _check_cites(spans, hints)
+        _check_cites(spans, hints, flags)
         if self._ended:
             msg = f"session {self.key!r} has ended; no record can be added to it"
             raise ZpfError(msg)
@@ -450,6 +469,60 @@ class SessionizeStage:
         )
         self._ledger.mark(stream, off_start, off_end)
 
+    def incomplete(
+        self, cites: Span | Iterable[Span], *, comment: str | None = None
+    ) -> None:
+        """Mark the pieces of a message that never completed.
+
+        A datagram that lost an IP fragment, or an SCTP message that lost a
+        chunk, reached the stage only as pieces of a message. Since ``0.24``
+        (`zipline#170 <https://github.com/adamkjonsson/zipline/issues/170>`_)
+        that is **not content of the stream**: leaving it out withholds
+        nothing, and a record would be false either way. Flagged ``MESSAGE``
+        it claims a whole message, and unflagged it carries bytes no sender
+        sent as a unit. So the pieces get no record. Their input ranges are
+        still owed coverage, and this marks them, one Undecoded block per
+        range, with the word the specification pins (SHOULD):
+        ``reason = undecodable``, since the reassembler tried and failed.
+
+        Leaving the pieces to auto-fill would mark them ``skipped``, which
+        says the stage passed them over. :meth:`undecoded` with
+        ``reason="undecodable"`` writes the same blocks; this names the shape.
+
+        Args:
+            cites: The pieces' input ranges, built as for
+                :meth:`FlowSession.record` with
+                :meth:`InputStream.cite <zpf.decode.InputStream.cite>`.
+            comment: Which piece was missing, e.g. *fragment 2 of 2 of
+                datagram id 0x1234 never arrived*. The specification
+                suggests the comment for exactly this.
+
+        Raises:
+            SemanticError: If ``cites`` is empty, or a range names a source
+                or input stream this stage does not read. Nothing is written
+                then.
+
+        """
+        spans = (cites,) if isinstance(cites, Span) else tuple(cites)
+        if not spans:
+            msg = "an incomplete message has pieces; pass the ranges they occupy as cites="
+            raise SemanticError(msg)
+        streams = []
+        for span in spans:
+            stream = self._inputs.get((span.session_id, span.participant_id))
+            if span.source_id != self.source.source_id or stream is None:
+                msg = (
+                    f"[{span.off_start}, {span.off_end}) of source {span.source_id}, "
+                    f"session {span.session_id}, pid {span.participant_id} is not a "
+                    "range of an input stream this stage reads"
+                )
+                raise SemanticError(msg)
+            streams.append(stream)
+        for span, stream in zip(spans, streams, strict=True):
+            self.undecoded(
+                stream, span.off_start, span.off_end, reason="undecodable", comment=comment
+            )
+
     def close(self, *, end: bool = True) -> None:
         """Close the output, then the input if this stage opened it.
 
@@ -485,21 +558,27 @@ class SessionizeStage:
                 self.reader.close()
 
 
-def _check_cites(spans: tuple[Span, ...], hints: Hints | None) -> None:
+def _check_cites(
+    spans: tuple[Span, ...], hints: Hints | None, flags: RecordFlags | int
+) -> None:
     """Refuse a record's citations if they cannot stand (see :meth:`FlowSession.record`).
 
     A record must cite something. One citing more than one range must
-    carry ``seq_start``: only sequence numbers can assert that separate
-    input units join, and a transport stream has no other way to say they
-    do not — it may carry no Discontinuity and may not be declared a unit
-    sequence (`zipline#152
-    <https://github.com/adamkjonsson/zipline/issues/152>`_).
+    carry the evidence of its own join, because a transport stream has no
+    other way to say two units do not join: it may carry no Discontinuity
+    and may not be declared a unit sequence. Two kinds count. ``seq_start``,
+    whose sequence numbers say the bytes join (since ``0.22``, `zipline#152
+    <https://github.com/adamkjonsson/zipline/issues/152>`_), and the
+    ``MESSAGE`` flag, which says the record is exactly one transport message
+    and so the units it cites are that message's fragments (since ``0.24``,
+    `zipline#166 <https://github.com/adamkjonsson/zipline/issues/166>`_).
 
-    ⚠ **Stricter than the format** in one respect: a record without
-    ``seq_start`` is refused for citing two *adjacent* ranges as well,
-    which the format would allow where the input joins there. This stage
-    cannot tell, and splitting the citation into one record per range
-    loses nothing.
+    ⚠ **Stricter than the format** in one respect: a record with neither is
+    refused for citing two *adjacent* ranges as well, which the format would
+    allow where the input joins there. This stage cannot tell. Such a record
+    is a byte run with no message boundary, so splitting the citation into
+    one record per range loses nothing. (A fragmented datagram is the case
+    where splitting *would* lose something, and it is the ``MESSAGE`` case.)
     """
     if not spans:
         msg = (
@@ -507,11 +586,14 @@ def _check_cites(spans: tuple[Span, ...], hints: Hints | None) -> None:
             "built from; pass cites=, or mark the range with undecoded() instead"
         )
         raise SemanticError(msg)
-    if len(spans) > 1 and (hints is None or hints.seq_start is None):
+    sequenced = hints is not None and hints.seq_start is not None
+    if len(spans) > 1 and not sequenced and not int(flags) & _MESSAGE_BIT:
         msg = (
-            f"a record citing {len(spans)} input ranges must carry seq_start: only "
-            "sequence numbers can assert that separate input units join, and a "
-            "transport stream has no other way to say they do not"
+            f"a record citing {len(spans)} input ranges must carry the evidence of "
+            "its own join: seq_start, whose sequence numbers say the bytes join, or "
+            "the MESSAGE flag, which says the record is one message and the ranges "
+            "are its fragments. A transport stream has no other way to say they "
+            "do not join"
         )
         raise SemanticError(msg)
 

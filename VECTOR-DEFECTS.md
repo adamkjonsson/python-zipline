@@ -1,10 +1,11 @@
 # Defects in the conformance vectors
 
-**Seven found, seven closed.** None is live against the vectors currently
-vendored in [`tests/vectors/`](tests/vectors/), which are `v0.23`, so
-`DEFECTIVE` in [`tests/test_vectors.py`](tests/test_vectors.py) is empty. Every
-one was reported upstream and fixed, the first six in the release that followed
-and the seventh before its release was tagged.
+**Eight found, seven closed.** Defect 8 is open against the vectors currently
+vendored in [`tests/vectors/`](tests/vectors/), which are `v0.24`. It is in
+files that are conformant, so it holds nothing out of the suite, and
+`DEFECTIVE` in [`tests/test_vectors.py`](tests/test_vectors.py) stays empty.
+The first seven were reported upstream and fixed, the first six in the release
+that followed and the seventh before its release was tagged.
 
 | | Defect | Found against | Status |
 |---|---|---|---|
@@ -15,6 +16,7 @@ and the seventh before its release was tagged.
 | 5 | `mixed-derivation`'s identity span writes `pid` and `session_id` transposed | `v0.19` | Fixed in `0.20` ([#141](https://github.com/adamkjonsson/zipline/issues/141)) — bytes and `.hex` regenerated; `o_spans` now takes logical order |
 | 6 | `handshake-at-origin` and `unplaceable-below-origin` write `tcp_role` one below the value their `.jsonl` states | `v0.18`, `v0.19` | Fixed in `0.20` ([#141](https://github.com/adamkjonsson/zipline/issues/141)) — bytes and `.hex` regenerated; `build.py` now refuses a vector whose projection is not its `.jsonl` |
 | 7 | `tunnel` and `decap-ethernet` label their payloads `net:` packets, but the IPv4 headers declare TCP and carry no TCP header | `0.22` release candidate | Fixed before `v0.22` was tagged ([#154](https://github.com/adamkjonsson/zipline/issues/154)) — real TCP (`tunnel`) and UDP (`decap-ethernet`) headers, every checksum true; `tunnel`'s offsets moved |
+| 8 | Three sessionizer vectors stamp a record reassembled from several packets with the **first** packet's time; the timestamp rule says the last | `v0.24` (and `v0.22`) | **Open**, reported as [#175](https://github.com/adamkjonsson/zipline/issues/175). Conformant files, so nothing is held |
 
 **Defects 5 and 6 share a root**, which is why they were reported as one issue:
 `build.py` authored the `.zpf` and the `.jsonl` faces of each vector
@@ -51,8 +53,54 @@ defects and are not counted here.
 Defects 1 and 2 were found during the 0.9 → 0.12 port, against `vectors/` at tag
 `v0.12` (commit `c291afc`). Defect 3 came out of the `0.15` review, defect 4 out
 of Phase 1 of the 0.14 → 0.16 port, defects 5 and 6 out of Phase 0 of the
-0.16 → 0.19 port, and defect 7 out of the `0.22` release-candidate review. Each
-of the first six is recorded next; the frozen 0.12 report follows them.
+0.16 → 0.19 port, defect 7 out of the `0.22` release-candidate review, and
+defect 8 out of Phase 3 of the 0.23 → 0.24 port. Defect 8 and the first six are
+recorded next; the frozen 0.12 report follows them.
+
+---
+
+## Defect 8 — reassembled records stamped with their first packet's time
+
+**Open**, reported as
+[zipline#175](https://github.com/adamkjonsson/zipline/issues/175). Found
+2026-10-29, rebuilding `sessionized-fragments/inner.zpf` from its
+`packets.zpf` with `sessionize_stage`
+([#105](https://github.com/adamkjonsson/python-zipline/issues/105)).
+
+### What is wrong
+
+*Record*, **Timestamp rule**: when a record is reassembled from more than one
+packet, its `timestamp` is the time of the **last** packet that contributed
+bytes, the moment the unit became complete. The specification calls that the
+only choice consistent with causal order, and says a first-packet stamp could
+contradict a seq/ack edge. Three vectors stamp the first:
+
+| Vector | Cited packets | Stamped | The rule gives |
+|---|---|---|---|
+| `sessionized-fragments/inner`, session 20 | 1000, 1200 | 1000 | 1200 |
+| `sessionized-across-break/inner`, session 10 | 1000, 1300 | 1000 | 1300 |
+| `sessionized-across-units` (since `0.22`) | input not shipped | 1000 | its last packet's |
+
+The upstream release plan records the choice: the `0.24` vectors took the
+first packet's time because `sessionized-across-units` did.
+
+### Why it holds nothing out
+
+The rule carries no keyword, and a reader MUST NOT reject a file over
+timestamps, so the files are conformant and accept-tier, and this library
+accepts them. What is wrong is what they teach: they are the suite's only
+sessionization stages that reassemble several packets, the case the rule
+exists for, and they show the stamp it rules out. Nothing in the suite or the
+harness compares a stamp with the packets it cites, which is how the `0.22`
+vector went unnoticed.
+
+### What we do meanwhile
+
+`sessionize_stage` derives the rule's stamp (`ts` 1200, `ts_first` 1000), so
+`test_a_fragmented_datagram_is_rebuilt_as_one_message_record` compares the
+rebuilt file with the vendored one on everything but record times, and pins
+the derived pair separately. When upstream fixes the vectors, that test can
+compare times too.
 
 ---
 

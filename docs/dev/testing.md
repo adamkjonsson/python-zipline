@@ -17,18 +17,28 @@ Hypothesis property tests. Every test must stay green on every change.
 | `test_order.py` | Serial arithmetic, the streaming causal merge, and sequenced-order verification — including **the skewed worked example** (below). |
 | `test_reader.py` | The session-first reader `zpf.open`: sessions, lazy records, strict/lenient modes. |
 | `test_writer.py` | The ergonomic handle-based writer `zpf.create`. |
+| `test_produced_at.py` | `produced_at` given as a `datetime`, and the public `unix_seconds` helper. |
+| `test_write_bytes.py` | **The write path's bytes, pinned by digest** (below): a mixed workload whose output must not move when the writer is made faster (#101). |
+| `test_reassembly.py` | The reassembly views: segments, chunks and gaps, datagrams and copies, units, timestamps for a cited range, and an extent measured three ways (the walk, its memo, and `stream_extent`), FIN positions included. |
+| `test_decode.py` | `derive_from` scaffolding and `decode_stage`: citations, auto-fill, declared extents, and the FIN's position owed nothing. |
+| `test_sessionize.py` | `sessionize_stage`: fan-out, records citing several units under `seq_start` or `message`, `incomplete()`, and rebuilding the vendored `tunnel` and `sessionized-*` files from their inputs. |
 | `test_transform.py` | The merge transform and the coverage validator. |
 | `test_intervals.py` | The shared half-open interval arithmetic: coalescing, and the properties the two coverage ledgers depend on. |
 | `test_memory.py` | The bounded-memory guarantees — that a derived file's write does not grow with its record count. |
 | `test_roundtrip_property.py` | **Property tests** (below): random files round-trip; arbitrary bytes never crash the reader. |
 | `test_cli.py` | The `zpf` command-line tool, driving `main()` directly. |
 | `test_tutorial_examples.py` | The docs' example scripts, run for real so they can't rot. |
-| `test_package.py` | Package smoke test (the version string is PEP 440). |
+| `test_vectors.py` | **The specification's conformance vectors**, vendored in `tests/vectors/`: every tier, the declared extents and merged orders, the pairwise vectors, and the multi-file accept pairs (see [conformance](conformance.md#conformance-vectors)). |
+| `test_package.py` | Package metadata: the version string is PEP 440, the distribution is `python-zipline` while the import is `zpf`, and the Specification link names the implemented spec version. |
 
 ## The load-bearing tests
 
 Three tests anchor the implementation to the specification itself; treat a
-failure in any of them as a conformance regression, not a flaky test.
+failure in any of them as a conformance regression, not a flaky test. A
+fourth anchors the writer to its own past: **`test_write_bytes.py`** pins a
+mixed workload's output by digest, taken before `0.8.0` made writing cheaper.
+A digest that moves is a change to the format's bytes, which a performance
+change must never make; re-pin it only for a change that means to move them.
 
 - **Golden bytes** — `test_golden.py`. Writing the spec's worked-example
   blocks must produce those exact 196 bytes, and parsing them back must yield

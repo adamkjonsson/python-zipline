@@ -5,13 +5,13 @@
 The Zipline Payload Format (`.zpf`) stores the payload of network traffic —
 the bytes exchanged between endpoints once packets have been reassembled into
 sessions, plus the metadata needed to consume them. This library implements
-[version 0.23](https://github.com/adamkjonsson/zipline/blob/v0.23/docs/zipline-payload-format.md)
+[version 0.24](https://github.com/adamkjonsson/zipline/blob/v0.24/docs/zipline-payload-format.md)
 of the format, specified in the
 [zipline repository](https://github.com/adamkjonsson/zipline).
 
 > ⚠️ **Not ready for production — neither the format nor this library.**
 >
-> The specification is at `0.23` and says so itself: it is *a design in
+> The specification is at `0.24` and says so itself: it is *a design in
 > progress*, `1.0` is reserved for a version that has survived implementation,
 > and any minor release may change anything, including in ways that break
 > existing readers. Several already have. This library is pre-1.0 in its own
@@ -25,18 +25,28 @@ of the format, specified in the
 > storage yet**: keep the captures they were derived from, and regenerate
 > rather than transcode when the format moves.
 
-The package is named `zpf` (not `zipline`) because the `zipline` name on PyPI
-belongs to an unrelated project.
+You import it as `zpf`, and it is distributed as **`python-zipline`**. Both
+`zipline` and `zpf` on PyPI are unrelated projects, so **do not
+`pip install zpf`**. The library is not on PyPI yet; install a tagged release
+from this repository:
+
+```bash
+pip install "python-zipline @ git+https://github.com/adamkjonsson/python-zipline.git@v0.8.0"
+```
+
+Through `0.7.0` the distribution was named `zpf`, which a resolver would match
+against PyPI's unrelated project
+([#102](https://github.com/adamkjonsson/python-zipline/issues/102)).
 
 ## Features
 
-- Complete 0.23 support: the binary container and the JSON-Lines projection,
+- Complete 0.24 support: the binary container and the JSON-Lines projection,
   captured and derived streams at the transport and decoded layers, with
   lossless converters.
-- Verified against the specification's own 68 conformance vectors, vendored in
+- Verified against the specification's own 77 conformance vectors, vendored in
   [`tests/vectors/`](tests/vectors/) and run by the test suite — every one of
-  them passing, negative tiers included. Seven vector defects have been found
-  from here and fixed upstream ([`VECTOR-DEFECTS.md`](VECTOR-DEFECTS.md)).
+  them passing, negative tiers included. Eight vector defects have been found from here and reported
+  upstream, seven of them fixed ([`VECTOR-DEFECTS.md`](VECTOR-DEFECTS.md)).
 - An ergonomic writer (`zpf.create`) that makes non-conformant files hard to
   write, and a session-first reader (`zpf.open`) with lazy record access.
 - Causal ordering: `session.timeline()` orders records by TCP seq/ack

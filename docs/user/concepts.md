@@ -4,7 +4,7 @@ This page is the mental model behind the Zipline Payload Format and this
 library. The [tutorial](tutorial.md) walks you through the API; this page
 explains *why* the format looks the way it does, and defines the vocabulary
 the rest of the documentation uses. Deep links go to the
-[v0.23 specification](https://github.com/adamkjonsson/zipline/blob/v0.23/docs/zipline-payload-format.md),
+[v0.24 specification](https://github.com/adamkjonsson/zipline/blob/v0.24/docs/zipline-payload-format.md),
 which is normative for this library.
 
 ## What a `.zpf` file holds
@@ -20,6 +20,31 @@ range the *sender* resent carries the `retransmit` flag
 ({attr}`zpf.RecordFlags.RETRANSMIT` — the sender's act, not the reassembler's,
 so a capture that merely saw every packet twice sets it nowhere), and bytes the
 reassembler *discarded* are marked with an Undecoded block against the capture.
+
+Since `0.24` so are the pieces of a message the reassembler could not
+complete, such as a UDP datagram that lost an IP fragment. Those pieces are not
+content of the stream, so they get no record. A reassembler reading a capture
+**MUST** write the block, `reason = "undecodable"`, because nothing else would
+show the datagram was there. This library holds no packet reassembler, so the
+rule binds a producer writing from a capture with {func}`zpf.create`
+({meth}`FileWriter.undecoded <zpf.FileWriter.undecoded>` against its
+`capture` Source), not the library. A
+sessionization stage reading a `.zpf` writes the same block with
+{meth}`SessionizeStage.incomplete <zpf.sessionize.SessionizeStage.incomplete>`.
+
+A third trace is new in `0.24`: the **`copy`** flag
+({attr}`zpf.RecordFlags.COPY`), the capture point's act where `retransmit` is
+the sender's. On a TCP stream the reassembler discards a copy of a segment the
+capture saw twice. A UDP stream has no sequence numbers to discard it by, so the
+copy is content of the stream and is written, and the flag says the sender sent
+once. Two rules make it checkable from the file alone: it repeats its
+participant's preceding record byte for byte, and it never appears on a stream
+whose records carry `seq_start`. The writer refuses, and the reader isolates, a
+`copy` that breaks either. A reader chooses between the specification's two
+readings with {meth}`StreamView.datagrams <zpf.reassembly.StreamView.datagrams>`:
+`copies=True`, the default, is what the capture saw, and `copies=False` is
+what the sender sent. On a decoded record the flag has no meaning in `0.24`,
+and is preserved, never interpreted.
 
 Three nesting levels organize that data:
 
@@ -353,7 +378,11 @@ one input record's framing can feed an inner unit in each of two output
 sessions. Checkable with {func}`zpf.check_coverage
 <zpf.transform.check_coverage>` when the input is at hand, and with
 {func}`zpf.check_extents <zpf.transform.check_extents>` from the derived
-file alone.
+file alone, to within one position. Since `0.24` a closed TCP stream's
+extent can include its FIN's position, which holds no byte and is owed
+nothing. Only the input shows where a FIN is, so from the derived file a
+one-wide uncovered tail could be either that or one dropped byte, and only
+`check_coverage` can tell.
 
 A decoded stream may also declare a **Discontinuity**: a break in the file's
 *own* output, saying the records either side do not join. It is the mirror

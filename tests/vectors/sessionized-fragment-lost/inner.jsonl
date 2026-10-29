@@ -1,0 +1,9 @@
+{"type":"file","format":"zipline-payload/0.24","tick_hz":1000000,"produced_by":"zpf-sessionize 1.0","produced_at":1719700100}
+{"type":"source","source_id":1,"kind":"zpf-input","uri":"packets.zpf","digest":"sha256:b918f70709c9e9468feddf05740f65eced77879e1524aaabccda7df25897ebd2"}
+{"type":"decoder","decoder_id":1,"output_layer":"transport","name":"udp-reassembly","version":"1.1"}
+{"type":"undecoded","source_id":1,"session_id":5,"pid":0,"off_start":0,"off_end":52,"reason":"undecodable","decoder_id":1,"comment":"fragment 1 of 2 of datagram id 0x1234; fragment 2 never arrived"}
+{"type":"session","session_id":21,"proto":"udp"}
+{"type":"participant","session_id":21,"pid":0,"adjacency":"contiguous","endpoint":["10.8.0.2:5001"]}
+{"type":"record","session_id":21,"sender_pid":0,"source_id":1,"ts":1100,"flags":["message"],"payload":"ZWVlZWVlZWVlZWVl","decoder_id":1,"spans":[{"source_id":1,"session_id":5,"pid":0,"off_start":52,"off_end":92}]}
+{"type":"session_end","session_id":21,"input_extents":[{"source_id":1,"session_id":5,"pid":0,"extent":92}]}
+{"type":"end"}

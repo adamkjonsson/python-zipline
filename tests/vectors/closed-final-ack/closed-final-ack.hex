@@ -1,0 +1,128 @@
+# closed-final-ack
+#
+# Generated from the same description as the .zpf -- never edited
+# by hand, so the annotation cannot drift from the bytes.
+
+0000  01 00                    type   = 0x0001  File Header
+0002  00 00                    reserved
+0004  10 00 00 00              length = 16
+0008  46 50 49 5A              magic  = 0x5A495046  ("ZIPF")
+000C  00 00                    version_major = 0
+000E  18 00                    version_minor = 24
+0010  40 42 0F 00 00 00 00 00  tick_hz = 1_000_000
+
+0018  02 00                    type   = 0x0002  Source Descriptor
+001A  00 00                    reserved
+001C  14 00 00 00              length = 20
+0020  01 00                    source_id = 1
+0022  00                       kind = 0  (capture)
+0023  00                       _reserved
+0024  20 00 0A 00              option 0x0020 uri, len = 10
+0028  63 6C 6F 73 65 2E 70 63  "close.pcap"
+0030  61 70
+0032  00 00                    value padding
+
+0034  10 00                    type   = 0x0010  Session Descriptor
+0036  00 00                    reserved
+0038  10 00 00 00              length = 16
+003C  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+0044  50 00 03 00              option 0x0050 proto, len = 3
+0048  74 63 70                 "tcp"
+004B  00                       value padding
+
+004C  11 00                    type   = 0x0011  Participant Descriptor
+004E  00 00                    reserved
+0050  28 00 00 00              length = 40
+0054  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+005C  00 00                    participant_id = 0
+005E  00                       adjacency = 0  (contiguous)
+005F  00                       _reserved
+0060  60 00 0E 00              option 0x0060 endpoint, len = 14
+0064  31 30 2E 30 2E 30 2E 31  "10.0.0.1:51000"
+006C  3A 35 31 30 30 30
+0072  00 00                    value padding
+0074  61 00 04 00              option 0x0061 isn, len = 4  (1000)
+0078  E8 03 00 00
+
+007C  11 00                    type   = 0x0011  Participant Descriptor
+007E  00 00                    reserved
+0080  28 00 00 00              length = 40
+0084  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+008C  01 00                    participant_id = 1
+008E  00                       adjacency = 0  (contiguous)
+008F  00                       _reserved
+0090  60 00 10 00              option 0x0060 endpoint, len = 16
+0094  39 33 2E 31 38 34 2E 32  "93.184.216.34:80"
+009C  31 36 2E 33 34 3A 38 30
+00A4  61 00 04 00              option 0x0061 isn, len = 4  (5000)
+00A8  88 13 00 00
+
+00AC  20 00                    type   = 0x0020  Record
+00AE  00 00                    reserved
+00B0  30 00 00 00              length = 48
+00B4  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+00BC  00 00                    sender_pid = 0
+00BE  01 00                    source_id  = 1
+00C0  E8 03 00 00 00 00 00 00  timestamp  = 1000
+00C8  00 00                    _reserved  (u16 = 0)
+00CA  01 00                    flags      = 0x0001
+00CC  04 00 00 00              payload_len = 4
+00D0  50 49 4E 47              "PING"
+00D4  70 00 04 00              option 0x0070 seq_start, len = 4  (1001)
+00D8  E9 03 00 00
+00DC  72 00 04 00              option 0x0072 ack, len = 4  (5001)
+00E0  89 13 00 00
+
+00E4  20 00                    type   = 0x0020  Record
+00E6  00 00                    reserved
+00E8  30 00 00 00              length = 48
+00EC  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+00F4  01 00                    sender_pid = 1
+00F6  01 00                    source_id  = 1
+00F8  4C 04 00 00 00 00 00 00  timestamp  = 1100
+0100  00 00                    _reserved  (u16 = 0)
+0102  03 00                    flags      = 0x0003
+0104  04 00 00 00              payload_len = 4
+0108  50 4F 4E 47              "PONG"
+010C  70 00 04 00              option 0x0070 seq_start, len = 4  (5001)
+0110  89 13 00 00
+0114  72 00 04 00              option 0x0072 ack, len = 4  (1005)
+0118  ED 03 00 00
+
+011C  20 00                    type   = 0x0020  Record
+011E  00 00                    reserved
+0120  30 00 00 00              length = 48
+0124  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+012C  00 00                    sender_pid = 0
+012E  01 00                    source_id  = 1
+0130  B0 04 00 00 00 00 00 00  timestamp  = 1200
+0138  00 00                    _reserved  (u16 = 0)
+013A  03 00                    flags      = 0x0003
+013C  04 00 00 00              payload_len = 4
+0140  51 55 49 54              "QUIT"
+0144  70 00 04 00              option 0x0070 seq_start, len = 4  (1005)
+0148  ED 03 00 00
+014C  72 00 04 00              option 0x0072 ack, len = 4  (5006)
+0150  8E 13 00 00
+
+0154  20 00                    type   = 0x0020  Record
+0156  00 00                    reserved
+0158  2C 00 00 00              length = 44
+015C  07 00 00 00 00 00 00 00  session_id = 7  (u64)
+0164  01 00                    sender_pid = 1
+0166  01 00                    source_id  = 1
+0168  14 05 00 00 00 00 00 00  timestamp  = 1300
+0170  00 00                    _reserved  (u16 = 0)
+0172  00 00                    flags      = 0x0000
+0174  00 00 00 00              payload_len = 0
+0178  70 00 04 00              option 0x0070 seq_start, len = 4  (5006)
+017C  8E 13 00 00
+0180  72 00 04 00              option 0x0072 ack, len = 4  (1010)
+0184  F2 03 00 00
+
+0188  41 00                    type   = 0x0041  End of file
+018A  00 00                    reserved
+018C  04 00 00 00              length = 4
+0190  44 4E 45 5A              end_magic = 0x5A454E44  ("ZEND")
+
+0194                           (end of file, 404 bytes)

@@ -88,6 +88,7 @@ _RECORD_FLAG_TOKENS: tuple[tuple[str, RecordFlags], ...] = (
     ("urg", RecordFlags.URG),
     ("retransmit", RecordFlags.RETRANSMIT),
     ("message", RecordFlags.MESSAGE),
+    ("copy", RecordFlags.COPY),
 )
 _TOKEN_TO_RECORD_FLAG = dict(_RECORD_FLAG_TOKENS)
 

@@ -28,7 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from zpf.blocks import Adjacency, Discontinuity, OutputLayer, Record, Span
+from zpf.blocks import _COPY_BIT, _FIN_BIT, Adjacency, Discontinuity, OutputLayer, Record, Span
 from zpf.errors import SemanticError, ZpfError
 from zpf.order import SEQ_SPACE, _Placer
 
@@ -189,15 +189,7 @@ def record_ranges(
         )
         raise SemanticError(msg)
     records = [block for block in blocks if isinstance(block, Record)]
-    decoded = layer is OutputLayer.DECODED
-    origin: int | None = None
-    if not decoded:
-        if participant.isn is not None:
-            origin = (participant.isn + 1) % SEQ_SPACE
-        else:
-            origin = next(
-                (r.seq_start for r in records if r.seq_start is not None), None
-            )
+    origin = None if layer is OutputLayer.DECODED else _transport_origin(participant, records)
     if origin is None:
         cursor = 0
         positional: list[tuple[int, int]] = []
@@ -222,12 +214,107 @@ def record_ranges(
     return tuple(ranges)
 
 
+def _transport_origin(participant: Participant, records: Sequence[Record]) -> int | None:
+    """Return a transport stream's origin, or ``None`` for a positional one.
+
+    ``isn + 1`` where the handshake was seen, else the first ``seq_start``
+    any record carries. ``None`` means no record carries one, and the stream
+    is positional: a hint-less transport stream has no way to know about
+    holes.
+    """
+    if participant.isn is not None:
+        return (participant.isn + 1) % SEQ_SPACE
+    return next((r.seq_start for r in records if r.seq_start is not None), None)
+
+
+def _trailing_hole(cursor: int, reach: int, fins: set[int]) -> tuple[int, int] | None:
+    """Return the hole after a stream's last byte, up to its furthest reach.
+
+    Only a zero-length record reaches past the last byte, and the range up
+    to it is a hole: the lost tail a pure ACK stored after it is the only
+    evidence of. The FIN's own position is not part of it, since it holds
+    no byte and is owed nothing.
+    """
+    start = cursor + 1 if cursor in fins else cursor
+    return (start, reach) if start < reach else None
+
+
+def fin_positions(
+    participant: Participant,
+    blocks: Sequence[Record | Discontinuity],
+    layer: OutputLayer | int,
+) -> tuple[int, ...]:
+    """Return the positions inside a stream's extent that a FIN occupies.
+
+    Since `0.24` (`zipline#168
+    <https://github.com/adamkjonsson/zipline/issues/168>`_) a transport
+    stream's extent counts sequence numbers, and a FIN occupies one. Where
+    something is stored past the FIN (a closing side's final pure ACK,
+    stored at the sequence number its segment carries, which is one past
+    the FIN), that position lies inside the extent and holds no byte. **The
+    coverage guarantee owes it nothing**: it is not a hole, so it takes no
+    ``gap``, and it is not content, so it takes no span.
+
+    The position is found in the input, as the specification says a
+    checker finds it: the data end of a placed record carrying ``fin``, or
+    the offset of a zero-length one. A FIN whose segment was lost leaves no
+    record to mark it, and the one-wide hole that remains is an ordinary
+    hole. A FIN with nothing stored past it lies at the extent, outside the
+    stream, and is not returned.
+
+    Args:
+        participant: The participant whose stream this is.
+        blocks: Its records and Discontinuity blocks, in stored order.
+        layer: The stream's layer, from :func:`stream_layer`.
+
+    Returns:
+        The positions, ascending. Empty for a decoded stream, a positional
+        (hint-less) transport stream, or a layer this version does not
+        define, none of which has a FIN's sequence number in its offsets.
+
+    """
+    if layer is not OutputLayer.TRANSPORT:
+        return ()
+    records = [block for block in blocks if isinstance(block, Record)]
+    origin = _transport_origin(participant, records)
+    if origin is None:
+        return ()
+    placer = _Placer(origin)
+    reach = 0
+    fins: set[int] = set()
+    for record in records:
+        start = placer.place(record)
+        if start is None:
+            continue  # unplaceable: it marks no position
+        stop = start + len(record.payload)
+        reach = max(reach, stop)
+        if int(record.flags) & _FIN_BIT:
+            fins.add(stop)
+    return tuple(sorted(position for position in fins if position < reach))
+
+
 def stream_extent(
     participant: Participant,
     blocks: Sequence[Record | Discontinuity],
     layer: OutputLayer | int,
 ) -> int:
     """Return one past the last offset the participant's stream reaches.
+
+    Since `0.24` the specification states this outright: a transport
+    stream's extent is **the furthest point its placeable records reach**,
+    where a record reaches its offset plus its ``payload_len``. So a
+    zero-length record reaches its own offset, and an unplaceable one
+    reaches nothing. Like every transport offset it counts **sequence
+    numbers**, not delivered bytes: a hole before the furthest record
+    counts, and so does a FIN's position where something is stored past it
+    (see :func:`fin_positions`).
+
+    **Reach is not a record's end** (``_sequence_end`` in
+    :mod:`zpf.order`). The two differ on one kind of record: a zero-length
+    FIN ends one past its offset, for the merge, but reaches only its
+    offset. So a stream whose last record is a zero-length FIN ends where
+    the FIN sits (``sequenced-pure-ack-and-fin``: the FIN at 8 ends at 9,
+    and the extent is 8).
 
     Args:
         participant: The participant whose stream this is.
@@ -499,6 +586,14 @@ class Datagram:
         ts: The record's timestamp, in the file's ``tick_hz`` ticks.
         record: The underlying :class:`~zpf.blocks.Record`, for the rare
             decoder that needs ``seq_start``/``ack``/``flags``.
+        copy: Whether the capture point saw this datagram's transmission
+            twice and this is the repeat (``RecordFlags.COPY``, since
+            ``0.24``): the sender sent once. Read as *messages as sent*, it
+            is skipped; read as *what the capture saw*, it is kept. Both are
+            the specification's readings, and
+            :meth:`StreamView.datagrams` takes ``copies=`` to choose. Only
+            ever true on a transport-layer stream: on a decoded record the
+            flag has no meaning in ``0.24``, so it is not read as one.
 
     """
 
@@ -507,6 +602,7 @@ class Datagram:
     off_end: int
     ts: int
     record: Record
+    copy: bool = False
 
 
 class StreamView:
@@ -538,8 +634,11 @@ class StreamView:
         # them saves that read being made twice
         # (`#93 <https://github.com/adamkjonsson/python-zipline/issues/93>`_).
         # Only a *complete* walk sets it, which generator semantics give for
-        # free: the recording line is the one after the loop.
-        self._measured: tuple[int, tuple[tuple[int, int], ...]] | None = None
+        # free: the recording line is the one after the loop. Extent, holes,
+        # and the FIN positions inside the extent (see `fin_positions`).
+        self._measured: (
+            tuple[int, tuple[tuple[int, int], ...], tuple[int, ...]] | None
+        ) = None
 
     def _records(self) -> Iterator[Record]:
         """Iterate the stream's records, dropping the breaks between them."""
@@ -602,7 +701,12 @@ class StreamView:
         Contiguous records are coalesced into one :class:`Segment`; every
         hole — including a leading one before the first captured byte — is
         yielded as a :class:`Gap`, in ascending offset order. Zero-length
-        (pure-ACK) records contribute no bytes and are skipped.
+        (pure-ACK) records contribute no bytes, but they **do** reach their
+        own offset (see :func:`stream_extent`). So a pure ACK stored after a
+        lost tail is what shows the tail was sent, and the hole up to it is
+        yielded as a trailing :class:`Gap`. The position a FIN occupies is
+        not part of that hole: it holds no byte and is owed nothing (see
+        :func:`fin_positions`).
 
         Yields:
             Each :class:`Segment` and :class:`Gap` of the stream, in order.
@@ -620,6 +724,8 @@ class StreamView:
         run_ts = 0
         parts: list[Contribution] = []
         holes: list[tuple[int, int]] = []
+        reach = 0
+        fins: set[int] = set()
         for record in self._records():
             if placer is None and record.seq_start is not None:
                 # No isn: the first record carrying a hint is the origin,
@@ -628,6 +734,11 @@ class StreamView:
             off = None if placer is None else placer.place(record)
             if off is None:
                 continue  # unplaceable: it occupies no range of this stream
+            # Before trimming: the FIN's position and the reach are the
+            # record's own, whatever an overlap takes off its front.
+            reach = max(reach, off + len(record.payload))
+            if int(record.flags) & _FIN_BIT:
+                fins.add(off + len(record.payload))
             if not record.payload:
                 continue
             payload, off = _trim_overlap(record.payload, off, cursor)
@@ -664,10 +775,18 @@ class StreamView:
                 bytes(run), run_start, cursor, run_ts,
                 contributors=tuple(parts), view=self,
             )
+        trailing = _trailing_hole(cursor, reach, fins)
+        if trailing is not None:
+            holes.append(trailing)
+            yield Gap(*trailing)
         # Reached only by a complete walk, which is what makes these numbers
-        # the whole stream's. A trailing Gap cannot occur — one is yielded
-        # only ahead of a run — so `cursor` is the last chunk's end.
-        self._measured = (cursor, tuple(holes))
+        # the whole stream's.
+        extent = max(cursor, reach)
+        self._measured = (
+            extent,
+            tuple(holes),
+            tuple(sorted(position for position in fins if position < extent)),
+        )
 
     def segments(self) -> Iterator[Segment]:
         """Iterate only the stream's contiguous :class:`Segment` runs, skipping holes.
@@ -706,13 +825,23 @@ class StreamView:
             parts.append(chunk.data)
         return b"".join(parts)
 
-    def datagrams(self) -> Iterator[Datagram]:
+    def datagrams(self, *, copies: bool = True) -> Iterator[Datagram]:
         """Iterate the stream one record at a time, as whole datagrams.
 
         The natural idiom for a packet-oriented stream, but defined for any
         stream: offsets are logical when the stream is stream-oriented and
         cumulative otherwise. Every record is yielded, pure-ACK records
         included.
+
+        Args:
+            copies: Keep a datagram the capture point saw twice (see
+                :attr:`Datagram.copy`). ``True``, the default, reads the
+                stream as the capture saw it, which is what this method
+                returned before ``0.24``. ``False`` reads it as the sender
+                sent it: one query and one answer where a mirror port saw the
+                answer twice. Either way a copy is content of the stream, so
+                it keeps its offsets, and skipping it moves no other
+                datagram.
 
         Yields:
             One :class:`Datagram` per record, in stored order. A
@@ -729,7 +858,7 @@ class StreamView:
 
         """
         for unit in self.units():
-            if isinstance(unit, Datagram):
+            if isinstance(unit, Datagram) and (copies or not unit.copy):
                 yield unit
 
     def units(self) -> Iterator[Datagram | Break]:
@@ -769,6 +898,9 @@ class StreamView:
         hinted = self.is_stream_oriented
         placer = self._placer() if hinted else None
         seams = self.is_unit_sequence
+        # `copy` means something on a transport-layer record only (0.24). A
+        # view built without a layer falls back to the record's own answer.
+        transport = None if self._layer is None else self._layer() is OutputLayer.TRANSPORT
         cursor = 0
         emitted = False
         last_end = 0
@@ -793,12 +925,14 @@ class StreamView:
                 off = cursor
                 cursor += len(record.payload)
             last_end = off + len(record.payload)
+            at_transport = record.decoder_id is None if transport is None else transport
             yield Datagram(
                 data=record.payload,
                 off_start=off,
                 off_end=off + len(record.payload),
                 ts=record.timestamp,
                 record=record,
+                copy=at_transport and bool(int(record.flags) & _COPY_BIT),
             )
         if not hinted:
             # A packet-oriented stream has no holes, and its extent is the
@@ -807,7 +941,7 @@ class StreamView:
             # to count a trailing break for the same reason, and the two must
             # not disagree. A hinted stream is measured by `chunks` instead,
             # whose offsets are the placed ones rather than these.
-            self._measured = (last_end, ())
+            self._measured = (last_end, (), ())
 
     def contributions(self) -> tuple[Contribution, ...]:
         """Return every input record's accepted bytes, across the whole stream.
@@ -875,11 +1009,37 @@ class StreamView:
         Discontinuity after the last record, for the reason
         :func:`stream_extent` gives.
 
+        Since `0.24` a zero-length record reaches its own offset, so a
+        closed stream whose final pure ACK is stored past its FIN measures
+        one past its last byte. The FIN's position is in the extent and
+        **not** among the holes: ask :meth:`fin_positions` for it.
+
         Returns:
             The extent, and the hole ranges in ascending order — empty for a
             packet-oriented stream.
 
         """
+        extent, holes, _fins = self._measure()
+        return extent, list(holes)
+
+    def fin_positions(self) -> list[int]:
+        """Return the positions inside this stream's extent that a FIN occupies.
+
+        The view's half of :func:`fin_positions`, from the same walk that
+        measures :meth:`extent_and_gaps`, so it costs nothing a stage has
+        not already paid. A position here is owed nothing by the coverage
+        guarantee: a stage neither cites it nor marks it Undecoded.
+
+        Returns:
+            The positions, ascending. Empty unless something is stored past
+            a FIN, and always empty for a packet-oriented stream.
+
+        """
+        _extent, _holes, fins = self._measure()
+        return list(fins)
+
+    def _measure(self) -> tuple[int, tuple[tuple[int, int], ...], tuple[int, ...]]:
+        """Return the memoized measurement, walking the stream if nothing has."""
         if self._measured is None:
             if self.is_stream_oriented:
                 for _chunk in self.chunks():
@@ -887,8 +1047,7 @@ class StreamView:
             else:
                 for _datagram in self.datagrams():
                     pass
-        extent, holes = self._measured or (0, ())
-        return extent, list(holes)
+        return self._measured or (0, (), ())
 
     def ts_for(self, off_start: int, off_end: int) -> int | None:
         """Return the completion time of a unit occupying a range of this stream.

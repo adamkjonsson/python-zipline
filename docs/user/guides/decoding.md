@@ -50,6 +50,16 @@ for stream in session.reassemble():
             parse(datagram.data)       # one whole message
 ```
 
+**A datagram the capture saw twice.** Since `0.24` a producer may flag a
+UDP datagram that a mirror port or a two-interface capture saw twice with
+`copy`: the sender sent once. The copy is content of the stream, so
+`datagrams()` yields it by default, as the capture saw it, with
+{attr}`Datagram.copy <zpf.reassembly.Datagram.copy>` set. A decoder that
+wants the messages as the sender sent them, one DNS answer where the mirror
+saw two, iterates `stream.datagrams(copies=False)`. Both are the
+specification's readings, and the copy keeps its offsets either way, so a
+citation is unaffected.
+
 ### Segments, chunks, and gaps
 
 For a byte stream, three methods offer different views of the same bytes:
@@ -58,10 +68,14 @@ For a byte stream, three methods offer different views of the same bytes:
   a decoder parses each run and cites offsets within it.
 - {meth}`~zpf.StreamView.chunks` — the runs **and** the {class}`~zpf.Gap`s
   between them, in order. Use it when a hole matters — e.g. to mark the gap
-  explicitly, or to reset parser state across it.
+  explicitly, or to reset parser state across it. Since `0.24` a gap can also
+  come **last**: a pure ACK stored after a lost tail shows the tail was sent,
+  so the range up to it is a hole too.
 - {meth}`~zpf.StreamView.reassembled` — the whole stream as one `bytes`. A
   convenience for the gap-free case; it raises if the stream has a gap, since
-  joining across a hole would misalign every offset after it.
+  joining across a hole would misalign every offset after it. That includes a
+  trailing gap, so since `0.24` it raises on a stream whose tail was lost
+  before a captured ACK, where `0.7.0` returned the bytes before the loss.
 
 A `Gap` occupies logical offset space (the coordinate system counts missing
 bytes as if present), so offsets stay stable whether or not a segment was lost —
@@ -207,7 +221,10 @@ how long each input stream it drew on was. That is what lets a consumer check
 the guarantee **from your output alone**, with {func}`~zpf.check_extents` and
 without opening the input: a hole at the *end* of a stream is otherwise
 invisible, because coverage that stops early looks exactly like a stream that
-was that short.
+was that short. Since `0.24` this holds to within one position: a closed TCP
+stream's FIN can sit at its last offset, owed nothing, and only the input
+shows it, so a one-wide shortfall there is left to
+{func}`~zpf.check_coverage`.
 
 ### Saying your own output breaks
 
@@ -496,12 +513,40 @@ decode stage, measured the way fan-out needs:
 
 Two things it leaves to you. **Parsing**: the format says what a `net:ip`
 payload is, not what is in it, so classifying a packet is your code.
-**Sequence numbers**: since `0.22` a transport record carrying `seq_start` may
-cite several input packets, or cross a break the input declares, because its
-sequence numbers assert that the bytes join and a break between them would be
-a range no record covers. The stage takes your word for them, and so does
-{func}`zpf.check_splice`, which leaves such a record unchecked. A record without
-`seq_start` cites one range only.
+**The evidence of a join**: a transport record may cite several input
+packets, or cross a break the input declares, when it carries evidence that
+those bytes join. There are two kinds:
+
+- **sequence numbers**, a record carrying `seq_start` (since `0.22`). They
+  assert that the bytes join, and a break between them would be a range no
+  record covers;
+- **one message's reassembly**, a record flagged `RecordFlags.MESSAGE` (since
+  `0.24`). The record is exactly one transport message, so the packets it cites
+  are that message's fragments: the IP fragments of one UDP datagram, say,
+  with another flow's packet between them.
+
+The stage takes your word for either, and so does {func}`zpf.check_splice`,
+which leaves such a record unchecked. A record carrying neither cites one range
+only.
+
+**A datagram that lost a fragment is not a message**, so it gets no record.
+Since `0.24` that is not withholding content of the stream: what never arrived
+as a message was never content of it. Its fragments' ranges in the input are
+still owed coverage, and the specification asks for `reason = "undecodable"`
+there (a SHOULD). {meth}`stage.incomplete
+<zpf.sessionize.SessionizeStage.incomplete>` writes exactly that:
+
+```python
+# At the end of the input, the fragments still waiting for a partner:
+for ident, pieces in pending.items():
+    stage.incomplete(
+        [stream.cite(dg.off_start, dg.off_end) for dg in pieces],
+        comment=f"datagram id {ident:#06x}: a fragment never arrived",
+    )
+```
+
+Don't leave them to auto-fill, which marks what nothing cited `skipped`, the
+word for bytes the stage chose to pass over.
 
 Both builders, {func}`zpf.sessionize_stage` and {func}`zpf.decode_stage`, take
 `face="jsonl"` to write the JSON-Lines face (with a text sink) and `creator=`

@@ -4,8 +4,8 @@ This tutorial builds up `zpf`'s API in four short stages, each a complete,
 runnable script under
 [`docs/user/examples/`](https://github.com/adamkjonsson/python-zipline/tree/main/docs/user/examples).
 Copy a script into a scratch directory and run it with plain `python` — no
-project setup beyond `pip install zpf` (see [Installation](installation.md))
-is needed. The stages build on one running example: a single HTTP
+project setup beyond installing `python-zipline` (see
+[Installation](installation.md)) is needed. The stages build on one running example: a single HTTP
 request/response between a client (`10.0.0.1:51000`) and a server
 (`93.184.216.34:80`).
 

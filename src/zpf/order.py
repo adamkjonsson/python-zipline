@@ -56,7 +56,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from zpf.blocks import RecordFlags
+from zpf.blocks import _FIN_BIT, _SYN_BIT
 from zpf.errors import SemanticError
 
 if TYPE_CHECKING:
@@ -163,9 +163,9 @@ def _sequence_end(record: Record, offset: int | None) -> int | None:
         return None
     if record.payload:
         return offset + len(record.payload)
-    if record.flags & RecordFlags.SYN:
+    if int(record.flags) & _SYN_BIT:
         return offset
-    if record.flags & RecordFlags.FIN:
+    if int(record.flags) & _FIN_BIT:
         return offset + 1
     return None
 

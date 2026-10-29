@@ -167,7 +167,7 @@ Categories you will meet:
 | `coverage-gap` | reader, {func}`zpf.check_extents`, {func}`zpf.check_coverage` | An input range neither decoded nor marked Undecoded. |
 | `coverage-overlap` | {func}`zpf.check_coverage` | An input range both decoded and marked Undecoded. |
 | `coverage-excess` | {func}`zpf.check_coverage` | A cited range past the input stream's extent. |
-| `extent-exceeds-coverage` | reader, {func}`zpf.check_extents` | A declared `input_extents` reaches past what spans and Undecoded blocks account for — the silent-truncation case. |
+| `extent-exceeds-coverage` | reader, {func}`zpf.check_extents` | A declared `input_extents` reaches more than one position past what spans and Undecoded blocks account for — the silent-truncation case. One position short may be a FIN's, which since `0.24` is owed nothing and is found only in the input, so {func}`zpf.check_coverage` decides it. |
 | `extent-below-coverage` | reader, {func}`zpf.check_extents` | A declared extent the file's own citations overshoot. |
 | `extents-disagree` | reader, {func}`zpf.check_extents` | Two sessions declare different lengths for one input stream. |
 | `extent-mismatch` | {func}`zpf.check_coverage` | A declared extent the opened input disagrees with. |

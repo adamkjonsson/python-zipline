@@ -230,7 +230,9 @@ class _Ledger:
         self._decoder = decoder
         self._cited: dict[tuple[int, int], list[tuple[int, int]]] = {}
         self._marked: dict[tuple[int, int], list[tuple[int, int]]] = {}
-        self._input_metrics: dict[tuple[int, int], tuple[int, list[tuple[int, int]]]] = {}
+        self._input_metrics: dict[
+            tuple[int, int], tuple[int, list[tuple[int, int]], list[int]]
+        ] = {}
 
     def cite(self, spans: Iterable[Span]) -> None:
         """Count the ranges of ``spans`` that cite this stage's input source."""
@@ -253,7 +255,7 @@ class _Ledger:
         Measured with the same rule the coverage check uses, so the two
         cannot disagree.
         """
-        extent, _gaps = self._input_metrics_for(stream)
+        extent, _gaps, _fins = self._input_metrics_for(stream)
         return InputExtent(
             source_id=self._source.source_id,
             session_id=stream.session_id,
@@ -285,8 +287,12 @@ class _Ledger:
                     "not override an explicit marker"
                 )
                 raise ZpfError(msg)
-            extent, gaps = self._input_metrics_for(stream)
-            uncovered = complement(coalesce(cited + marked), extent)
+            extent, gaps, fins = self._input_metrics_for(stream)
+            # A FIN's position inside the extent is owed nothing (0.24): no
+            # span, and no block either, since it is neither a hole (`gap`)
+            # nor a byte (`skipped`).
+            owed_nothing = [(position, position + 1) for position in fins]
+            uncovered = complement(coalesce(cited + marked + owed_nothing), extent)
             for start, end, reason in _label_fills(uncovered, gaps):
                 self._writer.undecoded(
                     self._source,
@@ -298,12 +304,15 @@ class _Ledger:
                     decoder=self._decoder,
                 )
 
-    def _input_metrics_for(self, stream: InputStream) -> tuple[int, list[tuple[int, int]]]:
-        """Return one input stream's cached extent and gaps."""
+    def _input_metrics_for(
+        self, stream: InputStream
+    ) -> tuple[int, list[tuple[int, int]], list[int]]:
+        """Return one input stream's cached extent, gaps and FIN positions."""
         key = (stream.session_id, stream.pid)
         metrics = self._input_metrics.get(key)
         if metrics is None:
-            metrics = stream.view.extent_and_gaps()
+            extent, gaps = stream.view.extent_and_gaps()
+            metrics = (extent, gaps, stream.view.fin_positions())
             self._input_metrics[key] = metrics
         return metrics
 

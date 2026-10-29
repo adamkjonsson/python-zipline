@@ -32,6 +32,7 @@ from typing import IO, TYPE_CHECKING, Literal
 
 from zpf.binary import BlockWriter
 from zpf.blocks import (
+    _SYN_BIT,
     Adjacency,
     Block,
     Custom,
@@ -1018,7 +1019,7 @@ class SessionWriter:
         if isn is None or block.seq_start is None:
             return
         origin = (isn + 1) % SEQ_SPACE
-        if block.flags & RecordFlags.SYN and block.seq_start != origin:
+        if int(block.flags) & _SYN_BIT and block.seq_start != origin:
             msg = (
                 f"a syn-flagged record MUST sit at the stream origin isn + 1 "
                 f"({origin}), got seq_start {block.seq_start}. The SYN consumes a "

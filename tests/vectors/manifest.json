@@ -1,5 +1,5 @@
 {
-  "format": "zipline-payload/0.23",
+  "format": "zipline-payload/0.24",
   "vectors": [
     {
       "name": "raw-minimal",
@@ -1140,7 +1140,7 @@
       "options": [
         "0x0020"
       ],
-      "summary": "version_minor is 24 while major is 0. In the 0.x regime the pair (0, minor) is the compatibility identity, so a 0.23 reader MUST reject it.",
+      "summary": "version_minor is 25 while major is 0. In the 0.x regime the pair (0, minor) is the compatibility identity, so a 0.24 reader MUST reject it.",
       "spec_section": "File Header -- version numbering",
       "expect": "Reject the file. This is the vector that distinguishes a 0.x-aware reader from one that assumes minors are always skippable.",
       "has_jsonl": false
@@ -1920,6 +1920,157 @@
       ]
     },
     {
+      "name": "closed-final-ack",
+      "tier": "accept",
+      "violations": 0,
+      "bytes": 404,
+      "blocks": [
+        "0x01",
+        "0x02",
+        "0x10",
+        "0x11",
+        "0x20",
+        "0x41"
+      ],
+      "options": [
+        "0x0020",
+        "0x0050",
+        "0x0060",
+        "0x0061",
+        "0x0070",
+        "0x0072"
+      ],
+      "summary": "A closed connection, as a sessionizer following Caveats writes it: each side's FIN rides on its data, and the server's final pure ACK is stored at the sequence number its segment carries, 5006 -- one past its own FIN at 5005. The server's stream is PONG at [0,4), its FIN at offset 4, and the pure ACK at offset 5, so the stream reaches 5: one past its last byte, and the position between is the FIN's. The client's FIN at offset 8 has nothing stored past it, so its stream ends at its last byte, 8. Since 0.24 the extent is stated as the furthest point a placeable record reaches, measured in sequence numbers; through 0.23 it was never defined, and python-zipline's decode stage and its own coverage check disagreed on every closed connection zpfwire wrote.",
+      "spec_section": "Referencing the source by stream offset -- a transport stream's extent",
+      "expect": "Accept. Extents are 8 for the client and 5 for the server: the server's final pure ACK at offset 5 extends its stream past the FIN's position, 4, which holds no byte. A reader that counts only bytes measures the server's stream as 4 and is wrong. Ends for the merge, per Fields used: PING 4, PONG 4 (a data record keeps its data end with FIN), QUIT 8, and none for the pure ACK. Ack positions 0, 4, 5 and 9. The merge is stored order.",
+      "has_jsonl": true,
+      "extents": [
+        {
+          "session_id": 7,
+          "pid": 0,
+          "extent": 8
+        },
+        {
+          "session_id": 7,
+          "pid": 1,
+          "extent": 5
+        }
+      ],
+      "merged": [
+        {
+          "session_id": 7,
+          "order": [
+            1,
+            2,
+            3,
+            4
+          ]
+        }
+      ]
+    },
+    {
+      "name": "udp-capture-copy",
+      "tier": "accept",
+      "violations": 0,
+      "bytes": 352,
+      "blocks": [
+        "0x01",
+        "0x02",
+        "0x10",
+        "0x11",
+        "0x20",
+        "0x41"
+      ],
+      "options": [
+        "0x0020",
+        "0x0050",
+        "0x0060"
+      ],
+      "summary": "A DNS query and its answer over UDP, captured through a mirror port that saw the answer twice, a microsecond apart. On a sequence-anchored stream the reassembler would discard the copy and cite it; a stream without a sequence anchor has no such exit, since the withholding rule makes the copy content of the stream. So it is written, as the server's second record, and since 0.24 the copy flag says the sender sent once. It repeats its participant's preceding record byte for byte and carries no seq_start, as the two MUST NOTs require. Through 0.23 the file could only say the server answered twice.",
+      "spec_section": "Enums -- copy names the capture point's act, where the copy cannot be discarded",
+      "expect": "Accept. The server's second record carries the token copy (flags message and copy, 0x0180), and the JSONL projection names it; a reader without the token renders 0x0100 as a hex token and fails the projection. Read as messages as sent, the exchange is one query and one answer: skip the flagged record. Read as what the capture saw, it is three records. The copy is content of the stream either way, so the server's extent counts it: 58, twice the answer's 29. The client's is 15. The session is hint-less, so the merge is by timestamp: stored order.",
+      "has_jsonl": true,
+      "extents": [
+        {
+          "session_id": 9,
+          "pid": 0,
+          "extent": 15
+        },
+        {
+          "session_id": 9,
+          "pid": 1,
+          "extent": 58
+        }
+      ],
+      "merged": [
+        {
+          "session_id": 9,
+          "order": [
+            1,
+            2,
+            3
+          ]
+        }
+      ]
+    },
+    {
+      "name": "isolate-copy-differs",
+      "tier": "isolate",
+      "violations": 1,
+      "bytes": 352,
+      "blocks": [
+        "0x01",
+        "0x02",
+        "0x10",
+        "0x11",
+        "0x20",
+        "0x41"
+      ],
+      "options": [
+        "0x0020",
+        "0x0050",
+        "0x0060"
+      ],
+      "summary": "udp-capture-copy with the copy's last byte changed: the record flagged copy says 93.184.216.35 where the record it claims to repeat says 93.184.216.34. A writer MUST NOT set copy unless the record's payload is byte-identical to its participant's preceding record's, so the flag asserts a repeat the bytes contradict. This is the constraint a reader can check from the file alone, whatever the producer knew.",
+      "spec_section": "Enums -- copy names the capture point's act, where the copy cannot be discarded",
+      "expect": "Isolate session 9 (a reader MAY treat it as a semantic violation), or reject. A reader that trusts the flag and skips the record drops an answer that differs from the first, which is the misreading the constraint prevents. The projection is still the .jsonl: the flag round-trips as copy whatever the reader concludes about it.",
+      "has_jsonl": true
+    },
+    {
+      "name": "capture-fragment-lost",
+      "tier": "accept",
+      "violations": 0,
+      "bytes": 308,
+      "blocks": [
+        "0x01",
+        "0x02",
+        "0x10",
+        "0x11",
+        "0x20",
+        "0x21",
+        "0x41"
+      ],
+      "options": [
+        "0x0001",
+        "0x0020",
+        "0x0022",
+        "0x0050",
+        "0x0060",
+        "0x00A0"
+      ],
+      "summary": "A head-of-pipeline reassembler over wg-inner.pcap, which holds two frames: the first fragment of a UDP datagram whose second fragment never arrived, and another flow's datagram. The fragment is pieces of a message, not a message, so the file writes no record for it, and that withholds nothing of the stream. Being capture-sourced, it owes no coverage, so the trace is the MUST's: an Undecoded block against the capture source naming the fragment's frame, bytes 40..106 of the pcap, reason undecodable (the SHOULD), with a comment naming the missing piece. Session 9 is the other flow's datagram. sessionized-fragment-lost is the same shape from a .zpf.",
+      "spec_section": "Discontinuity (0x22) -- an incomplete reassembly is not content of the stream",
+      "expect": "Accept. The file writes no record for the incomplete datagram, which is not withholding: an incomplete reassembly is not content of the stream. The Undecoded block is the trace the MUST requires of a reassembler reading a capture. Its offsets are byte offsets into wg-inner.pcap (the fragment's frame, after the 24-byte global header and 16-byte record header), its ids are unused, and it creates no coverage obligation. A reader that treats it as naming a stream of this file is wrong. Session 9's extent is 12, the one datagram written.",
+      "has_jsonl": true,
+      "extents": [
+        {
+          "session_id": 9,
+          "pid": 0,
+          "extent": 12
+        }
+      ]
+    },
+    {
       "name": "sessionized-across-units",
       "tier": "accept",
       "violations": 0,
@@ -2335,6 +2486,33 @@
         "raw.hex",
         "raw.jsonl",
         "raw.zpf"
+      ],
+      "merged": [
+        {
+          "file": "raw",
+          "session_id": 7,
+          "order": [
+            1,
+            2,
+            3
+          ]
+        },
+        {
+          "file": "decoded",
+          "session_id": 7,
+          "order": [
+            1,
+            2
+          ]
+        },
+        {
+          "file": "annotated",
+          "session_id": 7,
+          "order": [
+            1,
+            2
+          ]
+        }
       ]
     },
     {
@@ -2490,6 +2668,252 @@
         "merged.hex",
         "merged.jsonl",
         "merged.zpf"
+      ]
+    },
+    {
+      "name": "decoded-past-fin",
+      "tier": "accept",
+      "violations": 0,
+      "blocks": [
+        "0x01",
+        "0x02",
+        "0x03",
+        "0x10",
+        "0x11",
+        "0x12",
+        "0x20",
+        "0x41"
+      ],
+      "options": [
+        "0x0012",
+        "0x0013",
+        "0x0020",
+        "0x0021",
+        "0x0041",
+        "0x0042",
+        "0x0050",
+        "0x0060",
+        "0x0061",
+        "0x0070",
+        "0x0072",
+        "0x0080",
+        "0x0090",
+        "0x00C1"
+      ],
+      "bytes": 1008,
+      "summary": "closed-final-ack's capture, and a decode stage over it. The server's stream reaches 5, one past its FIN at offset 4, because its final pure ACK is stored at its wire number. The decoder spans the server's data [0,4), owes the FIN's position nothing and marks nothing there, and declares the stream's extent as 5. The client's FIN has nothing past it, so its stream is [0,8) and is covered exactly.",
+      "spec_section": "Coverage honesty -- the position a FIN occupies is owed nothing",
+      "expect": "Accept both files. decoded.zpf's Session End declares extents 8 and 5, both what capture.zpf's sequence numbers give. A coverage check that reports [4,5) of the server's stream as a gap, or an extent mismatch against 4, is wrong: that position is the FIN's and holds no byte. Marking it Undecoded is not required.",
+      "has_jsonl": true,
+      "files": [
+        "capture.hex",
+        "capture.jsonl",
+        "capture.zpf",
+        "decoded.hex",
+        "decoded.jsonl",
+        "decoded.zpf"
+      ],
+      "merged": [
+        {
+          "file": "capture",
+          "session_id": 7,
+          "order": [
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        {
+          "file": "decoded",
+          "session_id": 7,
+          "order": [
+            1,
+            2,
+            3
+          ]
+        }
+      ]
+    },
+    {
+      "name": "sessionized-fragments",
+      "tier": "accept",
+      "violations": 0,
+      "blocks": [
+        "0x01",
+        "0x02",
+        "0x03",
+        "0x10",
+        "0x11",
+        "0x12",
+        "0x20",
+        "0x41"
+      ],
+      "options": [
+        "0x0012",
+        "0x0013",
+        "0x0020",
+        "0x0021",
+        "0x0041",
+        "0x0042",
+        "0x0050",
+        "0x0060",
+        "0x0080",
+        "0x0090",
+        "0x0091",
+        "0x00C1"
+      ],
+      "bytes": 1140,
+      "summary": "A sessionization stage reassembling an IP-fragmented UDP datagram. packets.zpf is a decryptor's output, a unit sequence of three net:ip records with real headers: the datagram's first fragment (id 0x1234, MF, 32 bytes of IP payload) at [0,52), another flow's datagram at [52,92), and the second fragment (offset 4, i.e. 32 bytes) at [92,128). inner.zpf's session 20 is the datagram reassembled, one record flagged message citing both fragments across two seams, with no seq_start. Through 0.23 that record had no conformant form: the permission to cross input units was keyed on seq_start.",
+      "spec_section": "Discontinuity (0x22) -- a transport-layer record meets both duties when it carries the evidence of its own join",
+      "expect": "Accept both files. Session 20's record is exactly one transport message, so the units it cites are that message's fragments and join as its reassembly: a splice check that requires seq_start to cross a unit sequence's seams reports a violation that is not there. Its 40-byte payload is the datagram's data, the fragments' IP payloads joined at their offsets with the UDP header removed. Both sessions declare packets.zpf's full extent, 128.",
+      "has_jsonl": true,
+      "files": [
+        "inner.hex",
+        "inner.jsonl",
+        "inner.zpf",
+        "packets.hex",
+        "packets.jsonl",
+        "packets.zpf"
+      ]
+    },
+    {
+      "name": "sessionized-fragment-lost",
+      "tier": "accept",
+      "violations": 0,
+      "blocks": [
+        "0x01",
+        "0x02",
+        "0x03",
+        "0x10",
+        "0x11",
+        "0x12",
+        "0x20",
+        "0x21",
+        "0x41"
+      ],
+      "options": [
+        "0x0001",
+        "0x0012",
+        "0x0013",
+        "0x0020",
+        "0x0021",
+        "0x0041",
+        "0x0042",
+        "0x0050",
+        "0x0060",
+        "0x0080",
+        "0x0090",
+        "0x0091",
+        "0x00A0",
+        "0x00C1"
+      ],
+      "bytes": 928,
+      "summary": "sessionized-fragments with the datagram's second fragment lost. packets.zpf is a unit sequence of two net:ip records with real headers: the first fragment (id 0x1234, MF) at [0,52) and another flow's datagram at [52,92). No second fragment ever arrived, so the first is pieces of a message, not a message. inner.zpf writes no record for it, which withholds nothing of the stream, and marks [0,52) of packets.zpf undecodable, with a comment naming the missing fragment. Session 21 is flow B. Through 0.23 the shape had no conformant form: a partial datagram is not a message, and the transport layer could not withhold it.",
+      "spec_section": "Discontinuity (0x22) -- an incomplete reassembly is not content of the stream",
+      "expect": "Accept both files. An incomplete reassembly is not content of a message-oriented stream, so leaving it out is not withholding: a check that calls the missing datagram withheld content reports a violation that is not there. The fragment's bytes are accounted for in the input's space by the Undecoded block, reason undecodable (the SHOULD), and inner.zpf's coverage of packets.zpf is complete with it. A reader wanting every input unit cited by some record finds the block in its place. Session 21 declares packets.zpf's full extent, 92.",
+      "has_jsonl": true,
+      "files": [
+        "inner.hex",
+        "inner.jsonl",
+        "inner.zpf",
+        "packets.hex",
+        "packets.jsonl",
+        "packets.zpf"
+      ]
+    },
+    {
+      "name": "sessionized-across-break",
+      "tier": "accept",
+      "violations": 0,
+      "blocks": [
+        "0x01",
+        "0x02",
+        "0x03",
+        "0x10",
+        "0x11",
+        "0x12",
+        "0x20",
+        "0x22",
+        "0x41"
+      ],
+      "options": [
+        "0x0012",
+        "0x0013",
+        "0x0020",
+        "0x0021",
+        "0x0041",
+        "0x0042",
+        "0x0050",
+        "0x0060",
+        "0x0061",
+        "0x0070",
+        "0x0072",
+        "0x0080",
+        "0x0090",
+        "0x0091",
+        "0x00C1",
+        "0x00D1"
+      ],
+      "bytes": 1352,
+      "summary": "A sessionization stage crossing a DECLARED break. packets.zpf is a contiguous packet stream of three net:ip records with real headers -- flow A at [0,80), flow B at [80,140), flow A at [140,210) -- and a Discontinuity (decrypt-failed, no width) between flow B's packet and flow A's second. Flow A's sequence numbers join across it (1001 + 40 = 1041), so what was lost belonged to another flow. inner.zpf's session 10 is flow A as one record with seq_start, its two spans crossing the break; session 11 is flow B.",
+      "spec_section": "Discontinuity (0x22) -- a transport-layer record meets both duties when it carries the evidence of its own join",
+      "expect": "Accept both files. Session 10's record carries seq_start, so its sequence numbers assert the join and a break between its packets is a range of sequence numbers no record covers: it MAY cross the declared Discontinuity. A splice check that applies the decoded layer's carry duty to it reports a violation that is not there. isolate-transport-splice is this pair with the evidence removed.",
+      "has_jsonl": true,
+      "files": [
+        "inner.hex",
+        "inner.jsonl",
+        "inner.zpf",
+        "packets.hex",
+        "packets.jsonl",
+        "packets.zpf"
+      ]
+    },
+    {
+      "name": "isolate-transport-splice",
+      "tier": "isolate",
+      "violations": 1,
+      "blocks": [
+        "0x01",
+        "0x02",
+        "0x03",
+        "0x10",
+        "0x11",
+        "0x12",
+        "0x20",
+        "0x22",
+        "0x41"
+      ],
+      "options": [
+        "0x0012",
+        "0x0013",
+        "0x0020",
+        "0x0021",
+        "0x0041",
+        "0x0042",
+        "0x0050",
+        "0x0060",
+        "0x0061",
+        "0x0070",
+        "0x0072",
+        "0x0080",
+        "0x0090",
+        "0x0091",
+        "0x00C1",
+        "0x00D1"
+      ],
+      "bytes": 1328,
+      "summary": "sessionized-across-break with flow A's record stripped of its evidence: no isn on its participant, no seq_start and no ack on the record, and no message flag, since it is TCP. The record still crosses packets.zpf's declared Discontinuity with two spans, so it asserts a join nothing in it can answer for. A transport output without the evidence owes both duties, and has neither recourse: a transport stream carries no Discontinuity and is never units.",
+      "spec_section": "Discontinuity (0x22) -- a transport record carrying neither owes both duties as stated",
+      "expect": "Accept packets.zpf; it breaks no rule. ISOLATE or reject inner.zpf's session 10: its record crosses a declared Discontinuity in its input and carries neither seq_start nor message, so nothing in it says the two packets join, and the break is gone one hop along. Session 11 is conformant. A reader handed only inner.zpf cannot judge it: the violation needs packets.zpf in hand, as splice does. This is the pairwise twin of isolate-unmarked-break.",
+      "has_jsonl": true,
+      "files": [
+        "inner.hex",
+        "inner.jsonl",
+        "inner.zpf",
+        "packets.hex",
+        "packets.jsonl",
+        "packets.zpf"
       ]
     }
   ]

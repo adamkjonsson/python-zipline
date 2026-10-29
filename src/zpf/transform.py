@@ -37,6 +37,7 @@ from typing import IO, TYPE_CHECKING
 
 from zpf._intervals import complement, intersections
 from zpf.blocks import (
+    _MESSAGE_BIT,
     Adjacency,
     Discontinuity,
     InputExtent,
@@ -49,7 +50,7 @@ from zpf.conformance import CoverageLedger
 from zpf.errors import Diagnostic, ZpfError
 from zpf.order import causal_merge
 from zpf.reader import FileReader, SessionReader
-from zpf.reassembly import layer_name, stream_extent
+from zpf.reassembly import fin_positions, layer_name, stream_extent
 from zpf.writer import (
     Decoded,
     DecoderHandle,
@@ -89,7 +90,10 @@ def merge_files(
     ``digest`` when the input is a path), the output session carries the
     SEQUENCED flag, and records are re-emitted byte-identically — payloads,
     timestamps, ``seq_start``/``ack`` hints, flags, and unknown options
-    preserved.
+    preserved. That includes ``copy`` (``0.24``), which a stage must clear
+    when it does not carry the flagged record's predecessor forward: a merge
+    keeps every record of each participant, in that participant's stored
+    order, so the predecessor is always there.
 
     Each record additionally carries an **identity span**, the same range in
     as out, which since `0.19` is how a pass-through states its provenance;
@@ -346,6 +350,14 @@ def check_coverage(
     offset must be covered either by some decoded record's ``spans`` or by
     an Undecoded block — never silently dropped, never both.
 
+    **Except the position a FIN occupies**, which since `0.24` is owed
+    nothing (`zipline#168
+    <https://github.com/adamkjonsson/zipline/issues/168>`_). Where a closed
+    stream's final pure ACK is stored past its FIN, the extent reaches one
+    past the last byte, and the position between holds no byte. It is
+    found in the input, by :func:`~zpf.reassembly.fin_positions`, which is
+    what this check has and a single-file reader does not.
+
     Args:
         decoded: The decode-stage output file.
         raw: The predecessor input file the decoded file cites.
@@ -365,13 +377,14 @@ def check_coverage(
     with FileReader(decoded) as decoded_reader, FileReader(raw) as raw_reader:
         source_id = _input_source_id(decoded_reader, raw)
         extents = _stream_extents(raw_reader)
+        exempt = _stream_fin_positions(raw_reader)
         spans, undecoded = _cited_intervals(decoded_reader, source_id)
         declared = _declared_extents(decoded_reader, source_id)
         findings: list[Diagnostic] = []
         for key in sorted(set(extents) | set(spans) | set(undecoded)):
             findings.extend(
                 _check_stream(key, extents.get(key, 0), spans.get(key, []),
-                              undecoded.get(key, []))
+                              undecoded.get(key, []), exempt.get(key, ()))
             )
         findings.extend(_check_declared(declared, extents))
         return findings
@@ -671,17 +684,27 @@ def check_splice(
     exactly when the ranges it cites in stage 1's output have bytes on both
     sides of a break.
 
-    **Except a sequence-anchored transport record**, which since ``0.22``
-    MAY cross (`zipline#152
-    <https://github.com/adamkjonsson/zipline/issues/152>`_). A transport
-    stream whose records carry ``seq_start`` meets the duty through its
-    offsets: a break there is a range of sequence numbers no record covers,
-    which cannot be lost, so a sessionization stage's record that cites
-    packets either side of an input break asserts, with its sequence numbers,
-    that they join. Such a record is not checked
-    (`#90 <https://github.com/adamkjonsson/python-zipline/issues/90>`_). A
-    transport record **without** ``seq_start`` has no hole to carry a break
-    in and keeps the duty, and so does every decoded record.
+    **Except a transport record carrying the evidence of its own join**,
+    which MAY cross. There are two kinds of evidence:
+
+    * **sequence numbers**, a record carrying ``seq_start``, since ``0.22``
+      (`zipline#152 <https://github.com/adamkjonsson/zipline/issues/152>`_).
+      A break in such a stream is a range of sequence numbers no record
+      covers, which cannot be lost, so a sessionization stage's record that
+      cites packets either side of an input break asserts, with its
+      sequence numbers, that they join
+      (`#90 <https://github.com/adamkjonsson/python-zipline/issues/90>`_);
+    * **one message's reassembly**, a record flagged ``MESSAGE``, since
+      ``0.24`` (`zipline#166
+      <https://github.com/adamkjonsson/zipline/issues/166>`_). The record is
+      exactly one transport message, so the units it cites are that
+      message's fragments, such as the IP fragments of one datagram, and
+      another flow's packet may sit between them
+      (`#105 <https://github.com/adamkjonsson/python-zipline/issues/105>`_).
+
+    Such a record is not checked. A transport record carrying **neither**
+    has no evidence of a join for a checker to see, and keeps the duty, and
+    so does every decoded record.
 
     Args:
         stage2: The downstream file, whose spans cite ``stage1``.
@@ -708,10 +731,11 @@ def check_splice(
         findings: list[Diagnostic] = []
         for session in downstream.sessions():
             for index, record in enumerate(session.records()):
-                if record.seq_start is not None and (
-                    session.layer(record.sender_pid) == OutputLayer.TRANSPORT
-                ):
-                    continue  # it MAY cross: its offsets carry the break (0.22)
+                evidence = record.seq_start is not None or bool(
+                    int(record.flags) & _MESSAGE_BIT
+                )
+                if evidence and session.layer(record.sender_pid) == OutputLayer.TRANSPORT:
+                    continue  # it MAY cross: seq_start (0.22) or one message (0.24)
                 findings.extend(_crossings(record, index, source_id, breaks))
         return findings
 
@@ -794,6 +818,25 @@ def _stream_extents(raw: FileReader) -> dict[tuple[int, int], int]:
     return extents
 
 
+def _stream_fin_positions(raw: FileReader) -> dict[tuple[int, int], tuple[int, ...]]:
+    """Find each input stream's FIN positions inside its extent, which are owed nothing.
+
+    A second pass over the input beside :func:`_stream_extents`, through the
+    same shared rule, so the exemption is found where the specification
+    says a checker finds it: in the input.
+    """
+    positions: dict[tuple[int, int], tuple[int, ...]] = {}
+    for session in raw.sessions():
+        for participant in session.participants:
+            pid = participant.participant_id
+            found = fin_positions(
+                participant, list(session.stream_blocks(pid)), session.layer(pid)
+            )
+            if found:
+                positions[(session.session_id, pid)] = found
+    return positions
+
+
 def _cited_intervals(decoded: FileReader, source_id: int) -> tuple[_Intervals, _Intervals]:
     """Collect decoded-span and Undecoded intervals, keyed by input stream."""
     spans: _Intervals = {}
@@ -816,8 +859,14 @@ def _check_stream(
     extent: int,
     spans: list[tuple[int, int]],
     undecoded: list[tuple[int, int]],
+    exempt: tuple[int, ...] = (),
 ) -> list[Diagnostic]:
-    """Check one input stream's coverage; return its violations."""
+    """Check one input stream's coverage; return its violations.
+
+    ``exempt`` holds the stream's FIN positions, which count as covered for
+    the gap test only: they hold no byte, so nothing cites them, and they
+    take no part in the overlap or excess tests.
+    """
     session_id, pid = key
     where = f"input stream (session {session_id}, pid {pid})"
     findings: list[Diagnostic] = []
@@ -825,7 +874,8 @@ def _check_stream(
         message = f"{where}: [{start}, {end}) is both decoded and marked Undecoded"
         findings.append(Diagnostic(start, "coverage-overlap", message))
     covered = sorted(spans + undecoded)
-    for start, end in complement(covered, extent):
+    owed_nothing = [(position, position + 1) for position in exempt]
+    for start, end in complement(sorted(covered + owed_nothing), extent):
         message = f"{where}: [{start}, {end}) is neither decoded nor marked Undecoded"
         findings.append(Diagnostic(start, "coverage-gap", message))
     for start, end in covered:
@@ -868,6 +918,11 @@ def rewrite_decoded(
       inherited and their Decoder Descriptors re-declared. This stage
       declares no decoder of its own — a filtered HTTP message is still an
       HTTP message — and identifies itself through ``produced_by``.
+
+    Flags are carried as written. Since ``0.24`` a stage that drops a
+    ``copy`` record's predecessor must clear ``copy``, but that rule is about
+    transport-layer records. This stage reads only decoded layers, where the
+    flag has no meaning in ``0.24``, so it neither clears nor checks it.
 
     A reordering stage's spans will *not* ascend with stored order. That is
     expected: coverage depends on which ranges are covered, not on the order

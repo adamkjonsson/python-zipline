@@ -730,6 +730,27 @@ def test_a_trailing_gap_is_invisible_until_an_extent_declares_it():
     )
 
 
+def _declaring(extent: int) -> zpf.SessionEnd:
+    return zpf.SessionEnd(
+        session_id=5,
+        input_extents=(
+            zpf.InputExtent(source_id=2, session_id=7, participant_id=0, extent=extent),
+        ),
+    )
+
+
+def test_a_one_wide_tail_is_not_decidable_from_one_file():
+    """Since 0.24 it may be a FIN's position, which is owed nothing.
+
+    A closed stream whose final pure ACK is stored past its FIN reaches one
+    past its last byte (`decoded-past-fin`). The FIN is in the input, which
+    this file does not hold, so a one-wide shortfall is accepted here and
+    left to `check_coverage`. Two wide is not a FIN, and is still reported.
+    """
+    finished(*_decode_stage(_cite(0, 20), _declaring(21)))
+    reject_at_end(*_decode_stage(_cite(0, 20), _declaring(22)), match="declared extent 22")
+
+
 def test_a_declared_extent_its_own_spans_overshoot_is_a_contradiction():
     reject_at_end(
         *_decode_stage(
@@ -1246,3 +1267,108 @@ def test_role_at_the_decoded_layer_is_silent():
         raw_record(source_id=2, decoder_id=3, payload=b"\x00\x00\x00\x07",
                    content_type="prim:u32", role="checksum", spans=(IDENTITY,)),
     )
+
+
+# --- copy (0.24, zipline#169, #106) -------------------------------------------------
+
+COPY = zpf.RecordFlags.MESSAGE | zpf.RecordFlags.COPY
+
+
+def test_a_copy_of_its_participants_preceding_record_is_accepted():
+    finished(
+        *RAW_PRELUDE,
+        raw_record(payload=b"answer", flags=zpf.RecordFlags.MESSAGE),
+        raw_record(payload=b"answer", flags=COPY),
+        raw_record(payload=b"answer", flags=COPY),  # a copy of a copy: seen three times
+    )
+
+
+def test_a_copy_whose_payload_differs_is_isolated():
+    """`isolate-copy-differs`: trusting the flag would skip a different answer."""
+    reject(
+        *RAW_PRELUDE,
+        raw_record(payload=b"answer", flags=zpf.RecordFlags.MESSAGE),
+        raw_record(payload=b"answeR", flags=COPY),
+        match="differs from its participant's preceding record",
+    )
+
+
+def test_a_copy_with_nothing_before_it_is_isolated():
+    reject(*RAW_PRELUDE, raw_record(payload=b"x", flags=COPY), match="first record")
+
+
+def test_a_copy_compares_with_its_own_participants_records_only():
+    """A copy arriving after the *peer's* record still repeats its own predecessor."""
+    peer = zpf.Participant(session_id=5, participant_id=1)
+    finished(
+        *RAW_PRELUDE, peer,
+        raw_record(payload=b"answer", flags=zpf.RecordFlags.MESSAGE),
+        raw_record(sender_pid=1, payload=b"query", flags=zpf.RecordFlags.MESSAGE),
+        raw_record(payload=b"answer", flags=COPY),
+    )
+
+
+def test_a_copy_after_another_message_of_its_participant_is_isolated():
+    """The spec's own edge: such a copy stays unflagged."""
+    reject(
+        *RAW_PRELUDE,
+        raw_record(payload=b"answer", flags=zpf.RecordFlags.MESSAGE),
+        raw_record(payload=b"other", flags=zpf.RecordFlags.MESSAGE),
+        raw_record(payload=b"answer", flags=COPY),
+        match="differs from its participant's preceding record",
+    )
+
+
+def test_a_copy_on_a_seq_start_stream_is_isolated_whichever_comes_first():
+    """Barred from a stream whose records carry seq_start, not just from the record.
+
+    A record carrying it, a copy after one, and a copy before one. The first
+    two are caught at the copy itself, mid-stream, which is what lets a
+    reader isolate that record; only the last waits for the participant to
+    close.
+    """
+    psh_copy = zpf.RecordFlags.PSH | zpf.RecordFlags.COPY
+    seq = "stream whose records carry seq_start"
+    with pytest.raises(zpf.SemanticError, match=seq):
+        accept(
+            *RAW_PRELUDE,
+            raw_record(payload=b"ab", seq_start=1),
+            raw_record(payload=b"ab", flags=psh_copy, seq_start=3),
+        )
+    with pytest.raises(zpf.SemanticError, match=seq):
+        accept(
+            *RAW_PRELUDE,
+            raw_record(payload=b"ab", seq_start=1),
+            raw_record(payload=b"ab", flags=psh_copy),
+        )
+    reject(
+        *RAW_PRELUDE,
+        raw_record(payload=b"ab"),
+        raw_record(payload=b"ab", flags=psh_copy),
+        raw_record(payload=b"cd", seq_start=5),
+        zpf.SessionEnd(session_id=5),
+        match="stream whose records carry seq_start",
+    )
+
+
+def test_copy_on_a_decoded_record_is_preserved_and_never_checked():
+    """0.24 gives the flag no meaning on a decoded record (zipline#171 asks)."""
+    decoded = {"decoder_id": 3, "flags": zpf.RecordFlags.COPY}
+    finished(*DECODED_PRELUDE, raw_record(payload=b"first", **decoded))
+
+
+def test_the_writer_refuses_a_copy_that_breaks_a_rule():
+    sink = io.BytesIO()
+    with zpf.create(sink, tick_hz=1) as writer:
+        writer.add_source("capture")
+        with writer.begin_session(proto="udp") as session:
+            server = session.participant("10.0.0.1:53")
+            session.record(server, ts=1, payload=b"answer", flags=zpf.RecordFlags.MESSAGE)
+            with pytest.raises(zpf.SemanticError, match="differs from"):
+                session.record(server, ts=2, payload=b"answeR", flags=COPY)
+            session.record(server, ts=3, payload=b"answer", flags=COPY)
+    with zpf.open(io.BytesIO(sink.getvalue())) as reader:
+        assert reader.diagnostics == []
+        assert [r.flags for r in reader.session(0).records()] == [
+            zpf.RecordFlags.MESSAGE, COPY,
+        ]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -12,6 +13,7 @@ if TYPE_CHECKING:
 
 import zpf
 from zpf import _frame
+from zpf.blocks import _RECORD_BODY, _encode_options
 
 FULL_BLOCKS = [
     zpf.FileHeader(
@@ -497,3 +499,84 @@ def test_transform_params_digest_sits_on_the_file_header():
     reparsed = zpf.FileHeader.from_content(header.to_bytes())
     assert reparsed.transform_params_digest == "sha256:abcd"
     assert _frame.OPT_TRANSFORM_PARAMS_DIGEST in _option_ids(header)
+
+
+# --- Record's fixed encoder agrees with the generic walk (#101) -----------------------
+
+
+def _generic(record: zpf.Record) -> bytes:
+    """Encode ``record`` the way every other block is: walking its spec table."""
+    body = _RECORD_BODY.pack(
+        record.session_id, record.sender_pid, record.source_id, record.timestamp,
+        0, int(record.flags), len(record.payload),
+    )
+    return body + _frame.padded(record.payload) + _encode_options(record, record._SPEC.ordered)
+
+
+def _every_vector_record() -> list[zpf.Record]:
+    records = []
+    for path in sorted((Path(__file__).parent / "vectors").rglob("*.zpf")):
+        if "reject-" in path.name:
+            continue
+        with zpf.open(path) as reader:
+            records.extend(b for b in reader.blocks() if isinstance(b, zpf.Record))
+    return records
+
+
+def test_the_fixed_record_encoder_matches_the_spec_walk_on_every_vector():
+    """`Record._encode` hand-writes its option order; the spec table is the truth.
+
+    `dataclasses.replace` drops the parsed bytes, so `to_bytes` encodes afresh.
+    """
+    records = _every_vector_record()
+    assert len(records) > 150  # the vendored tree (185 at v0.24), not an empty glob
+    for record in records:
+        fresh = dataclasses.replace(record)
+        assert fresh.to_bytes() == _generic(fresh)
+
+
+def test_the_fixed_record_encoder_matches_on_every_option_at_once():
+    """Every option set, unknown extras preserved, and spans past one TLV's cap."""
+    spans = tuple(
+        zpf.Span(source_id=1, session_id=2, participant_id=0, off_start=k, off_end=k + 1)
+        for k in range(_frame.MAX_SPANS_PER_OPTION + 5)  # two occurrences
+    )
+    record = zpf.Record(
+        session_id=2**40, sender_pid=3, source_id=1, timestamp=-5, payload=b"abc",
+        flags=zpf.RecordFlags(0x0220) | zpf.RecordFlags.PSH,
+        seq_start=2**32 - 1, ack=0, ts_first=-(2**63), spans=spans, decoder_id=0xFFFF,
+        content_type="mime:text/plain", role="héader", comment="ünïcode",
+        extra_options=(zpf.RawOption(0x7777, b"\x01\x02\x03"),),
+    )
+    assert record.to_bytes() == _generic(record)
+    assert zpf.Record.from_content(record.to_bytes()) == record
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("session_id", -1, "session_id out of range for u64"),
+        ("sender_pid", 1 << 16, "sender_pid out of range for u16"),
+        ("source_id", -1, "source_id out of range for u16"),
+        ("timestamp", 1 << 63, "timestamp out of range for i64"),
+        ("flags", 1 << 16, "flags out of range for u16"),
+        ("seq_start", 1 << 32, "seq_start out of range for u32"),
+        ("ack", -1, "ack out of range for u32"),
+        ("ts_first", -(1 << 63) - 1, "ts_first out of range for i64"),
+        ("decoder_id", 1 << 16, "decoder_id out of range for u16"),
+    ],
+)
+def test_a_record_out_of_range_names_its_field(field: str, value: int, message: str):
+    """The fast range test (#101) falls back to the per-field checks to say which."""
+    args = {"session_id": 1, "sender_pid": 0, "source_id": 0, "timestamp": 0, field: value}
+    with pytest.raises(zpf.EncodeError, match=message):
+        zpf.Record(**args)
+
+
+def test_a_record_normalises_what_the_fast_path_leaves_alone():
+    """Types are still normalised, only skipped where they already match."""
+    record = zpf.Record(session_id=1, sender_pid=0, source_id=0, timestamp=0,
+                        payload=bytearray(b"ab"), flags=1, spans=[])
+    assert type(record.payload) is bytes
+    assert type(record.flags) is zpf.RecordFlags
+    assert record.spans == ()

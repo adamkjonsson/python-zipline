@@ -20,5 +20,6 @@ the developer docs:
 - [Conformance strategy](docs/dev/conformance.md) — where each spec rule is enforced
 - [Testing](docs/dev/testing.md) — the test suite and the load-bearing tests
 
-The package is `zpf` (import and PyPI name); the `zipline` name on PyPI
-belongs to an unrelated project.
+The import name is `zpf`; the distribution name, what `pip` installs and
+what a dependency string names, is `python-zipline` since `0.8.0`. Both
+`zipline` and `zpf` on PyPI belong to unrelated projects (#102).
