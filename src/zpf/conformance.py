@@ -85,6 +85,8 @@ from typing import TYPE_CHECKING, Any
 
 from zpf._intervals import add, coalesce, complement
 from zpf.blocks import (
+    _COPY_BIT,
+    _SYN_BIT,
     REASON_CLASSES,
     UNDECODED_REASONS,
     Adjacency,
@@ -97,7 +99,6 @@ from zpf.blocks import (
     OutputLayer,
     Participant,
     Record,
-    RecordFlags,
     Session,
     SessionEnd,
     Source,
@@ -1024,7 +1025,7 @@ class ConformanceChecker:
             caller to remember once every check has passed.
 
         """
-        if not int(block.flags) & RecordFlags.COPY:
+        if not int(block.flags) & _COPY_BIT:
             return False
         if block.decoder_id is not None and (
             self._decoders.get(block.decoder_id) is not OutputLayer.TRANSPORT
@@ -1351,7 +1352,7 @@ def _handshake_placement(
         The finding, or ``None`` where there is nothing to report.
 
     """
-    if not block.flags & RecordFlags.SYN or stream.isn is None:
+    if not int(block.flags) & _SYN_BIT or stream.isn is None:
         return None
     if block.seq_start is None:
         return None

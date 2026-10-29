@@ -37,12 +37,12 @@ from typing import IO, TYPE_CHECKING
 
 from zpf._intervals import complement, intersections
 from zpf.blocks import (
+    _MESSAGE_BIT,
     Adjacency,
     Discontinuity,
     InputExtent,
     OutputLayer,
     Record,
-    RecordFlags,
     SourceKind,
     Span,
 )
@@ -732,7 +732,7 @@ def check_splice(
         for session in downstream.sessions():
             for index, record in enumerate(session.records()):
                 evidence = record.seq_start is not None or bool(
-                    int(record.flags) & RecordFlags.MESSAGE
+                    int(record.flags) & _MESSAGE_BIT
                 )
                 if evidence and session.layer(record.sender_pid) == OutputLayer.TRANSPORT:
                     continue  # it MAY cross: seq_start (0.22) or one message (0.24)

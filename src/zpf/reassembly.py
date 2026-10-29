@@ -28,7 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from zpf.blocks import Adjacency, Discontinuity, OutputLayer, Record, RecordFlags, Span
+from zpf.blocks import _COPY_BIT, _FIN_BIT, Adjacency, Discontinuity, OutputLayer, Record, Span
 from zpf.errors import SemanticError, ZpfError
 from zpf.order import SEQ_SPACE, _Placer
 
@@ -288,7 +288,7 @@ def fin_positions(
             continue  # unplaceable: it marks no position
         stop = start + len(record.payload)
         reach = max(reach, stop)
-        if record.flags & RecordFlags.FIN:
+        if int(record.flags) & _FIN_BIT:
             fins.add(stop)
     return tuple(sorted(position for position in fins if position < reach))
 
@@ -737,7 +737,7 @@ class StreamView:
             # Before trimming: the FIN's position and the reach are the
             # record's own, whatever an overlap takes off its front.
             reach = max(reach, off + len(record.payload))
-            if record.flags & RecordFlags.FIN:
+            if int(record.flags) & _FIN_BIT:
                 fins.add(off + len(record.payload))
             if not record.payload:
                 continue
@@ -932,7 +932,7 @@ class StreamView:
                 off_end=off + len(record.payload),
                 ts=record.timestamp,
                 record=record,
-                copy=at_transport and bool(int(record.flags) & RecordFlags.COPY),
+                copy=at_transport and bool(int(record.flags) & _COPY_BIT),
             )
         if not hinted:
             # A packet-oriented stream has no holes, and its extent is the

@@ -79,7 +79,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import IO, TYPE_CHECKING, Literal
 
-from zpf.blocks import OutputLayer, RecordFlags, SourceKind, Span
+from zpf.blocks import _MESSAGE_BIT, OutputLayer, SourceKind, Span
 from zpf.decode import (
     InputStream,
     _declare_decoder,
@@ -98,7 +98,7 @@ if TYPE_CHECKING:
     from types import TracebackType
     from typing import Self
 
-    from zpf.blocks import InputExtent, TcpRole
+    from zpf.blocks import InputExtent, RecordFlags, TcpRole
     from zpf.reader import FileReader
     from zpf.writer import (
         DecoderHandle,
@@ -587,7 +587,7 @@ def _check_cites(
         )
         raise SemanticError(msg)
     sequenced = hints is not None and hints.seq_start is not None
-    if len(spans) > 1 and not sequenced and not int(flags) & RecordFlags.MESSAGE:
+    if len(spans) > 1 and not sequenced and not int(flags) & _MESSAGE_BIT:
         msg = (
             f"a record citing {len(spans)} input ranges must carry the evidence of "
             "its own join: seq_start, whose sequence numbers say the bytes join, or "

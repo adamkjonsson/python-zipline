@@ -248,6 +248,24 @@ class RecordFlags(IntFlag):
     """
 
 
+# Plain-int masks for the bits tested on every record. `flags & RecordFlags.X`
+# runs `enum`'s Python-level `__and__`, and so does `int(flags) & RecordFlags.X`,
+# since the right operand is still a Flag. `int(flags) & _X_BIT` is one C-level
+# operation, which on the write path is a measurable share of a record (#101).
+_SYN_BIT = int(RecordFlags.SYN)
+_FIN_BIT = int(RecordFlags.FIN)
+_MESSAGE_BIT = int(RecordFlags.MESSAGE)
+_COPY_BIT = int(RecordFlags.COPY)
+
+
+# Exclusive upper bounds, and the i64 floor, for the Record fast path (#101).
+_U16_END = 1 << 16
+_U32_END = 1 << 32
+_U64_END = 1 << 64
+_I64_MIN = -(1 << 63)
+_I64_END = 1 << 63
+
+
 def _check_uint(value: int, bits: int, name: str) -> None:
     """Raise :class:`EncodeError` unless ``value`` fits an unsigned ``bits``-wide field."""
     if not 0 <= int(value) < 1 << bits:
@@ -1106,6 +1124,13 @@ class SessionEnd(Block):
 
 _RECORD_BODY = struct.Struct("<QHHqHHI")
 
+# A whole fixed-width TLV option, header and value, in one pack: id, len, value.
+# What `Record._encode` writes for `seq_start`/`ack` (u32), `ts_first` (i64) and
+# `decoder_id` (u16, with its two padding bytes), instead of a generic walk.
+_OPT_U32 = struct.Struct("<HHI")
+_OPT_I64 = struct.Struct("<HHq")
+_OPT_U16 = struct.Struct("<HHH2x")
+
 
 @dataclass(frozen=True)
 class Record(Block):
@@ -1191,20 +1216,48 @@ class Record(Block):
     )
 
     def __post_init__(self) -> None:
-        _check_uint(self.session_id, 64, "session_id")
-        _check_uint(self.sender_pid, 16, "sender_pid")
-        _check_uint(self.source_id, 16, "source_id")
-        _check_i64(self.timestamp, "timestamp")
-        _check_uint(int(self.flags), 16, "flags")
-        _check_uint_opt(self.seq_start, 32, "seq_start")
-        _check_uint_opt(self.ack, 32, "ack")
-        _check_i64_opt(self.ts_first, "ts_first")
-        _check_uint_opt(self.decoder_id, 16, "decoder_id")
-        _check_uint(len(self.payload), 32, "payload_len")
-        object.__setattr__(self, "payload", bytes(self.payload))
-        object.__setattr__(self, "flags", RecordFlags(self.flags))
-        object.__setattr__(self, "spans", tuple(self.spans))
-        object.__setattr__(self, "extra_options", tuple(self.extra_options))
+        # One chained test over every range first, and the per-field checks
+        # only when it fails, to name the field (#101). A Record is the block
+        # built most, and ten checking calls were a sixth of writing one. The
+        # outcome is the same either way: a value the fast test cannot
+        # compare (TypeError) or finds out of range goes through the
+        # original checks, which raise exactly what they always did.
+        try:
+            in_range = (
+                0 <= self.session_id < _U64_END
+                and 0 <= self.sender_pid < _U16_END
+                and 0 <= self.source_id < _U16_END
+                and _I64_MIN <= self.timestamp < _I64_END
+                and 0 <= self.flags < _U16_END
+                and (self.seq_start is None or 0 <= self.seq_start < _U32_END)
+                and (self.ack is None or 0 <= self.ack < _U32_END)
+                and (self.ts_first is None or _I64_MIN <= self.ts_first < _I64_END)
+                and (self.decoder_id is None or 0 <= self.decoder_id < _U16_END)
+                and len(self.payload) < _U32_END
+            )
+        except TypeError:
+            in_range = False
+        if not in_range:
+            _check_uint(self.session_id, 64, "session_id")
+            _check_uint(self.sender_pid, 16, "sender_pid")
+            _check_uint(self.source_id, 16, "source_id")
+            _check_i64(self.timestamp, "timestamp")
+            _check_uint(int(self.flags), 16, "flags")
+            _check_uint_opt(self.seq_start, 32, "seq_start")
+            _check_uint_opt(self.ack, 32, "ack")
+            _check_i64_opt(self.ts_first, "ts_first")
+            _check_uint_opt(self.decoder_id, 16, "decoder_id")
+            _check_uint(len(self.payload), 32, "payload_len")
+        # Normalised only where the type differs: re-wrapping a RecordFlags
+        # runs `enum`'s `__call__`, and a bytes or a tuple is already itself.
+        if type(self.payload) is not bytes:
+            object.__setattr__(self, "payload", bytes(self.payload))
+        if type(self.flags) is not RecordFlags:
+            object.__setattr__(self, "flags", RecordFlags(self.flags))
+        if type(self.spans) is not tuple:
+            object.__setattr__(self, "spans", tuple(self.spans))
+        if type(self.extra_options) is not tuple:
+            object.__setattr__(self, "extra_options", tuple(self.extra_options))
 
     def content(self, *, strict: bool = False) -> int | bytes:
         """Return the payload interpreted as ``content_type`` says.
@@ -1285,16 +1338,53 @@ class Record(Block):
         )
 
     def _encode(self) -> bytes:
-        body = _RECORD_BODY.pack(
-            self.session_id,
-            self.sender_pid,
-            self.source_id,
-            self.timestamp,
-            0,
-            int(self.flags),
-            len(self.payload),
-        )
-        return body + _frame.padded(self.payload) + _encode_options(self, self._SPEC.ordered)
+        """Encode the record, its options in the canonical order of ``_SPEC``.
+
+        A fixed encoder rather than :func:`_encode_options`' walk of the spec
+        table (`#101 <https://github.com/adamkjonsson/python-zipline/issues/101>`_).
+        A Record is the block written most, and it usually sets two or three
+        of its eight options, so the walk spent most of its time on fields
+        that are absent. The order here **must** be the table's: comment
+        (``0x01``), seq_start, ack, ts_first (``0x70``–``0x73``), spans
+        (``0x80``), decoder_id, content_type, role (``0x90``–``0x92``), then
+        the preserved extras. ``test_write_bytes.py`` pins the output, and
+        ``test_blocks.py`` checks this against the generic walk.
+        """
+        parts = [
+            _RECORD_BODY.pack(
+                self.session_id,
+                self.sender_pid,
+                self.source_id,
+                self.timestamp,
+                0,
+                int(self.flags),
+                len(self.payload),
+            ),
+            _frame.padded(self.payload),
+        ]
+        if self.comment is not None:
+            parts.append(_frame.encode_option(_frame.OPT_COMMENT, self.comment.encode("utf-8")))
+        if self.seq_start is not None:
+            parts.append(_OPT_U32.pack(_frame.OPT_SEQ_START, 4, self.seq_start))
+        if self.ack is not None:
+            parts.append(_OPT_U32.pack(_frame.OPT_ACK, 4, self.ack))
+        if self.ts_first is not None:
+            parts.append(_OPT_I64.pack(_frame.OPT_TS_FIRST, 8, self.ts_first))
+        if self.spans:
+            parts.extend(
+                _frame.encode_option(_frame.OPT_SPANS, raw)
+                for raw in _chunks(self.spans, _frame.MAX_SPANS_PER_OPTION)
+            )
+        if self.decoder_id is not None:
+            parts.append(_OPT_U16.pack(_frame.OPT_DECODER_ID, 2, self.decoder_id))
+        if self.content_type is not None:
+            parts.append(
+                _frame.encode_option(_frame.OPT_CONTENT_TYPE, self.content_type.encode("utf-8"))
+            )
+        if self.role is not None:
+            parts.append(_frame.encode_option(_frame.OPT_ROLE, self.role.encode("utf-8")))
+        parts.extend(_frame.encode_option(opt.option_id, opt.value) for opt in self.extra_options)
+        return b"".join(parts)
 
     @classmethod
     def _parse(cls, content: bytes) -> Self:

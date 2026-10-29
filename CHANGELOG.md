@@ -72,6 +72,28 @@ accepts both, and `check_splice` no longer reports a `message` record
 crossing a declared Discontinuity. A record carrying neither is refused, and
 reported, as before. The refusal's message changed to name both kinds.
 
+**Writing a record costs 45% less, and no byte moves**
+([#101](https://github.com/adamkjonsson/python-zipline/issues/101)). Measured
+writing 60,000 transport records, in the shape zpfwire writes them: 11.1 →
+6.05 µs a record at 64 B, and 11.5 → 6.3 µs at 1,460 B. (`0.7.0` measures
+10.2 µs on the same machine; the `0.24` port had added ~0.9 µs before this.)
+Three changes, none of them a change of behaviour:
+
+- **Flag tests on plain `int`s.** `flags & RecordFlags.SYN`, and even
+  `int(flags) & RecordFlags.SYN`, run `enum`'s Python-level `__and__`. Every
+  per-record flag test in the library now masks with an `int`.
+- **A fixed encoder for `Record`.** It packs the options a Record sets, in the
+  spec table's order, instead of walking all eight looking for them. A test
+  holds it to the generic encoder on every vendored Record.
+- **A cheaper range check in `Record`.** One chained comparison over every
+  field, falling back to the per-field checks only to name a field that
+  fails, so the errors are exactly what they were.
+
+`tests/test_write_bytes.py` pins the output of a mixed workload by digest,
+taken before the change, and the writer's guarantee is unchanged: every block
+still goes through the conformance checker, which is now ~28% of what a
+record costs.
+
 ### Added
 
 **`SessionizeStage.incomplete(cites, *, comment=None)`** marks the pieces of a
