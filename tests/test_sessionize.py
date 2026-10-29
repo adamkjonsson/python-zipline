@@ -200,7 +200,7 @@ def test_a_record_with_seq_start_may_cite_two_input_units():
     assert zpf.check_coverage(io.BytesIO(sink.getvalue()), io.BytesIO(raw)) == []
 
 
-def test_without_seq_start_a_record_cites_one_range():
+def test_with_neither_seq_start_nor_message_a_record_cites_one_range():
     with zpf.sessionize_stage(
         io.BytesIO(unit_sequence_of_packets()), io.BytesIO(),
         decoder="udp-sessionize", produced_by="t", produced_at=2,
@@ -208,9 +208,36 @@ def test_without_seq_start_a_record_cites_one_range():
         (stream,) = stage.streams()
         flow = stage.session("a", proto="udp")
         sender = flow.participant("10.8.0.2:5353")
-        with pytest.raises(zpf.SemanticError, match="must carry seq_start"):
+        with pytest.raises(zpf.SemanticError, match="evidence of its own join"):
             flow.record(sender, b"x", cites=[stream.cite(0, 40), stream.cite(60, 90)])
+        with pytest.raises(zpf.SemanticError, match="evidence of its own join"):
+            flow.record(sender, b"x", flags=zpf.RecordFlags.PSH,
+                        cites=[stream.cite(0, 40), stream.cite(60, 90)])
         flow.record(sender, b"x", cites=stream.cite(0, 40))
+
+
+def test_a_record_flagged_message_may_cite_two_input_units():
+    """Since 0.24 (zipline#166, #105): one message's reassembly is evidence too."""
+    raw = unit_sequence_of_packets()
+    sink = io.BytesIO()
+    with zpf.sessionize_stage(
+        io.BytesIO(raw), sink, decoder="udp-reassembly", produced_by="t", produced_at=2
+    ) as stage:
+        (stream,) = stage.streams()
+        flow_a = stage.session("a", proto="udp")
+        flow_b = stage.session("b", proto="udp")
+        flow_a.record(
+            flow_a.participant("10.8.0.2:5000"), b"A" * 40 + b"B" * 30,
+            flags=zpf.RecordFlags.MESSAGE,
+            cites=[stream.cite(0, 40), stream.cite(60, 90)],
+        )
+        flow_b.record(flow_b.participant("10.8.0.2:5001"), b"C" * 20,
+                      flags=zpf.RecordFlags.MESSAGE, cites=stream.cite(40, 60))
+    with zpf.open(io.BytesIO(sink.getvalue())) as out:
+        assert out.diagnostics == []
+        (reassembled,) = out.session(flow_a.session_id).records()
+        assert len(reassembled.spans) == 2
+    assert zpf.check_coverage(io.BytesIO(sink.getvalue()), io.BytesIO(raw)) == []
 
 
 def test_a_record_must_cite_something():
@@ -221,6 +248,164 @@ def test_a_record_must_cite_something():
         flow = stage.session("a", proto="tcp")
         with pytest.raises(zpf.SemanticError, match="must cite the input range"):
             flow.record(flow.participant("x"), b"x", cites=[], hints=zpf.Hints(seq_start=1))
+
+
+# --- A fragmented datagram, reassembled as one message (0.24, #105) ---------------
+
+VECTORS = Path(__file__).parent / "vectors"
+IP_MORE_FRAGMENTS = 0x2000
+
+
+@dataclass(frozen=True)
+class Fragment:
+    """What the test's own parser reads out of one IPv4 packet, fragment or whole."""
+
+    ident: int
+    offset: int
+    more: bool
+    src: str
+    payload: bytes
+
+
+def parse_ipv4(packet: bytes) -> Fragment:
+    """Parse one IPv4 header — the caller's job, never the library's."""
+    ihl = (packet[0] & 0x0F) * 4
+    ident, flags_offset = struct.unpack("!HH", packet[4:8])
+    return Fragment(
+        ident=ident,
+        offset=(flags_offset & 0x1FFF) * 8,
+        more=bool(flags_offset & IP_MORE_FRAGMENTS),
+        src=".".join(map(str, packet[12:16])),
+        payload=packet[ihl:],
+    )
+
+
+def whole(pieces: list[tuple[zpf.reassembly.Datagram, Fragment]]) -> bytes | None:
+    """Reassemble a datagram's fragments, or ``None`` while one is missing."""
+    ordered = sorted(pieces, key=lambda piece: piece[1].offset)
+    at = 0
+    for _datagram, fragment in ordered:
+        if fragment.offset != at:
+            return None
+        at += len(fragment.payload)
+    if ordered[-1][1].more:
+        return None
+    return b"".join(fragment.payload for _datagram, fragment in ordered)
+
+
+def sessionize_udp(vector: str, sink: io.BytesIO) -> None:
+    """Rebuild a ``sessionized-*`` pair's ``inner.zpf`` from its ``packets.zpf``.
+
+    Each datagram becomes one ``message`` record citing every fragment it
+    was built from, which is the shape ``0.24`` permits and ``0.7.0``
+    refused. Session ids follow the source port, as in the vector, and the
+    sessions are written whole in that order, as the vendored file is laid out.
+    """
+    ids = {5000: 20, 5001: 21}
+    with zpf.sessionize_stage(
+        VECTORS / vector / "packets.zpf", sink,
+        decoder=("udp-reassembly", "1.1"),
+        produced_by="zpf-sessionize 1.0", produced_at=1719700100,
+        input_ref=zpf.InputRef(uri="packets.zpf"),
+    ) as stage:
+        (stream,) = stage.streams()
+        pending: dict[int, list[tuple[zpf.reassembly.Datagram, Fragment]]] = {}
+        done: list[tuple[int, str, bytes, list[zpf.Span]]] = []
+        for datagram in stream.datagrams():
+            fragment = parse_ipv4(datagram.data)
+            pending.setdefault(fragment.ident, []).append((datagram, fragment))
+            udp = whole(pending[fragment.ident])
+            if udp is None:
+                continue
+            pieces = pending.pop(fragment.ident)
+            (sport,) = struct.unpack("!H", udp[:2])
+            cites = [stream.cite(d.off_start, d.off_end) for d, _ in sorted(
+                pieces, key=lambda piece: piece[0].off_start)]
+            done.append((sport, f"{fragment.src}:{sport}", udp[8:], cites))
+        for sport, endpoint, payload, cites in sorted(done):
+            session = stage.session(endpoint, proto="udp", session_id=ids[sport])
+            session.record(
+                session.participant(endpoint), payload,
+                flags=zpf.RecordFlags.MESSAGE, cites=cites,
+            )
+            session.end()
+
+
+def comparable(objects: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop the two things this stage writes differently from the fragment vectors.
+
+    Record times, for the reason the test below gives. And the Session
+    ``key``, an optional option: the vector writes none, and
+    :meth:`SessionizeStage.session` writes its flow key as one, always.
+    """
+    dropped = {"ts", "ts_first", "key"}
+    return [{k: v for k, v in o.items() if k not in dropped} for o in objects]
+
+
+def test_a_fragmented_datagram_is_rebuilt_as_one_message_record():
+    """`sessionized-fragments/inner.zpf`, from its packets and the API alone.
+
+    Through `0.7.0` the stage refused this record: it cites two input units
+    and carries no `seq_start`. Since `0.24` the `message` flag is evidence of
+    the join, and the record crosses the other flow's packet between them.
+
+    **Everything matches but the Session keys and the reassembled record's
+    time** (see :func:`comparable`). The vector
+    stamps it 1000, the first fragment's. The specification's timestamp
+    rule stamps a record reassembled from several packets with the *last*
+    packet's time, the moment it became complete, and that is what this
+    stage derives: 1200, with ``ts_first`` 1000. Defect 8 in
+    ``VECTOR-DEFECTS.md``, reported as zipline#175; once fixed upstream,
+    compare times too.
+    """
+    sink = io.BytesIO()
+    sessionize_udp("sessionized-fragments", sink)
+    inner = (VECTORS / "sessionized-fragments" / "inner.zpf").read_bytes()
+    assert comparable(projection(sink.getvalue())) == comparable(projection(inner))
+    with zpf.open(io.BytesIO(sink.getvalue())) as out:
+        (datagram,) = out.session(20).records()
+        assert (datagram.timestamp, datagram.ts_first) == (1200, 1000)
+        assert out.diagnostics == []
+    packets = VECTORS / "sessionized-fragments" / "packets.zpf"
+    assert zpf.check_coverage(io.BytesIO(sink.getvalue()), packets) == []
+    assert zpf.check_splice(io.BytesIO(sink.getvalue()), packets) == []
+
+
+def test_check_splice_lets_a_message_record_cross_a_declared_break():
+    """The half of #105 no vector reaches.
+
+    `sessionized-fragments` crosses `units` seams, where no break is
+    declared, and `isolate-transport-splice` carries neither kind of
+    evidence. This is a `message` record across a **declared**
+    Discontinuity, which `0.24` permits and `check_splice` reported through
+    `0.7.0`. The same crossing without the flag is still reported.
+    """
+    packets = VECTORS / "sessionized-across-break" / "packets.zpf"
+
+    def crossing(flags: zpf.RecordFlags) -> bytes:
+        sink = io.BytesIO()
+        with zpf.sessionize_stage(
+            packets, sink, decoder="udp-reassembly", produced_by="t", produced_at=2,
+            fill_undecoded=False,
+        ) as stage:
+            (stream,) = stage.streams()
+            flow = stage.session("a", proto="udp")
+            cites = [stream.cite(0, 80), stream.cite(140, 210)]
+            if flags & zpf.RecordFlags.MESSAGE:
+                flow.record(flow.participant("a"), b"x", flags=flags, cites=cites)
+            else:
+                # The stage refuses this shape, so write what it would have.
+                with pytest.raises(zpf.SemanticError, match="evidence of its own join"):
+                    flow.record(flow.participant("a"), b"x", flags=flags, cites=cites)
+                flow.writer.record(
+                    flow.participant("a"), ts=1300, payload=b"x", flags=flags,
+                    decoded=zpf.Decoded(decoder=stage.decoder, spans=cites),
+                )
+        return sink.getvalue()
+
+    assert zpf.check_splice(io.BytesIO(crossing(zpf.RecordFlags.MESSAGE)), packets) == []
+    findings = zpf.check_splice(io.BytesIO(crossing(zpf.RecordFlags.PSH)), packets)
+    assert [f.category for f in findings] == ["discontinuity-splice"]
 
 
 # --- Coverage across sessions -----------------------------------------------------

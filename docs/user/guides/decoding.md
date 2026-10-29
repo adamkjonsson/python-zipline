@@ -496,12 +496,22 @@ decode stage, measured the way fan-out needs:
 
 Two things it leaves to you. **Parsing**: the format says what a `net:ip`
 payload is, not what is in it, so classifying a packet is your code.
-**Sequence numbers**: since `0.22` a transport record carrying `seq_start` may
-cite several input packets, or cross a break the input declares, because its
-sequence numbers assert that the bytes join and a break between them would be
-a range no record covers. The stage takes your word for them, and so does
-{func}`zpf.check_splice`, which leaves such a record unchecked. A record without
-`seq_start` cites one range only.
+**The evidence of a join**: a transport record may cite several input
+packets, or cross a break the input declares, when it carries evidence that
+those bytes join. There are two kinds:
+
+- **sequence numbers**, a record carrying `seq_start` (since `0.22`). They
+  assert that the bytes join, and a break between them would be a range no
+  record covers;
+- **one message's reassembly**, a record flagged `RecordFlags.MESSAGE` (since
+  `0.24`). The record is exactly one transport message, so the packets it cites
+  are that message's fragments: the IP fragments of one UDP datagram, say,
+  with another flow's packet between them.
+
+The stage takes your word for either, and so does {func}`zpf.check_splice`,
+which leaves such a record unchecked. A record carrying neither cites one range
+only. A datagram that lost a fragment is not a message and gets no record: mark
+its fragments' ranges with `stage.undecoded(…, reason="undecodable")` instead.
 
 Both builders, {func}`zpf.sessionize_stage` and {func}`zpf.decode_stage`, take
 `face="jsonl"` to write the JSON-Lines face (with a text sink) and `creator=`

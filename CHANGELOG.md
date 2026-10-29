@@ -59,6 +59,19 @@ byte: `check_coverage` exempts it, and auto-fill marks neither `gap` nor
   zero-length FIN ends one past its offset for the merge, but reaches only its
   offset.
 
+**A transport record flagged `message` may cross its input's seams**
+([#105](https://github.com/adamkjonsson/python-zipline/issues/105),
+[zipline#166](https://github.com/adamkjonsson/zipline/issues/166)). A UDP
+datagram IP-fragmented inside a tunnel arrives as several input units, and its
+reassembly carries no `seq_start`, so through `0.7.0` `FlowSession.record`
+refused it and every such datagram was lost. Since `0.24` a record is
+permitted to cite several units, or cross a declared break, when it carries
+either kind of evidence of the join: `seq_start`, or the `MESSAGE` flag, which
+says it is exactly one message and the units are its fragments. The stage
+accepts both, and `check_splice` no longer reports a `message` record
+crossing a declared Discontinuity. A record carrying neither is refused, and
+reported, as before. The refusal's message changed to name both kinds.
+
 ### Added
 
 **`zpf.fin_positions()` and `StreamView.fin_positions()`**, the positions

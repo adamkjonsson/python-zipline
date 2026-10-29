@@ -136,7 +136,7 @@ vector that seems wrong is a question for the spec repository, not a local patch
 
 ## Known defects
 
-**None open at `v0.24`.** Defects 5 and 6 — three vectors whose `.zpf`
+**One open at `v0.24`, and it holds nothing out** (defect 8, below). Defects 5 and 6 — three vectors whose `.zpf`
 disagreed with their own `.jsonl`, found at the `0.19` re-vendor by projecting
 every file and diffing — were fixed upstream in `0.20`
 ([zipline#141](https://github.com/adamkjonsson/zipline/issues/141)), which also
@@ -145,10 +145,15 @@ cannot recur. That guard is the part that outlives the fix. So `DEFECTIVE` in
 [`../test_vectors.py`](../test_vectors.py) is empty, and there is no fixture the
 implementation must be kept away from.
 
-Seven have been found in all — two against `v0.12`, one against `v0.15`, one
-against `v0.16`, two against `v0.19` and one against the `0.22` release
-candidate — and every one was fixed upstream;
-[`VECTOR-DEFECTS.md`](../../VECTOR-DEFECTS.md) is the closed record of them.
+Eight have been found in all — two against `v0.12`, one against `v0.15`, one
+against `v0.16`, two against `v0.19`, one against the `0.22` release
+candidate and one against `v0.24` — and
+[`VECTOR-DEFECTS.md`](../../VECTOR-DEFECTS.md) is the record of them. The
+first seven were fixed upstream. The eighth is open
+([zipline#175](https://github.com/adamkjonsson/zipline/issues/175)): three
+sessionizer vectors stamp a reassembled record with its first packet's time,
+where the timestamp rule says the last. The files are conformant, so it holds
+nothing out of the suite.
 The projection sweep was repeated at the `0.24` re-vendor: 69 files carry both
 faces, and none disagree on any key this library projects. (At `0.23`, 55.) (At `0.21`, 49 files; the
 new `adjacency` key was then also checked the other way, its byte in all 61

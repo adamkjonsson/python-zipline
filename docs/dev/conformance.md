@@ -189,12 +189,14 @@ says are fine.
 
 The second is the sessionization stage's: {meth}`FlowSession.record
 <zpf.sessionize.FlowSession.record>` refuses a record citing more than one
-input range unless it carries `seq_start`. Since `0.22` a sequence-anchored
-transport record MAY cross its input's seams, and one without sequence numbers
-owes both duties — it may not cross a break. The format would still allow two
-*adjacent* ranges where the input joins there; the stage cannot tell, so it
-refuses both, and splitting the citation into one record per range loses
-nothing. The docstring names it as stricter than the format.
+input range unless it carries the evidence of its own join: `seq_start` (since
+`0.22`) or the `message` flag (since `0.24`, for one message reassembled from
+its fragments). Such a transport record MAY cross its input's seams, and one
+carrying neither owes both duties — it may not cross a break. The format would
+still allow two *adjacent* ranges where the input joins there; the stage cannot
+tell, so it refuses both. Such a record is a byte run with no message boundary,
+so splitting the citation into one record per range loses nothing. The
+docstring names it as stricter than the format.
 
 The other is on the read side, and it is a *reading* rather than a rule:
 {meth}`StreamView.units <zpf.reassembly.StreamView.units>` reports a unit

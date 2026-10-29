@@ -42,6 +42,7 @@ from zpf.blocks import (
     InputExtent,
     OutputLayer,
     Record,
+    RecordFlags,
     SourceKind,
     Span,
 )
@@ -680,17 +681,27 @@ def check_splice(
     exactly when the ranges it cites in stage 1's output have bytes on both
     sides of a break.
 
-    **Except a sequence-anchored transport record**, which since ``0.22``
-    MAY cross (`zipline#152
-    <https://github.com/adamkjonsson/zipline/issues/152>`_). A transport
-    stream whose records carry ``seq_start`` meets the duty through its
-    offsets: a break there is a range of sequence numbers no record covers,
-    which cannot be lost, so a sessionization stage's record that cites
-    packets either side of an input break asserts, with its sequence numbers,
-    that they join. Such a record is not checked
-    (`#90 <https://github.com/adamkjonsson/python-zipline/issues/90>`_). A
-    transport record **without** ``seq_start`` has no hole to carry a break
-    in and keeps the duty, and so does every decoded record.
+    **Except a transport record carrying the evidence of its own join**,
+    which MAY cross. There are two kinds of evidence:
+
+    * **sequence numbers**, a record carrying ``seq_start``, since ``0.22``
+      (`zipline#152 <https://github.com/adamkjonsson/zipline/issues/152>`_).
+      A break in such a stream is a range of sequence numbers no record
+      covers, which cannot be lost, so a sessionization stage's record that
+      cites packets either side of an input break asserts, with its
+      sequence numbers, that they join
+      (`#90 <https://github.com/adamkjonsson/python-zipline/issues/90>`_);
+    * **one message's reassembly**, a record flagged ``MESSAGE``, since
+      ``0.24`` (`zipline#166
+      <https://github.com/adamkjonsson/zipline/issues/166>`_). The record is
+      exactly one transport message, so the units it cites are that
+      message's fragments, such as the IP fragments of one datagram, and
+      another flow's packet may sit between them
+      (`#105 <https://github.com/adamkjonsson/python-zipline/issues/105>`_).
+
+    Such a record is not checked. A transport record carrying **neither**
+    has no evidence of a join for a checker to see, and keeps the duty, and
+    so does every decoded record.
 
     Args:
         stage2: The downstream file, whose spans cite ``stage1``.
@@ -717,10 +728,11 @@ def check_splice(
         findings: list[Diagnostic] = []
         for session in downstream.sessions():
             for index, record in enumerate(session.records()):
-                if record.seq_start is not None and (
-                    session.layer(record.sender_pid) == OutputLayer.TRANSPORT
-                ):
-                    continue  # it MAY cross: its offsets carry the break (0.22)
+                evidence = record.seq_start is not None or bool(
+                    int(record.flags) & RecordFlags.MESSAGE
+                )
+                if evidence and session.layer(record.sender_pid) == OutputLayer.TRANSPORT:
+                    continue  # it MAY cross: seq_start (0.22) or one message (0.24)
                 findings.extend(_crossings(record, index, source_id, breaks))
         return findings
 

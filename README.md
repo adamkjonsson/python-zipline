@@ -37,8 +37,8 @@ belongs to an unrelated project.
   See [`plans/V0.8.0-RELEASE-PLAN.md`](plans/V0.8.0-RELEASE-PLAN.md).)*
 - Verified against the specification's own 77 conformance vectors, vendored in
   [`tests/vectors/`](tests/vectors/) and run by the test suite, negative tiers
-  included. Seven vector defects have been found
-  from here and fixed upstream ([`VECTOR-DEFECTS.md`](VECTOR-DEFECTS.md)).
+  included. Eight vector defects have been found from here and reported
+  upstream, seven of them fixed ([`VECTOR-DEFECTS.md`](VECTOR-DEFECTS.md)).
 - An ergonomic writer (`zpf.create`) that makes non-conformant files hard to
   write, and a session-first reader (`zpf.open`) with lazy record access.
 - Causal ordering: `session.timeline()` orders records by TCP seq/ack

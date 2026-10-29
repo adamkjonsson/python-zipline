@@ -70,8 +70,10 @@ Five traps worth naming, because each looks like a bug and is not:
 
 The conformance vectors in `tests/vectors/` are vendored verbatim from the spec
 repository and are the acceptance criteria — do not edit them to make a test
-pass. `VECTOR-DEFECTS.md` records seven defects found against them, all closed
-upstream; `DEFECTIVE` in `tests/test_vectors.py` is empty at `v0.24`. When a
+pass. `VECTOR-DEFECTS.md` records eight defects found against them, seven
+closed upstream. The eighth (zipline#175, first-packet stamps on three
+sessionizer vectors) is in conformant files, so it holds nothing out, and
+`DEFECTIVE` in `tests/test_vectors.py` is empty at `v0.24`. When a
 fixture is wrong, it goes in `DEFECTIVE` by name and is reported upstream —
 never bend the implementation to match a fixture in `DEFECTIVE`.
 
